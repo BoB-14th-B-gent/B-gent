@@ -1,0 +1,56 @@
+name: Notify Discord
+
+on:
+  push:
+    branches: [ main ]          
+    paths:
+      - "core/**"               
+  pull_request:
+    types: [opened, reopened, ready_for_review, closed, converted_to_draft, review_requested]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build message (push)
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          COMMITS=$(jq -r '.commits[] | "- " + .message + " (" + .id[0:7] + ") by " + .author.username' <<< '${{ toJson(github.event) }}' | head -n 5)
+          [ -z "$COMMITS" ] && COMMITS="- (no commit messages parsed)"
+          cat > payload.json <<EOF
+          {
+            "embeds": [{
+              "title": "Push to ${GITHUB_REF#refs/heads/}",
+              "url": "${{ github.event.compare }}",
+              "description": "Repo: ${{ github.repository }}\nPusher: ${{ github.event.pusher.name }}\n\nRecent commits:\n$COMMITS"
+            }]
+          }
+          EOF
+          curl -sS -H "Content-Type: application/json" \
+            -d @payload.json "${{ secrets.DISCORD_WEBHOOK_URL }}"
+
+      - name: Build message (pull_request)
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          PR_TITLE='${{ github.event.pull_request.title }}'
+          PR_URL='${{ github.event.pull_request.html_url }}'
+          PR_STATE='${{ github.event.action }}'
+          AUTHOR='${{ github.event.pull_request.user.login }}'
+          BASE='${{ github.event.pull_request.base.ref }}'
+          HEAD='${{ github.event.pull_request.head.ref }}'
+          MERGED='${{ github.event.pull_request.merged }}'
+          DESC="**$PR_TITLE**\nby $AUTHOR\n$HEAD → $BASE\nAction: $PR_STATE"
+          if [ "$PR_STATE" = "closed" ] && [ "$MERGED" = "true" ]; then
+            DESC="$DESC (merged ✅)"
+          fi
+          cat > payload.json <<EOF
+          {
+            "embeds": [{
+              "title": "Pull Request",
+              "url": "$PR_URL",
+              "description": "$DESC"
+            }]
+          }
+          EOF
+          curl -sS -H "Content-Type: application/json" \
+            -d @payload.json "${{ secrets.DISCORD_WEBHOOK_URL }}"
