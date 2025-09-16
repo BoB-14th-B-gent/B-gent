@@ -93,6 +93,39 @@ def xml_to_json(xml_file: str, json_file: str) -> None:
     data_dict = _etree_to_dict(root)
     Path(json_file).write_text(json.dumps(data_dict, ensure_ascii=False, indent=2), encoding="utf-8")
 
+def jsonl_to_json(jsonl_file: str, json_file: str) -> None:
+    decoder = json.JSONDecoder()
+    out = []
+    bad_lines = 0
+
+    with open(jsonl_file, "r", encoding="utf-8", errors="ignore") as f:
+        for raw in f:
+            s = raw.strip()
+            if not s:
+                continue
+
+            i, n = 0, len(s)
+            parsed_any = False
+
+            while i < n:
+                while i < n and (s[i].isspace() or s[i] in ",;"):
+                    i += 1
+                if i >= n:
+                    break
+
+                try:
+                    obj, end = decoder.raw_decode(s, i)
+                    out.append(obj)
+                    parsed_any = True
+                    i = end
+                except json.JSONDecodeError:
+                    i += 1
+
+            if not parsed_any:
+                bad_lines += 1
+
+    Path(json_file).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+
 def csv_to_json(csv_file: str, json_file: str) -> None:
     text = Path(csv_file).read_text(encoding="utf-8", errors="ignore")
     rows = parse_csv_text(text)
@@ -129,6 +162,8 @@ def convert_files_to_json(
             if ext == ".json":
                 data = json.loads(p.read_text(encoding="utf-8"))
                 out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            elif ext == ".jsonl":
+                jsonl_to_json(str(p), str(out_path))
             elif ext == ".xml":
                 xml_to_json(str(p), str(out_path))
             elif ext == ".csv":
@@ -138,6 +173,6 @@ def convert_files_to_json(
             msg = f"{name} → 변환 실패 ({e})"
             if failed_list is not None:
                 failed_list.append(msg)
-            print(f"[WARN] 파일 변환 실패: {p} -> {e}")
+            print(f"[WARN] 파일 변환 실패: {p} -> {e}\n")
 
     return out_paths
