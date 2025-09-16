@@ -161,3 +161,48 @@ def _split_mixed_block(block: str) -> List[Tuple[str, str]]:
     flush_csv()
     flush_xml()
     return segments
+
+def inline_to_grouped_json(inlines: List[str]) -> Dict[str, Any]:
+    grouped = {"json": [], "xml": [], "csv": []}
+    errors: List[Dict[str, str]] = []
+
+    for bidx, block in enumerate(inlines, start=1):
+        block = (block or "").strip()
+        if not block:
+            continue
+
+        segments = _split_mixed_block(block)
+        if not segments:
+            continue
+
+        for sidx, (stype, payload) in enumerate(segments, start=1):
+            source_id = f"inline:{bidx}.{sidx}"
+            try:
+                if stype == "json":
+                    grouped["json"].append({"source": source_id, "value": json.loads(payload)})
+                elif stype == "xml":
+                    if looks_like_xml(payload):
+                        grouped["xml"].append({"source": source_id, "value": parse_xml_text_to_dict(payload)})
+                    else:
+                        errors.append({"source": source_id, "error": "XML 파싱 실패"})
+                elif stype == "csv":
+                    rows = parse_csv_text(payload)
+                    if rows:
+                        grouped["csv"].append({"source": source_id, "rows": rows})
+                    else:
+                        errors.append({"source": source_id, "error": "CSV 파싱 실패(행 없음)"})
+                else:
+                    errors.append({"source": source_id, "error": "지원 포맷 아님"})
+            except Exception as e:
+                errors.append({"source": source_id, "error": str(e)})
+
+    return {
+        "groups": grouped,
+        "counts": {k: len(v) for k, v in grouped.items()},
+        # "errors": errors
+    }
+
+def write_inline_group_to_file(grouped: Dict[str, Any], out_path: str) -> str:
+    p = Path(out_path)
+    p.write_text(json.dumps(grouped, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(p)
