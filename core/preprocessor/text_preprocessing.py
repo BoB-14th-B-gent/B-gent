@@ -12,6 +12,13 @@ def looks_like_json(text: str) -> bool:
     except json.JSONDecodeError:
         return False
 
+def looks_like_xml(text: str) -> bool:
+    try:
+        ET.fromstring(text)
+        return True
+    except ET.ParseError:
+        return False
+
 def sniff_csv_dialect_and_header(sample_text: str) -> Tuple[Optional[csv.Dialect], bool]:
     try:
         sniffer = csv.Sniffer()
@@ -59,8 +66,31 @@ def parse_csv_text(text: str) -> List[Dict[str, Any]]:
     headers = [f"c{i}" for i in range(max_cols)]
     return [{headers[i]: (r[i] if i < len(r) else None) for i in range(max_cols)} for r in rows]
 
-def _is_csvish_line(line: str) -> bool:
-    s = line.strip()
-    if not s:
-        return False
-    return ("," in s) or ("\t" in s)
+def _etree_to_dict(t: ET.Element) -> Dict[str, Any]:
+    d = {t.tag: {} if t.attrib else None}
+    children = list(t)
+    if children:
+        dd: Dict[str, Any] = {}
+        for dc in map(_etree_to_dict, children):
+            for k, v in dc.items():
+                if k in dd:
+                    if not isinstance(dd[k], list):
+                        dd[k] = [dd[k]]
+                    dd[k].append(v)
+                else:
+                    dd[k] = v
+        d = {t.tag: dd}
+    if t.attrib:
+        d[t.tag].update(('@' + k, v) for k, v in t.attrib.items())
+    if t.text:
+        tx = t.text.strip()
+        if children or t.attrib:
+            if tx:
+                d[t.tag]['#text'] = tx
+        else:
+            d[t.tag] = tx
+    return d
+
+def parse_xml_text_to_dict(text: str) -> Dict[str, Any]:
+    root = ET.fromstring(text)
+    return _etree_to_dict(root)
