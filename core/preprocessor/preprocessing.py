@@ -79,6 +79,10 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--input", "-i", help="input.txt 경로", default=None)
     ap.add_argument("--all-data", action="store_true", help="data/ 폴더의 모든 지원 파일 자동 인식 (또한 to_agents에 data 내 비지원 확장자도 포함)")
     ap.add_argument("--out", "-o", help="출력 JSON 디렉토리", default=str((BASE_DIR / "out_json")))
+    ap.add_argument("--inline-filename", default="inline_batch.json", help="인라인 묶음 JSON 파일명")
+    ap.add_argument("--collection", required=True, help="MongoDB 컬렉션명")
+    ap.add_argument("--mode", choices=["auto","inline","gridfs"], default="auto", help="저장 전략")
+    ap.add_argument("--inline-threshold", type=int, default=10*1024*1024, help="인라인 임계치(바이트)")
     return ap
 
 if __name__ == "__main__":
@@ -107,3 +111,18 @@ if __name__ == "__main__":
         ip = Path(args.input)
         if ip.exists():
             input_raw = ip.read_text(encoding="utf-8")
+
+    print("\nMongoDB 업로드 중...")
+    results = []
+    for p in out_paths:
+        res = upload_file(
+            file_path=p,
+            collection=args.collection,
+            detected_type="json",
+            mode=args.mode,
+            inline_threshold_bytes=args.inline_threshold,
+        )
+        results.append({"file": p, **res})
+
+    print("\n업로드 결과 요약:")
+    print(json.dumps(results, ensure_ascii=False, indent=2, default=str))
