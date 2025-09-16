@@ -74,6 +74,39 @@ def gather_inputs(input_txt: Optional[str], all_data: bool) -> Tuple[List[str], 
     file_names = sorted(set(file_names))
     return file_names, inline_blocks
 
+def collect_unsupported_existing_files_from_input(input_txt: Optional[str]) -> List[str]:
+    if not input_txt:
+        return []
+    p = Path(input_txt)
+    if not p.exists():
+        return []
+
+    raw = p.read_text(encoding="utf-8")
+    candidates: List[str] = []
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        ext = Path(s).suffix.lower()
+        if not ext:
+            continue
+        if ext not in SUPPORTED_INPUT_EXTS:
+            if _exists_in_data_or_abs(s):
+                candidates.append(s)
+    return sorted(set(candidates))
+
+def list_unsupported_existing_files_in_data() -> List[str]:
+    out: List[str] = []
+    for p in sorted(DATA_DIR.rglob("*")):
+        if not p.is_file():
+            continue
+        ext = p.suffix.lower()
+        if (not ext) or (ext not in SUPPORTED_EXTS):
+            if p.name in {".gitkeep"}:
+                continue
+            out.append(str(p.relative_to(DATA_DIR)))
+    return out
+
 def build_argparser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Preprocess files (in data/) & inline texts, then upload to MongoDB.")
     ap.add_argument("--input", "-i", help="input.txt 경로", default=None)
@@ -111,6 +144,17 @@ if __name__ == "__main__":
         ip = Path(args.input)
         if ip.exists():
             input_raw = ip.read_text(encoding="utf-8")
+
+    unsupported_from_input = collect_unsupported_existing_files_from_input(args.input)
+
+    files_for_agents = set(unsupported_from_input)
+    if args.all_data:
+        files_for_agents.update(list_unsupported_existing_files_in_data())
+
+    to_agents_json_path = (BASE_DIR / "to_agents.json").resolve()
+    with open(to_agents_json_path, "w", encoding="utf-8") as f:
+        json.dump({"files": sorted(files_for_agents), "input": input_raw}, f, ensure_ascii=False, indent=2)
+    print(f"\nto_agents.json 생성: {to_agents_json_path}")
 
     print("\nMongoDB 업로드 중...")
     results = []
