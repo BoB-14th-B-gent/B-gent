@@ -94,3 +94,70 @@ def _etree_to_dict(t: ET.Element) -> Dict[str, Any]:
 def parse_xml_text_to_dict(text: str) -> Dict[str, Any]:
     root = ET.fromstring(text)
     return _etree_to_dict(root)
+
+def _is_xmlish_line(line: str) -> bool:
+    s = line.lstrip()
+    return s.startswith("<") and not looks_like_json(line)
+
+def _is_csvish_line(line: str) -> bool:
+    s = line.strip()
+    if not s:
+        return False
+    if looks_like_json(s) or _is_xmlish_line(s):
+        return False
+    return ("," in s) or ("\t" in s)
+
+def _split_mixed_block(block: str) -> List[Tuple[str, str]]:
+    segments: List[Tuple[str, str]] = []
+    csv_buf: List[str] = []
+    xml_buf: List[str] = []
+
+    def flush_csv():
+        nonlocal csv_buf
+        if csv_buf:
+            segments.append(("csv", "\n".join(csv_buf)))
+            csv_buf = []
+
+    def flush_xml():
+        nonlocal xml_buf
+        if xml_buf:
+            segments.append(("xml", "\n".join(xml_buf)))
+            xml_buf = []
+
+    for raw in block.splitlines():
+        line = raw.rstrip()
+        if not line.strip():
+            flush_csv()
+            flush_xml()
+            continue
+
+        if looks_like_json(line):
+            flush_csv()
+            flush_xml()
+            segments.append(("json", line))
+            continue
+
+        if _is_xmlish_line(line):
+            flush_csv()
+            xml_buf.append(line)
+            continue
+
+        if _is_csvish_line(line):
+            flush_xml()
+            csv_buf.append(line)
+            continue
+
+        flush_csv()
+        flush_xml()
+        if looks_like_xml(line):
+            segments.append(("xml", line))
+        elif _is_csvish_line(line):
+            segments.append(("csv", line))
+        elif looks_like_json(line):
+            segments.append(("json", line))
+        else:
+            segments.append(("other", line))
+
+    flush_csv()
+    flush_xml()
+    return segments
