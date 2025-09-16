@@ -1,4 +1,8 @@
+import json
+import csv
+import io
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -10,3 +14,97 @@ def resolve_data_path(filename: str) -> Path:
     if not p.exists():
         raise FileNotFoundError(f"data 폴더에서 {filename} 을 찾을 수 없습니다: {p}")
     return p
+
+def sniff_csv_dialect_and_header(sample_text: str) -> Tuple[Optional[csv.Dialect], bool]:
+    try:
+        sniffer = csv.Sniffer()
+        dialect = sniffer.sniff(sample_text, delimiters=",\t")
+        if getattr(dialect, "delimiter", None) not in [",", "\t"]:
+            return None, False
+        try:
+            has_header = sniffer.has_header(sample_text)
+        except Exception:
+            has_header = False
+        return dialect, has_header
+    except Exception:
+        return None, False
+
+def parse_csv_text(text: str) -> List[Dict[str, Any]]:
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return []
+
+    sample = "\n".join(lines[:40])
+    dialect, has_header = sniff_csv_dialect_and_header(sample)
+    if dialect is None:
+        raise ValueError("CSV 구분자는 tab 또는 ,만 지원")
+
+    buf = io.StringIO("\n".join(lines))
+    reader = csv.reader(buf, dialect=dialect)
+    rows = list(reader)
+    if not rows:
+        return []
+
+    if len(rows) > 1 and len(rows[0]) != len(rows[1]):
+        headers = rows[0]
+        data_rows = rows[1:]
+        return [
+            {headers[i]: (row[i] if i < len(row) else None) for i in range(len(headers))}
+            for row in data_rows
+        ]
+
+    if has_header:
+        buf2 = io.StringIO("\n".join(lines))
+        dict_reader = csv.DictReader(buf2, dialect=dialect)
+        return [dict(row) for row in dict_reader]
+
+    max_cols = max(len(r) for r in rows)
+    headers = [f"c{i}" for i in range(max_cols)]
+    return [{headers[i]: (r[i] if i < len(r) else None) for i in range(max_cols)} for r in rows]
+
+def csv_to_json(csv_file: str, json_file: str) -> None:
+    text = Path(csv_file).read_text(encoding="utf-8", errors="ignore")
+    rows = parse_csv_text(text)
+    Path(json_file).write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def convert_files_to_json(
+    file_names: List[str],
+    out_dir: str,
+    failed_list: Optional[List[str]] = None
+) -> List[str]:
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    out_paths: List[str] = []
+
+    for name in file_names:
+        try:
+            p = resolve_data_path(name)
+        except FileNotFoundError as e:
+            msg = f"{name} → 파일 없음 ({e})"
+            if failed_list is not None:
+                failed_list.append(msg)
+            print(f"[WARN] {msg}\n")
+            continue
+
+        ext = p.suffix.lower()
+        if ext not in SUPPORTED_EXTS:
+            msg = f"{name} → 지원하지 않는 확장자"
+            if failed_list is not None:
+                failed_list.append(msg)
+            print(f"[WARN] {msg}\n")
+            continue
+
+        out_path = Path(out_dir) / f"{p.stem}.json"
+        try:
+            if ext == ".json":
+                data = json.loads(p.read_text(encoding="utf-8"))
+                out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            elif ext == ".csv":
+                csv_to_json(str(p), str(out_path))
+            out_paths.append(str(out_path))
+        except Exception as e:
+            msg = f"{name} → 변환 실패 ({e})"
+            if failed_list is not None:
+                failed_list.append(msg)
+            print(f"[WARN] 파일 변환 실패: {p} -> {e}\n")
+
+    return out_paths
