@@ -62,6 +62,37 @@ def parse_csv_text(text: str) -> List[Dict[str, Any]]:
     headers = [f"c{i}" for i in range(max_cols)]
     return [{headers[i]: (r[i] if i < len(r) else None) for i in range(max_cols)} for r in rows]
 
+def _etree_to_dict(t: ET.Element) -> Dict[str, Any]:
+    d = {t.tag: {} if t.attrib else None}
+    children = list(t)
+    if children:
+        dd: Dict[str, Any] = {}
+        for dc in map(_etree_to_dict, children):
+            for k, v in dc.items():
+                if k in dd:
+                    if not isinstance(dd[k], list):
+                        dd[k] = [dd[k]]
+                    dd[k].append(v)
+                else:
+                    dd[k] = v
+        d = {t.tag: dd}
+    if t.attrib:
+        d[t.tag].update(('@' + k, v) for k, v in t.attrib.items())
+    if t.text:
+        tx = t.text.strip()
+        if children or t.attrib:
+            if tx:
+                d[t.tag]['#text'] = tx
+        else:
+            d[t.tag] = tx
+    return d
+
+def xml_to_json(xml_file: str, json_file: str) -> None:
+    tree = ET.parse(xml_file)
+    root = tree.getroot()
+    data_dict = _etree_to_dict(root)
+    Path(json_file).write_text(json.dumps(data_dict, ensure_ascii=False, indent=2), encoding="utf-8")
+
 def csv_to_json(csv_file: str, json_file: str) -> None:
     text = Path(csv_file).read_text(encoding="utf-8", errors="ignore")
     rows = parse_csv_text(text)
@@ -98,6 +129,8 @@ def convert_files_to_json(
             if ext == ".json":
                 data = json.loads(p.read_text(encoding="utf-8"))
                 out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            elif ext == ".xml":
+                xml_to_json(str(p), str(out_path))
             elif ext == ".csv":
                 csv_to_json(str(p), str(out_path))
             out_paths.append(str(out_path))
@@ -105,6 +138,6 @@ def convert_files_to_json(
             msg = f"{name} → 변환 실패 ({e})"
             if failed_list is not None:
                 failed_list.append(msg)
-            print(f"[WARN] 파일 변환 실패: {p} -> {e}\n")
+            print(f"[WARN] 파일 변환 실패: {p} -> {e}")
 
     return out_paths
