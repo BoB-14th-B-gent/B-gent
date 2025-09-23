@@ -3,9 +3,9 @@ import json
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from file_preprocessing import BASE_DIR, convert_files_to_json, DATA_DIR, SUPPORTED_EXTS
-from text_preprocessing import inline_to_grouped_json, write_inline_group_to_file
-from db_upload import upload_file
+from .file_preprocessing import BASE_DIR, convert_files_to_json, DATA_DIR, SUPPORTED_EXTS
+from .text_preprocessing import inline_to_grouped_json, write_inline_group_to_file
+from infra.db import upload_file
 
 SUPPORTED_INPUT_EXTS = {".json", ".jsonl", ".xml", ".csv"}
 
