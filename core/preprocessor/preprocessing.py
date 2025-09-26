@@ -126,7 +126,7 @@ if __name__ == "__main__":
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_paths: List[str] = []
-
+    
     if file_names:
         out_paths += convert_files_to_json(file_names, out_dir=str(out_dir))
 
@@ -144,7 +144,7 @@ if __name__ == "__main__":
         ip = Path(args.input)
         if ip.exists():
             input_raw = ip.read_text(encoding="utf-8")
-
+    
     unsupported_from_input = collect_unsupported_existing_files_from_input(args.input)
 
     files_for_agents = set(unsupported_from_input)
@@ -156,17 +156,31 @@ if __name__ == "__main__":
         json.dump({"files": sorted(files_for_agents), "input": input_raw}, f, ensure_ascii=False, indent=2)
     print(f"\nto_agents.json 생성: {to_agents_json_path}")
 
+    cleaned: List[str] = []
+    for p in out_paths:
+        pp = Path(p)
+        if pp.is_file():
+            cleaned.append(str(pp))
+        else:
+            t = "dir" if pp.is_dir() else "other"
+            print(f"[WARN] 산출물이 파일이 아님(스킵): {pp} (type={t})")
+    out_paths = cleaned
+
     print("\nMongoDB 업로드 중...")
     results = []
     for p in out_paths:
-        res = upload_file(
-            file_path=p,
-            collection=args.collection,
-            detected_type="json",
-            mode=args.mode,
-            inline_threshold_bytes=args.inline_threshold,
-        )
-        results.append({"file": p, **res})
+        try:
+            res = upload_file(
+                file_path=p,
+                collection=args.collection,
+                detected_type="json",
+                mode=args.mode,
+                inline_threshold_bytes=args.inline_threshold,
+            )
+            results.append({"file": p, **res})
+        except Exception as e:
+            results.append({"file": p, "error": str(e)})
+            print(f"[WARN] 업로드 실패: {p} -> {e}")
 
     print("\n업로드 결과 요약:")
     print(json.dumps(results, ensure_ascii=False, indent=2, default=str))
