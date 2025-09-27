@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 
 from .file_preprocessing import BASE_DIR, convert_files_to_json, DATA_DIR, SUPPORTED_EXTS
 from .text_preprocessing import inline_to_grouped_json, write_inline_group_to_file
-from infra.db import upload_file
+from infra.db import preprocessor_upload_file, preprocessor_save_prompt
 
 SUPPORTED_INPUT_EXTS = {".json", ".jsonl", ".xml", ".csv"}
 
@@ -102,7 +102,7 @@ def list_unsupported_existing_files_in_data() -> List[str]:
             continue
         ext = p.suffix.lower()
         if (not ext) or (ext not in SUPPORTED_EXTS):
-            if p.name in {".gitkeep"}:
+            if p.name in {".gitkeep", ".DS_Store"}:
                 continue
             out.append(str(p.relative_to(DATA_DIR)))
     return out
@@ -113,7 +113,6 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--all-data", action="store_true", help="data/ 폴더의 모든 지원 파일 자동 인식 (또한 to_agents에 data 내 비지원 확장자도 포함)")
     ap.add_argument("--out", "-o", help="출력 JSON 디렉토리", default=str((BASE_DIR / "out_json")))
     ap.add_argument("--inline-filename", default="inline_batch.json", help="인라인 묶음 JSON 파일명")
-    ap.add_argument("--collection", required=True, help="MongoDB 컬렉션명")
     ap.add_argument("--mode", choices=["auto","inline","gridfs"], default="auto", help="저장 전략")
     ap.add_argument("--inline-threshold", type=int, default=10*1024*1024, help="인라인 임계치(바이트)")
     return ap
@@ -151,10 +150,14 @@ if __name__ == "__main__":
     if args.all_data:
         files_for_agents.update(list_unsupported_existing_files_in_data())
 
-    to_agents_json_path = (BASE_DIR / "to_agents.json").resolve()
-    with open(to_agents_json_path, "w", encoding="utf-8") as f:
-        json.dump({"files": sorted(files_for_agents), "input": input_raw}, f, ensure_ascii=False, indent=2)
-    print(f"\nto_agents.json 생성: {to_agents_json_path}")
+    prompt_id = preprocessor_save_prompt(
+        user_prompt=input_raw,
+        unprocessed_filenames=sorted(files_for_agents),
+        inline_text_blobs=[],
+        attachments=[],
+        context_tags=[],
+    )
+    print(f"\nPROMPT 저장 완료: _id={prompt_id}")
 
     cleaned: List[str] = []
     for p in out_paths:
@@ -170,12 +173,12 @@ if __name__ == "__main__":
     results = []
     for p in out_paths:
         try:
-            res = upload_file(
+            res = preprocessor_upload_file(
                 file_path=p,
-                collection=args.collection,
                 detected_type="json",
                 mode=args.mode,
                 inline_threshold_bytes=args.inline_threshold,
+                extra_meta={"prompt_ref": prompt_id},
             )
             results.append({"file": p, **res})
         except Exception as e:

@@ -2,30 +2,12 @@ import json
 import csv
 import io
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Iterable
+from typing import Any, Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = BASE_DIR / "data"
 SUPPORTED_EXTS = {".json", ".jsonl", ".xml", ".csv"}
-
-ROWS_PER_CHUNK_CSV = 50_000
-ROWS_PER_CHUNK_JSONL = 50_000
-ROWS_PER_CHUNK_XML = 20_000
-MAX_BYTES_PER_CHUNK_JSON = 5 * 1024 * 1024  # 5MB
-
-def _write_json_array_chunk(out_path: Path, rows: Iterable[dict]) -> str:
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w", encoding="utf-8") as f:
-        f.write("[\n")
-        first = True
-        for row in rows:
-            if not first:
-                f.write(",\n")
-            f.write(json.dumps(row, ensure_ascii=False))
-            first = False
-        f.write("\n]\n")
-    return str(out_path)
 
 def resolve_data_path(filename: str) -> Path:
     p = DATA_DIR / filename
@@ -105,202 +87,49 @@ def _etree_to_dict(t: ET.Element) -> Dict[str, Any]:
             d[t.tag] = tx
     return d
 
-def xml_to_json(xml_file: str, out_dir: str, record_tag: Optional[str] = None) -> List[str]:
-    src = Path(xml_file)
-    out_root = Path(out_dir)
-    out_paths: List[str] = []
+def xml_to_json(xml_file: str, json_file: str) -> None:
+    tree = ET.parse(xml_file)
+    root = tree.getroot()
+    data_dict = _etree_to_dict(root)
+    Path(json_file).write_text(json.dumps(data_dict, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    # (선택) record_tag 추정
-    guess = record_tag
-    if guess is None:
-        try:
-            counts = {}
-            for ev, el in ET.iterparse(str(src), events=("start",)):
-                if list(el):
-                    counts[el.tag] = counts.get(el.tag, 0) + 1
-                if sum(counts.values()) > 30_000:
-                    break
-            if counts:
-                guess = max(counts, key=counts.get)
-        except Exception:
-            guess = None
+def jsonl_to_json(jsonl_file: str, json_file: str) -> None:
+    decoder = json.JSONDecoder()
+    out = []
+    bad_lines = 0
 
-    def _elem_to_obj(e: ET.Element) -> Dict[str, Any]:
-        d: Dict[str, Any] = {}
-        if e.attrib:
-            d.update(e.attrib)
-        text = (e.text or "").strip()
-        if text:
-            d["_text"] = text
-        for child in e:
-            obj = _elem_to_obj(child)
-            d.setdefault(child.tag, [])
-            d[child.tag].append(obj)
-        return d
-
-    batch: List[dict] = []
-    part = 0
-    for ev, el in ET.iterparse(str(src), events=("end",)):
-        if guess and el.tag != guess:
-            continue
-        if not list(el) and not el.attrib and not (el.text or "").strip():
-            el.clear()
-            continue
-        batch.append(_elem_to_obj(el))
-        el.clear()
-        if len(batch) >= ROWS_PER_CHUNK_XML:
-            part += 1
-            out_path = out_root / f"{src.stem}.part{part:04d}.json"
-            out_paths.append(_write_json_array_chunk(out_path, batch))
-            batch.clear()
-
-    if batch:
-        part += 1
-        out_path = out_root / f"{src.stem}.part{part:04d}.json"
-        out_paths.append(_write_json_array_chunk(out_path, batch))
-
-    return out_paths
-
-def jsonl_to_json(jsonl_file: str, out_dir: str) -> List[str]:
-    src = Path(jsonl_file)
-    out_root = Path(out_dir)
-    out_paths: List[str] = []
-
-    batch: List[dict] = []
-    part = 0
-    with src.open("r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            s = line.strip()
+    with open(jsonl_file, "r", encoding="utf-8", errors="ignore") as f:
+        for raw in f:
+            s = raw.strip()
             if not s:
                 continue
-            try:
-                batch.append(json.loads(s))
-            except Exception:
-                batch.append({"_raw": s})
-            if len(batch) >= ROWS_PER_CHUNK_JSONL:
-                part += 1
-                out_path = out_root / f"{src.stem}.part{part:04d}.json"
-                out_paths.append(_write_json_array_chunk(out_path, batch))
-                batch.clear()
 
-    if batch:
-        part += 1
-        out_path = out_root / f"{src.stem}.part{part:04d}.json"
-        out_paths.append(_write_json_array_chunk(out_path, batch))
+            i, n = 0, len(s)
+            parsed_any = False
 
-    return out_paths
+            while i < n:
+                while i < n and (s[i].isspace() or s[i] in ",;"):
+                    i += 1
+                if i >= n:
+                    break
 
-def csv_to_json(csv_file: str, out_dir: str) -> List[str]:
-    src = Path(csv_file)
-    out_root = Path(out_dir)
-    out_paths: List[str] = []
-
-    with src.open("r", encoding="utf-8", newline="") as f:
-        sample = f.read(65536)
-        f.seek(0)
-        try:
-            dialect = csv.Sniffer().sniff(sample, delimiters=",\t")
-        except Exception:
-            class _D: ...
-            dialect = _D(); dialect.delimiter=","; dialect.quotechar='"'
-        try:
-            has_header = csv.Sniffer().has_header(sample)
-        except Exception:
-            has_header = True
-
-        reader = csv.reader(f, delimiter=dialect.delimiter, quotechar=getattr(dialect, "quotechar", '"'))
-        first_row = next(reader, None)
-        if first_row is None:
-            return out_paths
-
-        if has_header:
-            headers = first_row
-            iter_rows = reader
-        else:
-            headers = [f"col_{i}" for i in range(len(first_row))]
-            iter_rows = iter([first_row] + list(reader))
-
-        batch: List[dict] = []
-        part = 0
-        for row in iter_rows:
-            doc = {headers[i]: (row[i] if i < len(row) else None) for i in range(len(headers))}
-            batch.append(doc)
-            if len(batch) >= ROWS_PER_CHUNK_CSV:
-                part += 1
-                out_path = out_root / f"{src.stem}.part{part:04d}.json"
-                out_paths.append(_write_json_array_chunk(out_path, batch))
-                batch.clear()
-
-        if batch:
-            part += 1
-            out_path = out_root / f"{src.stem}.part{part:04d}.json"
-            out_paths.append(_write_json_array_chunk(out_path, batch))
-
-    return out_paths
-
-def _json_to_json_chunks(json_file: str, out_dir: str) -> List[str]:
-    src = Path(json_file)
-    out_root = Path(out_dir)
-    out_paths: List[str] = []
-    text = src.read_text(encoding="utf-8", errors="ignore").strip()
-
-    if text.startswith("{"):
-        obj = json.loads(text)
-        out_path = out_root / f"{src.stem}.part0001.json"
-        _write_json_array_chunk(out_path, [obj])
-        return [str(out_path)]
-
-    if text.startswith("[") and text.endswith("]"):
-        text = text[1:-1]
-
-    buf: List[dict] = []
-    cur_bytes = 0
-    part = 0
-    depth = 0
-    in_str = False
-    esc = False
-    obj_buf: List[str] = []
-
-    for ch in text:
-        if in_str:
-            obj_buf.append(ch)
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True; obj_buf.append(ch)
-        elif ch == "{":
-            depth += 1; obj_buf.append(ch)
-        elif ch == "}":
-            depth -= 1; obj_buf.append(ch)
-            if depth == 0:
                 try:
-                    obj = json.loads("".join(obj_buf))
-                except Exception:
-                    obj = {"_raw": "".join(obj_buf)}
-                s = json.dumps(obj, ensure_ascii=False)
-                if cur_bytes + len(s) > MAX_BYTES_PER_CHUNK_JSON and buf:
-                    part += 1
-                    out_path = out_root / f"{src.stem}.part{part:04d}.json"
-                    out_paths.append(_write_json_array_chunk(out_path, buf))
-                    buf, cur_bytes = [], 0
-                buf.append(obj)
-                cur_bytes += len(s)
-                obj_buf = []
-        else:
-            if depth > 0 or ch not in " \n\r\t,":
-                obj_buf.append(ch)
+                    obj, end = decoder.raw_decode(s, i)
+                    out.append(obj)
+                    parsed_any = True
+                    i = end
+                except json.JSONDecodeError:
+                    i += 1
 
-    if buf:
-        part += 1
-        out_path = out_root / f"{src.stem}.part{part:04d}.json"
-        out_paths.append(_write_json_array_chunk(out_path, buf))
+            if not parsed_any:
+                bad_lines += 1
 
-    return out_paths
+    Path(json_file).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def csv_to_json(csv_file: str, json_file: str) -> None:
+    text = Path(csv_file).read_text(encoding="utf-8", errors="ignore")
+    rows = parse_csv_text(text)
+    Path(json_file).write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def convert_files_to_json(
     file_names: List[str],
@@ -328,15 +157,18 @@ def convert_files_to_json(
             print(f"[WARN] {msg}\n")
             continue
 
+        out_path = Path(out_dir) / f"{p.stem}.json"
         try:
             if ext == ".json":
-                out_paths += _json_to_json_chunks(str(p), out_dir)
+                data = json.loads(p.read_text(encoding="utf-8"))
+                out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             elif ext == ".jsonl":
-                out_paths += jsonl_to_json(str(p), out_dir)
+                jsonl_to_json(str(p), str(out_path))
             elif ext == ".xml":
-                out_paths += xml_to_json(str(p), out_dir)
+                xml_to_json(str(p), str(out_path))
             elif ext == ".csv":
-                out_paths += csv_to_json(str(p), out_dir)
+                csv_to_json(str(p), str(out_path))
+            out_paths.append(str(out_path))
         except Exception as e:
             msg = f"{name} → 변환 실패 ({e})"
             if failed_list is not None:
