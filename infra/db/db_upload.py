@@ -340,3 +340,63 @@ def agent_finish_trigger_ready(
         {"$set": {"status": "ready", "timeframe.end": _now()}}
     )
     return res.modified_count == 1
+
+def worker_lock_trigger_ready_to_processing(trigger_id: ObjectId | str) -> bool:
+    _tid = ObjectId(trigger_id) if not isinstance(trigger_id, ObjectId) else trigger_id
+    c = get_client(); db = get_db(c)
+    res = db[TRIGGER_COLL].update_one(
+        {"_id": _tid, "status": "ready"},
+        {"$set": {"status": "processing", "started_at": _now()}}
+    )
+    return res.modified_count == 1
+
+def _run_key(sources: List[str], evidence_refs: List[Dict[str, Any]]) -> str:
+    h = hashlib.sha256()
+    h.update(",".join(sorted(sources or [])).encode())
+    for r in sorted(evidence_refs, key=lambda x: f"{x.get('collection')}:{x.get('id')}"):
+        h.update(str(r.get("collection")).encode())
+        h.update(str(r.get("id")).encode())
+    return h.hexdigest()[:16]
+
+def worker_save_report_and_mark_done(
+    *,
+    trigger_id: ObjectId | str,
+    batch_id: str,
+    sources: List[str],
+    timeframe: Dict[str, Any],
+    evidence_refs: List[Dict[str, Any]],
+    report_text: str,
+    model: str,
+    prompt_ref: Optional[ObjectId] = None,
+    refine_of: Optional[ObjectId] = None,
+    confidence: Optional[Dict[str, Any]] = None,
+) -> ObjectId:
+    _tid = ObjectId(trigger_id) if not isinstance(trigger_id, ObjectId) else trigger_id
+    c = get_client(); db = get_db(c)
+
+    rk = _run_key(sources, evidence_refs)
+    existing = db[REPORTS_COLL].find_one({"run_key": rk}, {"_id": 1})
+    if existing:
+        rid = existing["_id"]
+    else:
+        report = {
+            "batch_id": batch_id,
+            "created_at": _now(),
+            "timeframe": timeframe or {},
+            "sources": sources or [],
+            "model": model,
+            "evidence_refs": evidence_refs or [],
+            "prompt_ref": prompt_ref,
+            "refine_of": refine_of,
+            "report_text": report_text or "",
+            "run_key": rk,
+            "confidence": confidence or {},
+            "schema_version": 1,
+        }
+        rid = db[REPORTS_COLL].insert_one(report).inserted_id
+
+    db[TRIGGER_COLL].update_one(
+        {"_id": _tid, "status": "processing"},
+        {"$set": {"status": "done", "finished_at": _now(), "report_id": rid}}
+    )
+    return rid
