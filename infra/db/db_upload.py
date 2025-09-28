@@ -225,3 +225,118 @@ def preprocessor_save_prompt(
         "context_tags": context_tags or [],
     }
     return db[PROMPT_COLL].insert_one(doc).inserted_id
+
+def agent_mcp_insert_inline(
+    *,
+    batch_id: str,
+    source: str,
+    data: Dict[str, Any],
+    message: Optional[str] = None,
+) -> ObjectId:
+    c = get_client(); db = get_db(c)
+    doc = {
+        "batch_id": batch_id,
+        "created_at": _now(),
+        "source": source,
+        "storage": "inline",
+        "data": data,
+        "message": message or "",
+    }
+    return db[MCP_EVIDENCE_COLL].insert_one(doc).inserted_id
+
+def agent_mcp_upload_file(
+    file_path: str,
+    *,
+    batch_id: str,
+    source: str,
+    detected_type: Optional[str] = None,
+    mode: str = "auto",
+    inline_threshold_bytes: int = 10 * 1024 * 1024,
+    message: Optional[str] = None,
+) -> ObjectId:
+    r = upload_file(
+        file_path=file_path,
+        collection=MCP_EVIDENCE_COLL,
+        detected_type=detected_type,
+        mode=mode,
+        inline_threshold_bytes=inline_threshold_bytes,
+    )
+    c = get_client(); db = get_db(c)
+    db[MCP_EVIDENCE_COLL].update_one(
+        {"_id": ObjectId(r["meta_id"])},
+        {"$set": {
+            "batch_id": batch_id,
+            "source": source,
+            "created_at": _now(),
+            "storage": "gridfs" if "gridfs_id" in r else "inline",
+            "message": message or "",
+        }}
+    )
+    return ObjectId(r["meta_id"])
+
+def agent_start_trigger(
+    *,
+    batch_id: str,
+    sources: List[str],
+    prompt_ref: Optional[ObjectId] = None,
+    include_all_input: bool = True,
+    max_refs_per_trigger: Optional[int] = None,
+) -> ObjectId:
+    c = get_client(); db = get_db(c)
+    snapshot_ts = _now()
+
+    refs: List[Dict[str, Any]] = []
+    if include_all_input:
+        q = {"created_at": {"$lte": snapshot_ts}}
+        proj = {"_id": 1}
+        cur = db[INPUT_EVIDENCE_COLL].find(q, proj).sort([("_id", 1)])
+        if max_refs_per_trigger and max_refs_per_trigger > 0:
+            cur = cur.limit(max_refs_per_trigger)
+        refs = [{"collection": INPUT_EVIDENCE_COLL, "id": d["_id"]} for d in cur]
+
+    doc = {
+        "batch_id": batch_id,
+        "sources": sources or [],
+        "status": "collecting",
+        "created_at": snapshot_ts,
+        "timeframe": {"start": snapshot_ts},
+        "evidence_refs": refs,
+        "prompt_ref": prompt_ref,
+        "schema_version": 1,
+        "snapshot": {
+            "inputs_cutoff": snapshot_ts,
+            "inputs_count": len(refs),
+        },
+    }
+    return db[TRIGGER_COLL].insert_one(doc).inserted_id
+
+def agent_append_mcp_evidence(
+    *,
+    trigger_id: ObjectId | str,
+    mcp_evidence_ids: List[ObjectId | str],
+) -> bool:
+    _tid = ObjectId(trigger_id) if not isinstance(trigger_id, ObjectId) else trigger_id
+    ids = [ObjectId(x) if not isinstance(x, ObjectId) else x for x in (mcp_evidence_ids or [])]
+    if not ids:
+        return False
+
+    c = get_client(); db = get_db(c)
+    res = db[TRIGGER_COLL].update_one(
+        {"_id": _tid, "status": {"$in": ["collecting", "ready"]}},
+        {"$push": {"evidence_refs": {"$each": [
+            {"collection": MCP_EVIDENCE_COLL, "id": _id} for _id in ids
+        ]}}}
+    )
+    return res.modified_count == 1
+
+def agent_finish_trigger_ready(
+    *,
+    trigger_id: ObjectId | str,
+) -> bool:
+    _tid = ObjectId(trigger_id) if not isinstance(trigger_id, ObjectId) else trigger_id
+    c = get_client(); db = get_db(c)
+    res = db[TRIGGER_COLL].update_one(
+        {"_id": _tid, "status": "collecting"},
+        {"$set": {"status": "ready", "timeframe.end": _now()}}
+    )
+    return res.modified_count == 1
