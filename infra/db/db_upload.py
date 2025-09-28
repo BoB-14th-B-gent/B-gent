@@ -1,16 +1,30 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from pathlib import Path
-import time, json, mimetypes, hashlib
-from pymongo import MongoClient
+import time, json, mimetypes, hashlib, os
+from datetime import datetime, timezone
+from bson import ObjectId
 from bson.binary import Binary
+from pymongo import MongoClient
 import gridfs
+from dotenv import load_dotenv
 
-MONGO_URI = "mongodb://localhost:27017"
-DB_NAME = "test"
+load_dotenv()
+
+MONGO_URI = os.getenv("MONGO_URI")
+DB_NAME = os.getenv("DB_NAME")
 
 MAX_INLINE_JSON_BYTES = 1 * 1024 * 1024
-GRIDFS_SAMPLE_BYTES   = 64 * 1024
-BSON_DOC_HARD_LIMIT   = 16 * 1024 * 1024
+GRIDFS_SAMPLE_BYTES = 64 * 1024
+BSON_DOC_HARD_LIMIT = 16 * 1024 * 1024
+
+INPUT_EVIDENCE_COLL = os.getenv("INPUT_EVIDENCE_COLL")
+PROMPT_COLL = os.getenv("PROMPT_COLL")
+MCP_EVIDENCE_COLL = os.getenv("MCP_EVIDENCE_COLL")
+TRIGGER_COLL = os.getenv("TRIGGER_COLL")
+REPORTS_COLL = os.getenv("REPORTS_COLL")
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 def get_client() -> MongoClient:
     return MongoClient(MONGO_URI)
@@ -68,6 +82,7 @@ def store_file_to_gridfs(fs: gridfs.GridFS, path: str, extra_meta: Optional[Dict
     }
 
 def insert_file_meta(db, collection: str, meta_doc: Dict[str, Any]) -> str:
+    meta_doc.setdefault("created_at", _now())
     res = db[collection].insert_one(meta_doc)
     return str(res.inserted_id)
 
@@ -129,7 +144,6 @@ def upload_file(
                 meta_doc["stats"]["parse_error"] = str(e)
                 raw = p.read_bytes()
                 if len(raw) >= BSON_DOC_HARD_LIMIT - 1024:
-                    # 그래도 너무 크면 gridfs로 전환
                     strategy = "gridfs"
                 else:
                     meta_doc["raw"] = Binary(raw)
@@ -169,3 +183,45 @@ def upload_file(
             client.close()
         except Exception:
             pass
+
+def preprocessor_upload_file(
+    file_path: str,
+    *,
+    detected_type: Optional[str] = None,
+    mode: str = "auto",
+    inline_threshold_bytes: int = 10 * 1024 * 1024,
+    extra_meta: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    res = upload_file(
+        file_path=file_path,
+        collection=INPUT_EVIDENCE_COLL,
+        detected_type=detected_type,
+        mode=mode,
+        inline_threshold_bytes=inline_threshold_bytes,
+    )
+    if extra_meta:
+        c = get_client(); db = get_db(c)
+        db[INPUT_EVIDENCE_COLL].update_one(
+            {"_id": ObjectId(res["meta_id"])},
+            {"$set": extra_meta}
+        )
+    return res
+
+def preprocessor_save_prompt(
+    *,
+    user_prompt: str,
+    unprocessed_filenames: Optional[List[str]] = None,
+    inline_text_blobs: Optional[List[Dict[str, str]]] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None,
+    context_tags: Optional[List[str]] = None,
+) -> ObjectId:
+    c = get_client(); db = get_db(c)
+    doc = {
+        "created_at": _now(),
+        "user_prompt": user_prompt,
+        "unprocessed_filenames": unprocessed_filenames or [],
+        "inline_text_blobs": inline_text_blobs or [],
+        "attachments": attachments or [],
+        "context_tags": context_tags or [],
+    }
+    return db[PROMPT_COLL].insert_one(doc).inserted_id
