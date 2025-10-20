@@ -1,0 +1,37 @@
+{
+  "servers": [
+    {
+      "name": "elastic",
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/Users/me0w2en/Documents/8-BoB/elasticsearch-mcp-server",
+        "run",
+        "elasticsearch-mcp-server"
+      ],
+      "env": {
+        "ELASTICSEARCH_HOSTS": "https://localhost:9200",
+        "ELASTICSEARCH_USERNAME": "elastic",
+        "ELASTICSEARCH_PASSWORD": "test123"
+      },
+      "enabled": true
+    },
+    {
+      "name": "velociraptor",
+      "command": "/Users/me0w2en/Documents/8-BoB/velociraptor/mcp-velociraptor/.venv/bin/python",
+      "args": ["/Users/me0w2en/Documents/8-BoB/velociraptor/mcp-velociraptor/mcp_velociraptor_bridge.py"],
+      "enabled": true
+    },
+    {
+      "name": "sleuthkit",
+      "command": "/Users/me0w2en/Documents/8-BoB/sleuthkit-mcp-server/.venv/bin/python",
+      "args": [
+        "/Users/me0w2en/Documents/8-BoB/sleuthkit-mcp-server/sleuthkit_mcp_server.py"
+      ],
+      "env": {
+        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+      },
+      "enabled": true
+    }
+  ]
+}
