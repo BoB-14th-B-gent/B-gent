@@ -14,7 +14,15 @@ def is_supported_file_name(s: str) -> bool:
     return p.suffix.lower() in SUPPORTED_INPUT_EXTS
 
 def _exists_in_data_or_abs(name: str) -> bool:
-    p = Path(name.strip().strip('\'"'))
+    s = name.strip().strip('\'"')
+
+    if len(s) > 255:
+        return False
+
+    if s.startswith("{") or s.startswith("[") or s.startswith("<") or "\t" in s or "," in s:
+        return False
+
+    p = Path(s)
     if p.is_absolute():
         return p.exists()
     return (DATA_DIR / p).exists()
@@ -107,12 +115,65 @@ def list_unsupported_existing_files_in_data() -> List[str]:
             out.append(str(p.relative_to(DATA_DIR)))
     return out
 
+def looks_like_structured_data(s: str) -> bool:
+    s = s.strip()
+    if not s:
+        return False
+    if s.startswith("{") or s.startswith("["):
+        try:
+            json.loads(s)
+            return True
+        except Exception:
+            pass
+    if s.startswith("<") and s.endswith(">"):
+        return True
+    if ("," in s or "\t" in s) and not any(ch in s for ch in "{}<>"):
+        return True
+    return False
+
+
+def clean_prompt_text(
+    input_txt: Optional[str],
+    file_names: List[str],
+    inline_blocks: List[str],
+    files_for_agents: List[str]
+) -> str:
+    if not input_txt:
+        return ""
+
+    p = Path(input_txt)
+    if not p.exists():
+        return ""
+
+    raw = p.read_text(encoding="utf-8")
+    lines = raw.splitlines()
+    cleaned_lines = []
+
+    known_files = set(file_names) | set(files_for_agents)
+    known_files_lower = {Path(f).name.lower() for f in known_files}
+
+    for ln in lines:
+        s = ln.strip()
+        if not s:
+            continue
+
+        if Path(s).name.lower() in known_files_lower:
+            continue
+
+        if looks_like_structured_data(s):
+            continue
+
+        cleaned_lines.append(s)
+
+    return "\n".join(cleaned_lines).strip()
+
 def build_argparser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Preprocess files (in data/) & inline texts, then upload to MongoDB.")
     ap.add_argument("--input", "-i", help="input.txt 경로", default=None)
     ap.add_argument("--all-data", action="store_true", help="data/ 폴더의 모든 지원 파일 자동 인식 (또한 to_agents에 data 내 비지원 확장자도 포함)")
     ap.add_argument("--out", "-o", help="출력 JSON 디렉토리", default=str((BASE_DIR / "out_json")))
     ap.add_argument("--inline-filename", default="inline_batch.json", help="인라인 묶음 JSON 파일명")
+    ap.add_argument("--no-inline-output", action="store_true", help="인라인 텍스트 묶음 파일(inline_batch.json) 생성을 건너뜁니다.")
     ap.add_argument("--mode", choices=["auto","inline","gridfs"], default="auto", help="저장 전략")
     ap.add_argument("--inline-threshold", type=int, default=10*1024*1024, help="인라인 임계치(바이트)")
     return ap
@@ -129,7 +190,7 @@ if __name__ == "__main__":
     if file_names:
         out_paths += convert_files_to_json(file_names, out_dir=str(out_dir))
 
-    if inline_blocks:
+    if inline_blocks and not args.no_inline_output:
         grouped = inline_to_grouped_json(inline_blocks)
         inline_out_path = str(out_dir / args.inline_filename)
         out_paths.append(write_inline_group_to_file(grouped, inline_out_path))
@@ -150,8 +211,10 @@ if __name__ == "__main__":
     if args.all_data:
         files_for_agents.update(list_unsupported_existing_files_in_data())
 
+    clean_prompt = clean_prompt_text(args.input, file_names, inline_blocks, sorted(files_for_agents))
+
     prompt_id = preprocessor_save_prompt(
-        user_prompt=input_raw,
+        user_prompt=clean_prompt,
         unprocessed_filenames=sorted(files_for_agents),
         inline_text_blobs=[],
         attachments=[],
