@@ -132,3 +132,75 @@ def query_mcp_candidates(text: str, file_meta: dict = None, top_k: int = 5) -> l
 
     return out
 
+
+def query_mcp_for_task(task_description: str, task_metadata: Dict[str, Any] = None, top_k: int = 5) -> list[dict]:
+    """High-level Task를 임베딩하여 관련 MCP 도구 검색 (Phase 2)
+
+    Task 설명을 벡터화하여 ChromaDB에서 관련 도구 검색
+    기존 query_mcp_candidates와 동일하지만 Task 특화 처리 추가
+
+    Args:
+        task_description: Task 설명 (예: "디스크 이미지에서 악성 파일 추출")
+        task_metadata: Task 메타데이터 (tool_hint, priority 등)
+        top_k: 반환할 최대 결과 수 (기본값: 5)
+
+    Returns:
+        list[dict]: 검색된 MCP 도구/문서 목록
+
+    로직:
+        1. Task 설명 + 메타데이터를 조합하여 검색 쿼리 생성
+        2. tool_hint가 있으면 가중치 부여 (쿼리에 명시)
+        3. ChromaDB 벡터 검색 수행
+        4. 검색 결과 반환
+
+    Example:
+        >>> task = HighLevelTask(
+        ...     description="디스크 이미지에서 의심 파일 추출",
+        ...     metadata={"tool_hint": "sleuthkit", "priority": "high"}
+        ... )
+        >>> candidates = query_mcp_for_task(task.description, task.metadata)
+        >>> # 결과: [sleuthkit.extract_files_by_inode, sleuthkit.disk_partition_info, ...]
+    """
+    if _RAG_DISABLED:
+        print("⚠️  RAG가 비활성화되어 있습니다. Task용 MCP 도구를 검색할 수 없습니다.")
+        return []
+
+    _load_mcp_tools_if_needed()
+
+    query_parts = [task_description]
+
+    if task_metadata and task_metadata.get("tool_hint"):
+        tool_hint = task_metadata["tool_hint"]
+        query_parts.append(f"도구: {tool_hint}")
+        query_parts.append(f"tool: {tool_hint}")
+
+    if task_metadata:
+        for key, value in task_metadata.items():
+            if key != "tool_hint" and isinstance(value, str):
+                query_parts.append(f"{key}: {value}")
+
+    query_text = "\n".join(query_parts)
+
+    res = _coll.query(query_texts=[query_text], n_results=top_k)
+    out = []
+
+    if res and res.get("ids"):
+        for i in range(len(res["ids"][0])):
+            result_item = {
+                "id": res["ids"][0][i],
+                "meta": res["metadatas"][0][i] if res.get("metadatas") else {}
+            }
+
+            if res.get("documents") and i < len(res["documents"][0]):
+                result_item["document"] = res["documents"][0][i]
+
+            out.append(result_item)
+
+    if task_metadata and task_metadata.get("tool_hint"):
+        tool_hint = task_metadata["tool_hint"]
+        matching = [item for item in out if item.get("meta", {}).get("server") == tool_hint]
+        non_matching = [item for item in out if item.get("meta", {}).get("server") != tool_hint]
+        out = matching + non_matching
+
+    return out
+

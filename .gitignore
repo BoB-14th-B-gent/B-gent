@@ -36,12 +36,14 @@ wheels/
 # ChromaDB
 data/chroma/
 
-# Extracted files (temporary analysis data)
+# Extracted files 
 data/extracted_files/
 
-# Large evidence files (optional - uncomment if you want to exclude them)
-# data/*.E*
-# data/*.txt
+# reports
+data/reports/
+
+# Disk evidence files
+data/*.E*
 
 # IDE
 .vscode/

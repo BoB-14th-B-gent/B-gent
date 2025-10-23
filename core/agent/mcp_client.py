@@ -198,14 +198,30 @@ class MCPClientManager:
         """특정 서버의 도구 목록만 반환"""
         return self.tools_cache.get(server_name, [])
 
-    async def call_tool(self, server_name: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """MCP 도구 호출"""
+    async def call_tool(self, server_name: str, tool_name: str, arguments: Dict[str, Any], timeout: Optional[float] = None) -> Dict[str, Any]:
+        """MCP 도구 호출 (타임아웃 지원)
+
+        Args:
+            server_name: 서버 이름
+            tool_name: 도구 이름
+            arguments: 도구 인자
+            timeout: 타임아웃 (초), None이면 무제한
+
+        Returns:
+            Dict[str, Any]: 실행 결과
+        """
         if server_name not in self.sessions:
             raise ValueError(f"MCP 서버가 연결되지 않음: {server_name}")
         session = self.sessions[server_name]
 
         try:
-            result = await session.call_tool(tool_name, arguments=arguments)
+            if timeout:
+                result = await asyncio.wait_for(
+                    session.call_tool(tool_name, arguments=arguments),
+                    timeout=timeout
+                )
+            else:
+                result = await session.call_tool(tool_name, arguments=arguments)
             content_parts = []
 
             for item in result.content:
@@ -217,26 +233,50 @@ class MCPClientManager:
                     content_parts.append(json.dumps(item.data))
             result_text = "\n".join(content_parts) if content_parts else str(result.content)
             success = True
+            error_message = None
+
+            # isError 상태 확인 (디버깅용)
+            is_error_flag = result.isError if hasattr(result, 'isError') else False
+            if is_error_flag:
+                print(f"DEBUG: MCP 응답에 isError=True 플래그 설정됨")
+                print(f"DEBUG: result_text = {result_text[:500]}")
 
             try:
                 result_json = json.loads(result_text)
 
-                if "ok" in result_json:
+                if isinstance(result_json, dict) and "ok" in result_json:
                     success = result_json.get("ok", False)
+                    if not success:
+                        error_message = result_json.get("error", result_json.get("message", ""))
+                        if not error_message:
+                            error_message = f"MCP 도구 실행 실패 (ok=False, 응답: {str(result_json)[:300]})"
 
                 elif result.isError if hasattr(result, 'isError') else False:
                     success = False
+                    if isinstance(result_json, dict):
+                        error_message = result_json.get("error", result_json.get("message", ""))
+                        if not error_message:
+                            error_message = f"MCP 도구 실행 중 에러 발생 (응답: {str(result_json)[:300]})"
+                    else:
+                        error_message = f"MCP 도구 실행 중 에러 발생 (응답: {str(result_json)[:300]})"
 
             except (json.JSONDecodeError, ValueError):
-
                 if result.isError if hasattr(result, 'isError') else False:
                     success = False
+                    error_message = f"MCP 응답 파싱 실패 (JSON 아님, isError=True): {result_text[:200]}"
 
-            return {
+            response = {
                 "success": success,
-                "result": result_text,
                 "is_error": result.isError if hasattr(result, 'isError') else False
             }
+
+            if success:
+                response["result"] = result_text
+            else:
+                response["error"] = error_message or f"알 수 없는 오류 (응답: {result_text[:200]})"
+                response["result"] = result_text
+
+            return response
 
         except Exception as e:
 
@@ -322,8 +362,18 @@ class MCPClientManagerSync:
 
         return self.manager.get_tools_by_server(server_name)
 
-    def call_tool(self, server_name: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """동기 방식 도구 호출"""
+    def call_tool(self, server_name: str, tool_name: str, arguments: Dict[str, Any], timeout: Optional[float] = None) -> Dict[str, Any]:
+        """동기 방식 도구 호출 (타임아웃 지원)
+
+        Args:
+            server_name: 서버 이름
+            tool_name: 도구 이름
+            arguments: 도구 인자
+            timeout: 타임아웃 (초), None이면 무제한
+
+        Returns:
+            Dict[str, Any]: 실행 결과
+        """
         if not self._initialized:
             self.initialize()
 
@@ -331,7 +381,7 @@ class MCPClientManagerSync:
             loop = self._get_or_create_loop()
 
             return loop.run_until_complete(
-                self.manager.call_tool(server_name, tool_name, arguments)
+                self.manager.call_tool(server_name, tool_name, arguments, timeout=timeout)
             )
 
         except Exception as e:

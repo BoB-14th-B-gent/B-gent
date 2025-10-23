@@ -1,15 +1,17 @@
 """메인 라우터 (오케스트레이터) 모듈
 
 작업 흐름을 관리하고 LangGraph 워크플로우를 실행
+Two-Stage Planning 지원
 """
 from __future__ import annotations
 import time
 import uuid
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Literal
 from .graph import create_workflow
 from .storage.mongo import save_job, save_result
-from .reporter import generate_report
 from .schemas.results import JobSummary
+
+WORKFLOW_MODE: Literal["simple", "two_stage"] = "two_stage"
 
 def run_job(
     user_prompt: str,
@@ -56,32 +58,68 @@ def run_job(
     job_id = uuid.uuid4().hex[:24]
     start_time = time.time()
     file_paths = file_paths or []
-    print("=" * 80)
-    print(f"🚀 B-gent 작업 시작")
-    print(f"   Job ID: {job_id}")
-    print(f"   요청: {user_prompt}")
 
+    print(f"Job ID: {job_id}")
+    print(f"요청: {user_prompt}")
     if file_paths:
         print(f"   파일: {', '.join(file_paths)}")
-    print("=" * 80)
-    initial_state = {
-        "job_id": job_id,
-        "user_prompt": user_prompt,
-        "file_paths": file_paths,
-        "file_meta": file_meta or {},
-        "plan": [],
-        "results": [],
-        "current_step": 0,
-        "completed": False,
-        "error": None
-    }
+        
+    if WORKFLOW_MODE == "two_stage":
+        initial_state = {
+            "job_id": job_id,
+            "user_prompt": user_prompt,
+            "file_paths": file_paths,
+            "file_meta": file_meta or {},
+            "high_level_tasks": [],
+            "task_queue_state": {},
+            "current_task": None,
+            "completed_tasks": [],
+            "plan": [],
+            "results": [],
+            "current_step": 0,
+            "timing": {
+                "high_level_planning": 0.0,
+                "tasks": {}
+            },
+            "completed": False,
+            "error": None
+        }
+    else:
+        initial_state = {
+            "job_id": job_id,
+            "user_prompt": user_prompt,
+            "file_paths": file_paths,
+            "file_meta": file_meta or {},
+            "plan": [],
+            "results": [],
+            "current_step": 0,
+            "completed": False,
+            "error": None
+        }
+
     save_job(job_id, initial_state)
 
     try:
-        workflow = create_workflow()
+        if WORKFLOW_MODE == "two_stage":
+            print(f"  Two-Stage Planning 모드")
+        else:
+            print(f"  Simple Planning 모드")
+
+        workflow = create_workflow(mode=WORKFLOW_MODE)
         final_state = workflow.invoke(initial_state)
         execution_time = time.time() - start_time
-        results = final_state.get("results", [])
+
+        if WORKFLOW_MODE == "two_stage":
+            completed_tasks = final_state.get("completed_tasks", [])
+            all_results = []
+            for task in completed_tasks:
+                task_results = task.get("execution_results", [])
+                all_results.extend(task_results)
+
+            results = all_results
+        else:
+            results = final_state.get("results", [])
+
         total_steps = len(results)
         success_count = sum(1 for r in results if r.get("success"))
         fail_count = total_steps - success_count
@@ -95,18 +133,13 @@ def run_job(
             execution_time_seconds=execution_time
         )
         save_result(job_id, final_state)
-        report_data = None
 
-        if generate_report_flag:
-            report_data = generate_report(final_state, report_dir)
         result = {
             "job_id": job_id,
             "summary": summary.to_dict(),
             "state": final_state
         }
 
-        if report_data:
-            result["report"] = report_data.to_dict()
         print("\n" + "=" * 80)
         print(f"   작업 완료 (Job ID: {job_id})")
         print(f"   실행 시간: {execution_time:.2f}초")
