@@ -84,13 +84,13 @@ class LLMClient:
 
         return {"choices":[{"message":{"content":content}}]}
 
-    def chat(self, messages: List[Dict[str, str]], response_format_json: bool = True, timeout: int = 60) -> Dict[str, Any]:
+    def chat(self, messages: List[Dict[str, str]], response_format_json: bool = True, timeout: Optional[int] = None) -> Dict[str, Any]:
         """LLM API 호출 (자동 폴백 지원)
 
         Args:
             messages: 메시지 리스트 [{"role": "user", "content": "..."}, ...]
             response_format_json: JSON 응답 형식 요청 여부 (기본값: True)
-            timeout: 타임아웃 (초, 기본값: 60)
+            timeout: 타임아웃 (초, 기본값: None - 무제한)
 
         Returns:
             Dict[str, Any]: LLM 응답

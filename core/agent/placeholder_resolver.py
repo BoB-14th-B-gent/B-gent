@@ -23,13 +23,24 @@ class PlaceholderResolver:
         Returns:
             Dict[str, Any]: 치환된 파라미터 딕셔너리
         """
-        if not results or "PLACEHOLDER_" not in str(params):
-
-            return params
         resolved_params = params.copy()
+
+        if "fs_offset_sectors" in resolved_params and resolved_params["fs_offset_sectors"] is None:
+            print(f"  ⚠️  fs_offset_sectors가 None입니다. PLACEHOLDER_OFFSET으로 자동 치환합니다.")
+            resolved_params["fs_offset_sectors"] = "PLACEHOLDER_OFFSET"
+
+        if "inodes" in resolved_params and resolved_params["inodes"] is None:
+            print(f"  ⚠️  inodes가 None입니다. PLACEHOLDER_INODES로 자동 치환합니다.")
+            resolved_params["inodes"] = "PLACEHOLDER_INODES"
+
+        if not results or "PLACEHOLDER_" not in str(resolved_params):
+            return resolved_params
 
         if "PLACEHOLDER_OFFSET" in str(params):
             resolved_params = PlaceholderResolver._resolve_offset(resolved_params, results)
+
+        if "PLACEHOLDER_CLIENT_ID" in str(params):
+            resolved_params = PlaceholderResolver._resolve_client_id(resolved_params, results)
 
         if results and len(results) > 0:
             prev_result = results[-1]
@@ -38,8 +49,54 @@ class PlaceholderResolver:
                 resolved_params = PlaceholderResolver._resolve_from_result(
                     resolved_params, prev_result
                 )
+            else:
+                if "PLACEHOLDER_INODES" in str(resolved_params):
+                    print(f"  ⚠️  이전 단계 실패로 inodes를 추출할 수 없습니다. 빈 리스트로 치환하고 실행을 건너뜁니다.")
+                    resolved_params = PlaceholderResolver._replace_placeholder(
+                        resolved_params, "PLACEHOLDER_INODES", []
+                    )
+                    resolved_params["_skip_execution"] = True
 
         return resolved_params
+
+    @staticmethod
+    def _resolve_client_id(params: Dict[str, Any], results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """PLACEHOLDER_CLIENT_ID 처리: 모든 이전 결과에서 client_id 찾기
+
+        Args:
+            params: 파라미터
+            results: 실행 결과 리스트
+
+        Returns:
+            치환된 파라미터
+        """
+        for result in reversed(results):
+            if not result.get("success"):
+                continue
+
+            try:
+                result_data = result.get("result", "{}")
+
+                if isinstance(result_data, str):
+                    result_json = json.loads(result_data)
+                else:
+                    result_json = result_data
+
+                if isinstance(result_json, dict):
+                    client_id = result_json.get("client_id", "")
+
+                    if client_id:
+                        params = PlaceholderResolver._replace_placeholder(
+                            params, "PLACEHOLDER_CLIENT_ID", client_id
+                        )
+                        print(f"  ℹ️  client_id 추출 완료: {client_id}")
+                        return params
+
+            except (json.JSONDecodeError, AttributeError):
+                continue
+
+        print(f"  ⚠️  이전 결과에서 client_id를 찾을 수 없습니다")
+        return params
 
     @staticmethod
 
@@ -113,37 +170,49 @@ class PlaceholderResolver:
             result_data = prev_result.get("result", "{}")
 
             if isinstance(result_data, str):
-                result_json = json.loads(result_data)
-
+                try:
+                    result_json = json.loads(result_data)
+                except json.JSONDecodeError:
+                    result_json = result_data
             else:
                 result_json = result_data
 
-            if "PLACEHOLDER_CLIENT_ID" in str(params):
-                client_id = result_json.get("client_id", "")
-
-                if client_id:
-                    params = PlaceholderResolver._replace_placeholder(
-                        params, "PLACEHOLDER_CLIENT_ID", client_id
-                    )
-                    print(f"  ℹ️  client_id 추출 완료: {client_id}")
-
-                else:
-                    print(f"  ⚠️  이전 결과에 client_id가 없습니다")
+            if not isinstance(result_json, dict):
+                if "PLACEHOLDER_INDEX" in str(params):
+                    index_name = PlaceholderResolver._extract_first_index(result_json)
+                    if index_name:
+                        params = PlaceholderResolver._replace_placeholder(
+                            params, "PLACEHOLDER_INDEX", index_name
+                        )
+                        print(f"     index 추출 완료: {index_name}")
+                    else:
+                        print(f"     이전 결과에서 인덱스를 찾을 수 없습니다 (결과 타입: {type(result_json).__name__})")
+                # else: 조용히 무시 (client_id는 _resolve_client_id에서 처리됨)
+                return params
 
             if "PLACEHOLDER_INODES" in str(params):
                 inodes = result_json.get("inodes", [])
 
                 if inodes and len(inodes) > 0:
-                    params = PlaceholderResolver._replace_placeholder(
-                        params, "PLACEHOLDER_INODES", inodes
-                    )
-                    print(f"  ℹ️  inodes 추출 완료: {inodes}")
+                    if isinstance(inodes, list) and any("not found" in str(inode).lower() or "error" in str(inode).lower() for inode in inodes):
+                        print(f"  ❌ inode 검색 실패: {inodes}")
+                        print(f"  ❌ 파일 추출을 진행할 수 없습니다. 다음 단계를 건너뜁니다.")
+                        params["_skip_execution"] = True
+                        params = PlaceholderResolver._replace_placeholder(
+                            params, "PLACEHOLDER_INODES", []
+                        )
+                    else:
+                        params = PlaceholderResolver._replace_placeholder(
+                            params, "PLACEHOLDER_INODES", inodes
+                        )
+                        print(f"  ℹ️  inodes 추출 완료: {inodes}")
 
                 else:
                     params = PlaceholderResolver._replace_placeholder(
                         params, "PLACEHOLDER_INODES", []
                     )
                     print(f"  ⚠️  이전 결과에 inodes가 없습니다 (빈 리스트 사용)")
+                    params["_skip_execution"] = True
 
             if "PLACEHOLDER_INDEX" in str(params):
                 index_name = PlaceholderResolver._extract_first_index(result_json)
