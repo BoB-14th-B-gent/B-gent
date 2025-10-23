@@ -8,18 +8,31 @@ from dataclasses import dataclass, field
 from .actions import Action, ActionResult
 
 class AgentState(TypedDict, total=False):
-    """LangGraph 워크플로우 상태 (TypedDict 버전)
+    """LangGraph 워크플로우 상태 (TypedDict 버전) - Two-Stage Planning
 
     LangGraph는 TypedDict를 사용하여 타입 안전성을 보장합니다.
     total=False는 모든 필드가 선택적임을 의미합니다.
+
+    Two-Stage Planning 추가 필드:
+        - task_queue: High-level Task 큐 (직렬화된 TaskQueue)
+        - current_task: 현재 처리 중인 Task (dict)
+        - completed_tasks: 완료된 Task 목록 (dict list)
     """
     job_id: str
     user_prompt: str
-    file_path: Optional[str]
+    file_paths: Optional[List[str]]
     file_meta: Dict[str, Any]
+
+    high_level_tasks: List[Dict[str, Any]]
+    task_queue_state: Dict[str, Any]
+    current_task: Optional[Dict[str, Any]]
+    completed_tasks: List[Dict[str, Any]]
+
     plan: List[Dict[str, Any]]
     results: List[Dict[str, Any]]
     current_step: int
+    timing: Dict[str, Any]
+
     completed: bool
     error: Optional[str]
 

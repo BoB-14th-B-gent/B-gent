@@ -76,16 +76,15 @@ def _validate_dfir_request(user_prompt: str) -> Tuple[bool, str]:
         if not is_valid:
             print(f"⚠️  검증 경고: {reason}")
             print(f"⚠️  계속 진행합니다...")
-            return True, ""  # 경고만 하고 계속 진행
-
+            return True, "" 
         return is_valid, reason
 
     except Exception as e:
-        # LLM 실패 시 경고만 하고 계속 진행 (디버깅 우선)
+        # LLM 실패 시 경고만 하고 계속 진행 (디버깅용)
         error_reason = f"입력 검증 시스템 오류: {str(e)}"
         print(f"⚠️  검증 실패: {error_reason}")
         print(f"⚠️  검증을 건너뛰고 계속 진행합니다...")
-        return True, ""  # 검증 실패해도 계속 진행
+        return True, ""
 
 def generate_plan(user_prompt: str, file_paths: List[str] = None, file_meta: Dict[str, Any] = None) -> List[Action]:
     """사용자 프롬프트를 기반으로 실행 계획 생성
@@ -103,19 +102,16 @@ def generate_plan(user_prompt: str, file_paths: List[str] = None, file_meta: Dic
     file_meta = file_meta or {}
     file_paths = file_paths or []
 
-    # 0. 입력 검증
     is_valid, reject_reason = _validate_dfir_request(user_prompt)
     if not is_valid:
         raise ValueError(f"❌ DFIR 분석과 무관한 요청입니다: {reject_reason}")
 
-    # 1. RAG로 MCP 도구 후보 검색
     candidates = query_mcp_candidates(user_prompt, file_meta, top_k=5)
 
     if not candidates:
         print("⚠️  RAG에서 도구를 찾지 못했습니다. 기본 계획을 생성합니다.")
         return _generate_default_plan(user_prompt, file_paths)
 
-    # 2. LLM으로 실행 계획 생성
     try:
         plan = _generate_plan_with_llm(user_prompt, file_paths, candidates)
         if plan:
@@ -123,12 +119,10 @@ def generate_plan(user_prompt: str, file_paths: List[str] = None, file_meta: Dic
     except Exception as e:
         print(f"⚠️  LLM 계획 생성 실패: {e}")
 
-    # 3. 폴백: 기본 계획
     return _generate_default_plan(user_prompt, file_paths)
 
 def _generate_plan_with_llm(user_prompt: str, file_paths: List[str], candidates: List[Dict[str, Any]]) -> List[Action]:
     """LLM으로 실행 계획 생성"""
-    # 디스크 이미지 파일 자동 검색 (디스크 포렌식 키워드가 있으면)
     prompt_lower = user_prompt.lower()
     disk_image_path = None
     if any(kw in prompt_lower for kw in ["추출", "파일", "디스크", "이미지", "extract", "file"]):
@@ -136,7 +130,6 @@ def _generate_plan_with_llm(user_prompt: str, file_paths: List[str], candidates:
 
     llm = LLMClient()
 
-    # RAG 결과를 MCP 도구와 문서로 분리
     tools_info = []
     knowledge_docs = []
 
@@ -144,11 +137,9 @@ def _generate_plan_with_llm(user_prompt: str, file_paths: List[str], candidates:
         meta = cand.get("meta", {})
         doc_id = cand.get("id", "")
 
-        # MCP 도구 vs 사용자 문서 구분
         is_mcp = meta.get("is_mcp", False)
 
         if is_mcp:
-            # MCP 도구: 메타데이터만 추출
             schema = {}
             schema_str = meta.get("input_schema", "{}")
             try:
@@ -163,13 +154,11 @@ def _generate_plan_with_llm(user_prompt: str, file_paths: List[str], candidates:
                 "input_schema": schema
             })
         else:
-            # 사용자 문서: 전체 내용 포함 (정책, 템플릿, 가이드)
             doc_type = meta.get("type", "document")
             doc_title = meta.get("title", "N/A")
             doc_content = cand.get("document", "")
 
-            # 문서 내용이 너무 길면 앞부분만 사용 (토큰 제한)
-            max_chars = 2000  # 약 500 토큰 (프롬프트 길이 최적화)
+            max_chars = 2000
             if len(doc_content) > max_chars:
                 doc_content = doc_content[:max_chars] + "\n... (생략)"
 
@@ -181,7 +170,6 @@ def _generate_plan_with_llm(user_prompt: str, file_paths: List[str], candidates:
                 "content": doc_content
             })
     
-    # 프롬프트 구성 (간소화)
     system_prompt = """DFIR 분석 작업 계획을 JSON으로 생성하세요.
 출력 형식:
 {"plan": [{"tool": "서버이름", "operation": "도구이름", "params": {...}, "reason": "이유"}]}
@@ -218,14 +206,12 @@ def _generate_plan_with_llm(user_prompt: str, file_paths: List[str], candidates:
   ⚠️ 중요: 사용자가 "목록 조회 후 분석"을 요청하면 반드시 2단계 모두 생성! 목록 조회만 하고 멈추지 말 것!
 """
 
-    # 파일 경로 정보 추가
     file_info = ""
     if disk_image_path and disk_image_path != "/unknown":
         file_info = f"\n디스크 이미지: {disk_image_path}"
     elif file_paths:
         file_info = f"\n파일: {', '.join(file_paths)}"
 
-    # 지식 문서 정보 추가 (간소화)
     knowledge_info = ""
     if knowledge_docs:
         knowledge_info = "\n\n참고 문서:\n"

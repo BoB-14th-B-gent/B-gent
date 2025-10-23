@@ -16,7 +16,7 @@ class Action:
     params: Dict[str, Any] = field(default_factory=dict)
     reason: str = ""
     retry_count: int = 0
-    timeout_seconds: int = 60
+    timeout_seconds: int = 300
 
     def to_dict(self) -> Dict[str, Any]:
 
