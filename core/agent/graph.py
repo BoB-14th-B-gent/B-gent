@@ -207,7 +207,7 @@ def node_execute(state: Dict[str, Any]) -> Dict[str, Any]:
         reason=action_dict.get("reason", ""),
         timeout_seconds=action_dict.get("timeout_seconds", 300)
     )
-    result = execute_action(action)
+    result = execute_action(action, job_id=state.get("job_id"))
     results.append(result.to_dict())
 
     return {
@@ -637,7 +637,7 @@ def node_execute_two_stage(state: Dict[str, Any]) -> Dict[str, Any]:
         timeout_seconds=action_dict.get("timeout_seconds", 300)
     )
 
-    result = execute_action(action)
+    result = execute_action(action, job_id=state.get("job_id"))
     results.append(result.to_dict())
 
     timing = state.get("timing", {"high_level_planning": 0.0, "tasks": {}})

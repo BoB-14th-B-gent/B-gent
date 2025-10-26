@@ -10,8 +10,9 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from typing import Dict, Any, Optional
 from .schemas.actions import Action, ActionResult
 from .mcp_lazy_client import get_mcp_client_for_server
+from .storage.evidence_logger import log_mcp_execution
 
-def execute_action(action: Action) -> ActionResult:
+def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult:
     """액션 실행 (재시도 및 타임아웃 지원)
 
     MCP 도구 호출 및 액션 실행, 실패 시 자동 재시도
@@ -29,6 +30,7 @@ def execute_action(action: Action) -> ActionResult:
 
     Args:
         action: 실행할 액션 (도구 이름, 파라미터 등 포함)
+        job_id: 작업 ID (MCP 로깅용)
 
     Returns:
         ActionResult: 실행 결과 (성공/실패, 결과 데이터, 실행 시간 등)
@@ -93,6 +95,14 @@ def execute_action(action: Action) -> ActionResult:
             if result.get("success"):
                 result_data = result.get("result", "")
 
+                log_mcp_execution(
+                    mcp_name=action.tool,
+                    tool_name=action.operation,
+                    request=action.params,
+                    response=result_data,
+                    success=True
+                )
+
                 if action.tool == "sleuthkit" and action.operation == "search_inode_by_path":
                     try:
                         if isinstance(result_data, str):
@@ -139,6 +149,14 @@ def execute_action(action: Action) -> ActionResult:
             else:
                 error_msg = result.get("error", "Unknown error")
                 last_error = error_msg
+
+                log_mcp_execution(
+                    mcp_name=action.tool,
+                    tool_name=action.operation,
+                    request=action.params,
+                    response=result.get("result"),
+                    success=False
+                )
 
                 # 전체 응답 출력 (디버깅용)
                 print(f"⚠️  MCP 응답 (success=False):")
