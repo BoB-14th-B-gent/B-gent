@@ -29,7 +29,7 @@ def _get_client():
             print(f"✓ MongoDB 연결됨: {_cfg.mongo.uri}")
 
         except ConnectionFailure as e:
-            print(f"⚠️  MongoDB 연결 실패 (작업은 계속됨): {e}")
+            print(f"[X]  MongoDB 연결 실패 (작업은 계속됨): {e}")
             _client = None
             _db = None
 
@@ -62,7 +62,7 @@ def save_job(job_id: str, data: Dict[str, Any]) -> bool:
         return True
 
     except Exception as e:
-        print(f"⚠️  MongoDB 저장 실패: {e}")
+        print(f"[X]  MongoDB 저장 실패: {e}")
 
         return False
 
@@ -85,7 +85,7 @@ def get_job(job_id: str) -> Optional[Dict[str, Any]]:
         return db.jobs.find_one({"_id": job_id})
 
     except Exception as e:
-        print(f"⚠️  MongoDB 조회 실패: {e}")
+        print(f"[X]  MongoDB 조회 실패: {e}")
 
         return None
 
@@ -118,7 +118,7 @@ def save_result(job_id: str, result_data: Dict[str, Any]) -> bool:
         return True
 
     except Exception as e:
-        print(f"⚠️  MongoDB 결과 저장 실패: {e}")
+        print(f"[X]  MongoDB 결과 저장 실패: {e}")
 
         return False
 
