@@ -144,7 +144,7 @@ def generate_high_level_plan(
       "target_files": ["파일 경로1", "파일 경로2"],
       "dependencies": ["task_000"],
       "metadata": {
-        "tool_hint": "elastic | sleuthkit | velociraptor",
+        "tool_hint": "elastic | sleuthkit | velociraptor | ghidra",
         "priority": "high | medium | low"
       }
     }
@@ -174,7 +174,8 @@ def generate_high_level_plan(
    - Elasticsearch 작업 (인덱스 목록, 데이터 조회/검색/분석) → tool_hint: "elastic" *필수*
    - SleuthKit 작업 (디스크 이미지, 파일 추출) → tool_hint: "sleuthkit" *필수*
    - Velociraptor 작업 (아티팩트 수집, 시스템 정보) → tool_hint: "velociraptor" *필수*
-   - tool_hint를 반드시 지정하세요 없으면 도구 검색이 실패할 수 있습니다.
+   - Ghidra 작업 (바이너리 리버스 엔지니어링, 함수 디컴파일, 문자열 추출) → tool_hint: "ghidra" *필수*
+   - tool_hint를 반드시 지정하세요. 없으면 도구 검색이 실패할 수 있습니다.
 
 5. *의존성 설정*:
    - 이전 Task의 결과가 *반드시* 필요한 경우에만 dependencies에 추가
@@ -273,6 +274,77 @@ def generate_high_level_plan(
   ]
 }
 ```
+
+*예시 4* (바이너리 리버스 엔지니어링):
+입력: "Ghidra로 suspicious.exe의 main 함수를 디컴파일해줘"
+출력:
+```json
+{
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "description": "Ghidra로 suspicious.exe의 main 함수 디컴파일",
+      "task_type": "file_analysis",
+      "target_files": ["suspicious.exe"],
+      "dependencies": [],
+      "metadata": {"tool_hint": "ghidra", "priority": "high"}
+    }
+  ]
+}
+```
+
+*예시 5* (Ghidra 바이너리 분석 - **반드시** 2단계 Task로 분리):
+
+입력: "Ghidra로 바이너리를 분석해줘"
+입력: "Ghidra로 현재 분석 중인 파일을 분석해줘"
+입력: "바이너리 리버스 엔지니어링"
+입력: "실행 파일 디컴파일"
+
+출력:
+```json
+{
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "description": "Ghidra로 바이너리 메타데이터 수집 (함수 목록, Import/Export, 세그먼트, 문자열)",
+      "task_type": "file_analysis",
+      "target_files": [],
+      "dependencies": [],
+      "metadata": {"tool_hint": "ghidra", "priority": "high", "analysis_phase": "metadata"}
+    },
+    {
+      "task_id": "task_002",
+      "description": "Ghidra로 주요 함수 디컴파일 (entry, main, 핵심 로직)",
+      "task_type": "file_analysis",
+      "target_files": [],
+      "dependencies": ["task_001"],
+      "metadata": {"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
+    }
+  ]
+}
+```
+
+**잘못된 예시 (절대 금지)**:
+입력: "Ghidra로 현재 분석 중인 파일을 분석해줘"
+```json
+{
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "description": "Ghidra로 현재 분석 중인 파일 디컴파일", (1개 Task로 통합 금지)
+      "task_type": "file_analysis",
+      "metadata": {"tool_hint": "ghidra"} (analysis_phase 누락)
+    }
+  ]
+}
+```
+
+*🚨 중요 규칙*:
+1. **Ghidra/바이너리/리버스 엔지니어링/디컴파일** 키워드가 있으면 **무조건 2개 Task**로 분리
+2. **analysis_phase 필수**: task_001은 "metadata", task_002는 "decompile"
+3. **dependencies 필수**: task_002는 반드시 ["task_001"] 포함
+4. **이유**: Phase 1에서 함수 목록을 먼저 수집해야 Phase 2에서 어떤 함수를 디컴파일할지 결정 가능
+5. **절대 금지**: "Ghidra로 파일 분석"처럼 1개 Task로 통합하는 것
 """
 
     file_info = ""
@@ -309,7 +381,7 @@ def generate_high_level_plan(
         tasks_data = data.get("tasks", [])
 
         if not tasks_data:
-            print("⚠️  LLM이 빈 계획을 생성했습니다. 기본 계획을 사용합니다.")
+            print("LLM이 빈 계획을 생성했습니다. 기본 계획을 사용합니다.")
             return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
 
         tasks = []
@@ -318,7 +390,7 @@ def generate_high_level_plan(
             try:
                 task_type = TaskType(task_type_str)
             except ValueError:
-                print(f"⚠️  알 수 없는 task_type: {task_type_str}, CUSTOM으로 설정")
+                print(f"알 수 없는 task_type: {task_type_str}, CUSTOM으로 설정")
                 task_type = TaskType.CUSTOM
 
             task = HighLevelTask(
@@ -331,22 +403,97 @@ def generate_high_level_plan(
             )
             tasks.append(task)
 
-        print(f"✓ High-level 계획 생성 완료: {len(tasks)}개 Task")
+        print(f"High-level 계획 생성 완료: {len(tasks)}개 Task")
         for idx, task in enumerate(tasks, 1):
             deps_info = f" (의존: {', '.join(task.dependencies)})" if task.dependencies else ""
             print(f"  {idx}. [{task.task_type.value}] {task.description}{deps_info}")
 
+        tasks = _validate_and_fix_ghidra_tasks(tasks, user_prompt)
+
         return tasks
 
     except json.JSONDecodeError as e:
-        print(f"⚠️  LLM 응답 파싱 실패: {e}")
+        print(f"LLM 응답 파싱 실패: {e}")
         return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
 
     except Exception as e:
-        print(f"⚠️  High-level 계획 생성 실패: {e}")
+        print(f"High-level 계획 생성 실패: {e}")
         import traceback
         traceback.print_exc()
         return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
+
+
+def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str) -> List[HighLevelTask]:
+    """Ghidra Task 검증 및 자동 수정
+
+    LLM이 Ghidra 분석을 1개 Task로 통합한 경우 자동으로 2개로 분리
+
+    Args:
+        tasks: LLM이 생성한 Task 리스트
+        user_prompt: 사용자 요청
+
+    Returns:
+        List[HighLevelTask]: 검증 및 수정된 Task 리스트
+    """
+    ghidra_keywords = ["ghidra", "바이너리", "리버스", "디컴파일", "reverse", "binary", "decompile"]
+    prompt_lower = user_prompt.lower()
+    is_ghidra_request = any(kw in prompt_lower for kw in ghidra_keywords)
+
+    if not is_ghidra_request:
+        return tasks
+
+    ghidra_tasks = [t for t in tasks if t.metadata.get("tool_hint") == "ghidra"]
+
+    if not ghidra_tasks:
+        print("Ghidra 요청이지만 tool_hint가 없습니다. Task를 건너뜁니다.")
+        return tasks
+
+    if len(ghidra_tasks) >= 2:
+        has_metadata = any(t.metadata.get("analysis_phase") == "metadata" for t in ghidra_tasks)
+        has_decompile = any(t.metadata.get("analysis_phase") == "decompile" for t in ghidra_tasks)
+
+        if has_metadata and has_decompile:
+            print("Ghidra Task 검증 통과 (2단계 구조 확인)")
+            return tasks
+
+    print("\nGhidra Task 구조 오류 감지!")
+    print(f"   현재: {len(ghidra_tasks)}개 Ghidra Task")
+    print(f"   자동 수정: 2단계 구조로 분리")
+
+    non_ghidra_tasks = [t for t in tasks if t.metadata.get("tool_hint") != "ghidra"]
+    task_001 = HighLevelTask(
+        task_id="task_001",
+        description="Ghidra로 바이너리 메타데이터 수집 (함수 목록, Import/Export, 세그먼트, 문자열)",
+        task_type=TaskType.FILE_ANALYSIS,
+        target_files=[],
+        dependencies=[],
+        metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "metadata"}
+    )
+
+    task_002 = HighLevelTask(
+        task_id="task_002",
+        description="Ghidra로 주요 함수 디컴파일 (entry, main, 핵심 로직)",
+        task_type=TaskType.FILE_ANALYSIS,
+        target_files=[],
+        dependencies=["task_001"],
+        metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
+    )
+
+    if non_ghidra_tasks:
+        max_id = max([int(t.task_id.split("_")[1]) for t in non_ghidra_tasks])
+        task_001.task_id = f"task_{max_id + 1:03d}"
+        task_002.task_id = f"task_{max_id + 2:03d}"
+        task_002.dependencies = [task_001.task_id]
+
+        result = non_ghidra_tasks + [task_001, task_002]
+    else:
+        result = [task_001, task_002]
+
+    print(f"\n✓ Ghidra Task 자동 수정 완료:")
+    print(f"  1. {task_001.task_id}: {task_001.description}")
+    print(f"  2. {task_002.task_id}: {task_002.description} (의존: {task_002.dependencies})")
+
+    return result
 
 
 def _generate_default_high_level_plan(
@@ -366,7 +513,7 @@ def _generate_default_high_level_plan(
     Returns:
         List[HighLevelTask]: 기본 Task 리스트
     """
-    print("⚠️  기본 High-level 계획을 사용합니다.")
+    print("기본 High-level 계획을 사용합니다.")
 
     tasks = []
     prompt_lower = user_prompt.lower()
@@ -417,5 +564,5 @@ def _generate_default_high_level_plan(
             metadata={"tool_hint": "elastic", "priority": "medium"}
         ))
 
-    print(f"✓ 기본 계획 생성 완료: {len(tasks)}개 Task")
+    print(f"  기본 계획 생성 완료: {len(tasks)}개 Task")
     return tasks
