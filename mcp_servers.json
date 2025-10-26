@@ -32,6 +32,17 @@
         "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
       },
       "enabled": true
+    },
+    {
+      "name": "ghidra",
+      "command": "/Users/me0w2en/Documents/8-BoB/ghidra_11.3.2_PUBLIC/GhidraMCP-release-1-4/.venv/bin/python",
+      "args": [
+        "/Users/me0w2en/Documents/8-BoB/ghidra_11.3.2_PUBLIC/GhidraMCP-release-1-4/bridge_mcp_ghidra.py",
+        "--ghidra-server",
+        "http://127.0.0.1:8080/"
+      ],
+      "env": {},
+      "enabled": true
     }
   ]
 }

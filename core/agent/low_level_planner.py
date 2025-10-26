@@ -76,14 +76,14 @@ def _validate_dfir_request(user_prompt: str) -> Tuple[bool, str]:
         reason = data.get("reason", "")
 
         if not is_valid:
-            print(f"⚠️  검증 경고: {reason}")
-            print(f"⚠️  계속 진행합니다...")
-            return True, ""  
+            print(f"검증 경고: {reason}")
+            print(f"계속 진행합니다...")
+            return True, ""
 
         return is_valid, reason
 
     except Exception as e:
-        return True, ""  
+        return True, ""
 
 def generate_low_level_plan(
     task: HighLevelTask,
@@ -125,9 +125,8 @@ def generate_low_level_plan(
 
     print(f"\n[Low-level Planning] Task: {task.description}")
 
-    candidates = query_mcp_for_task(task.description, task.metadata, top_k=10)
+    candidates = query_mcp_for_task(task.description, task.metadata, top_k=30)
 
-    # RAG 검색 결과 확인 (디버깅용)
     print(f"  RAG 검색 결과: {len(candidates)}개 도구")
     for idx, cand in enumerate(candidates[:5], 1):
         meta = cand.get("meta", {})
@@ -136,23 +135,28 @@ def generate_low_level_plan(
 
     description_lower = task.description.lower()
     if any(kw in description_lower for kw in ["아티팩트", "수집", "velociraptor", "artifact", "브라우저 히스토리", "레지스트리", "이벤트 로그"]):
-        print("  ⚠️  Velociraptor 아티팩트 수집 작업: 규칙 기반 계획 사용")
+        print("  Velociraptor 아티팩트 수집 작업: 규칙 기반 계획 사용")
         return _generate_default_plan_for_task(task, dependency_results)
 
     if not candidates:
-        print("⚠️  RAG에서 도구를 찾지 못했습니다. 기본 계획을 생성합니다.")
+        print("RAG에서 도구를 찾지 못했습니다. 기본 계획을 생성합니다.")
+        return _generate_default_plan_for_task(task, dependency_results)
+
+    tool_hint = task.metadata.get("tool_hint", "")
+    if tool_hint == "ghidra":
+        print("  Ghidra 작업 감지 → 종합 분석 모드 강제 활성화")
         return _generate_default_plan_for_task(task, dependency_results)
 
     try:
         plan = _generate_plan_with_llm_for_task(task, candidates, dependency_results)
         if plan:
             return plan
-        print("⚠️  LLM이 빈 계획을 반환했습니다.")
+        print("LLM이 빈 계획을 반환했습니다.")
     except TimeoutError as e:
-        print(f"⚠️  LLM 계획 생성 중 타임아웃: {e}")
-        print(f"     → Fallback: 규칙 기반 계획 사용")
+        print(f"LLM 계획 생성 중 타임아웃: {e}")
+        print(f"     Fallback: 규칙 기반 계획 사용")
     except Exception as e:
-        print(f"⚠️  LLM 계획 생성 중 오류: {e}")
+        print(f"LLM 계획 생성 중 오류: {e}")
         import traceback
         traceback.print_exc()
 
@@ -207,7 +211,7 @@ def _generate_plan_with_llm_for_task(
             doc_title = meta.get("title", "N/A")
             doc_content = cand.get("document", "")
 
-            max_chars = 5000  
+            max_chars = 5000
             if len(doc_content) > max_chars:
                 doc_content = doc_content[:max_chars] + "\n... (생략)"
 
@@ -306,7 +310,7 @@ def _generate_plan_with_llm_for_task(
 - *SleuthKit 파일 추출: 반드시 3단계 모두 포함 (하나라도 빠지면 실패)*
   1단계: disk_partition_info (파티션 오프셋 확인)
   2단계: search_inode_by_path (파일 경로 → inode 변환)
-  3단계: extract_files_by_inode (inode �� 파일 추출)
+  3단계: extract_files_by_inode (inode 파일 추출)
 
   *완전한 예시 (C:\\Users\\hacker\\file.exe 추출):*
   ```json
@@ -381,6 +385,129 @@ def _generate_plan_with_llm_for_task(
   중요: search_documents의 파라미터는 반드시 "index"와 "body" 2개
   중요: index 값은 정확히 "PLACEHOLDER_INDEX" (영문)만 허용
   중요: body에 "sort" 필드를 절대 포함하지 마세요
+
+- *Ghidra 바이너리 리버스 엔지니어링: 다단계 종합 분석*
+  Task가 "분석", "리버스 엔지니어링", "함수 추출" 등 종합적인 분석을 요구하면
+  다음 도구들을 순차적으로 모두 호출하여 완전한 분석 수행:
+
+  *필수 분석 단계 (순서대로):*
+  1. get_current_address - 현재 분석 위치 확인
+  2. get_current_function - 현재 함수 정보 확인
+  3. list_functions - 전체 함수 목록
+  4. list_imports - Import 함수 (외부 라이브러리)
+  5. list_exports - Export 함수
+  6. decompile_function - 주요 함수 디컴파일 (entry, main 등)
+  7. list_segments - 메모리 세그먼트 구조
+  8. list_strings - 바이너리 문자열 추출
+
+  *완전한 예시 (바이너리 종합 분석):*
+  ```json
+  {
+    "plan": [
+      {
+        "tool": "ghidra",
+        "operation": "get_current_address",
+        "params": {},
+        "reason": "현재 분석 위치 확인"
+      },
+      {
+        "tool": "ghidra",
+        "operation": "get_current_function",
+        "params": {},
+        "reason": "현재 함수 정보 확인"
+      },
+      {
+        "tool": "ghidra",
+        "operation": "list_functions",
+        "params": {},
+        "reason": "전체 함수 목록 가져오기"
+      },
+      {
+        "tool": "ghidra",
+        "operation": "list_imports",
+        "params": {"offset": 0, "limit": 50},
+        "reason": "Import 함수 목록 확인"
+      },
+      {
+        "tool": "ghidra",
+        "operation": "list_exports",
+        "params": {"offset": 0, "limit": 50},
+        "reason": "Export 함수 목록 확인"
+      },
+      {
+        "tool": "ghidra",
+        "operation": "decompile_function",
+        "params": {"name": "entry"},
+        "reason": "entry 함수 디컴파일"
+      },
+      {
+        "tool": "ghidra",
+        "operation": "list_segments",
+        "params": {"offset": 0, "limit": 20},
+        "reason": "메모리 세그먼트 구조 확인"
+      },
+      {
+        "tool": "ghidra",
+        "operation": "list_strings",
+        "params": {"offset": 0, "limit": 100},
+        "reason": "바이너리 문자열 추출"
+      }
+    ]
+  }
+  ```
+
+  *단일 작업 예시:*
+  - Task: "main 함수를 디컴파일해줘"
+    → decompile_function만 호출
+  - Task: "문자열만 추출해줘"
+    → list_strings만 호출
+  - Task: "함수 목록 보여줘"
+    → list_functions만 호출
+
+  *중요 규칙:*
+  * "분석", "리버스 엔지니어링", "조사" 같은 종합적인 요청 시 → 위 8단계 모두 수행
+  * "디컴파일", "문자열 추출" 같은 구체적 요청 시 → 해당 도구만 호출
+  * decompile_function의 params는 {"name": "함수명"} 형식
+  * list 계열 도구는 offset, limit 파라미터 지원 (선택 사항)
+  * operation은 반드시 RAG 검색 결과의 tool_name과 정확히 일치
+
+- *Phase 2 (decompile) Task 전용 규칙*:
+  Task 설명에 "주요 함수 디컴파일"이 포함되어 있고, 이전 Task에서 함수 목록(list_functions)을 수집했다면:
+
+  **절대 금지**: entry와 main만 디컴파일하는 것
+  **올바른 방법**: 이전 Task 결과에서 함수 목록을 확인하고, entry + 낮은 주소의 FUN_ 함수들(최소 3-5개) 디컴파일
+
+  *잘못된 예시 (절대 금지)*:
+  ```json
+  {
+    "plan": [
+      {"tool": "ghidra", "operation": "decompile_function", "params": {"name": "entry"}},
+      {"tool": "ghidra", "operation": "decompile_function", "params": {"name": "main"}}  ❌ main이 없으면 실패!
+    ]
+  }
+  ```
+
+  *올바른 예시 (반드시 이렇게)*:
+  이전 Task에서 발견된 함수 목록:
+  - FUN_140001000, FUN_140001290, FUN_140001350, FUN_140001638, entry
+
+  ```json
+  {
+    "plan": [
+      {"tool": "ghidra", "operation": "decompile_function", "params": {"name": "entry"}, "reason": "entry 함수 디컴파일"},
+      {"tool": "ghidra", "operation": "decompile_function", "params": {"name": "FUN_140001000"}, "reason": "핵심 로직 함수 (낮은 주소)"},
+      {"tool": "ghidra", "operation": "decompile_function", "params": {"name": "FUN_140001290"}, "reason": "핵심 로직 함수"},
+      {"tool": "ghidra", "operation": "decompile_function", "params": {"name": "FUN_140001350"}, "reason": "핵심 로직 함수"},
+      {"tool": "ghidra", "operation": "decompile_function", "params": {"name": "FUN_140001638"}, "reason": "entry가 호출하는 함수"}
+    ]
+  }
+  ```
+
+  *핵심 원칙*:
+  - main이 없으면 FUN_으로 시작하는 함수들 선택 (절대 main만 고집하지 말 것)
+  - 낮은 주소 (0x140001000 ~ 0x140001700) 함수가 핵심 로직일 가능성 높음
+  - entry 주소(보통 0x1400017b4)에 가까운 함수는 entry가 호출할 가능성 높음
+  - 최소 3-5개 함수 디컴파일 (entry + FUN_ 함수들)
 """
 
     file_info = ""
@@ -421,7 +548,6 @@ Task 타입: {task.task_type.value}
         data = json.loads(content)
         plan_data = data.get("plan", [])
 
-        # LLM 응답 확인 (디버깅용)
         print(f"\n[DEBUG] LLM이 생성한 계획:")
         print(json.dumps(plan_data, ensure_ascii=False, indent=2))
         print()
@@ -442,12 +568,12 @@ Task 타입: {task.task_type.value}
             params = item.get("params", {})
 
             if tool not in valid_tools:
-                print(f"⚠️  경고: 단계 {idx}에서 알 수 없는 서버 '{tool}' 사용. 사용 가능한 서버: {list(valid_tools.keys())}")
+                print(f"경고: 단계 {idx}에서 알 수 없는 서버 '{tool}' 사용. 사용 가능한 서버: {list(valid_tools.keys())}")
 
             elif operation not in valid_tools[tool]:
                 corrected = False
                 if operation == "get_indices" and "list_indices" in valid_tools[tool]:
-                    print(f"⚠️  경고: 단계 {idx}에서 '{operation}' → 'list_indices' 자동 수정")
+                    print(f"경고: 단계 {idx}에서 '{operation}' -> 'list_indices' 자동 수정")
                     operation = "list_indices"
                     corrected = True
                 elif operation == "list_indices" and "list_indices" in valid_tools[tool]:
@@ -455,13 +581,13 @@ Task 타입: {task.task_type.value}
                     corrected = True
 
                 if not corrected:
-                    print(f"❌ 오류: 단계 {idx}에서 '{tool}' 서버에 존재하지 않는 도구 '{operation}' 사용.")
+                    print(f"오류: 단계 {idx}에서 '{tool}' 서버에 존재하지 않는 도구 '{operation}' 사용.")
                     print(f"     사용 가능한 도구: {sorted(valid_tools[tool])}")
 
                     if operation == "get_index" and tool == "sleuthkit":
-                        print(f"     → 오류: SleuthKit에는 'get_index'가 없습니다 (Elasticsearch 도구와 혼동)")
+                        print(f"     오류: SleuthKit에는 'get_index'가 없습니다 (Elasticsearch 도구와 혼동)")
 
-                    print(f"     → 이 단계를 건너뜁니다.")
+                    print(f"     이 단계를 건너뜁니다.")
                     continue
 
             if tool == "elastic":
@@ -469,8 +595,8 @@ Task 타입: {task.task_type.value}
                 if operation == "list_indices":
 
                     if params:
-                        print(f"⚠️  경고: 단계 {idx}에서 list_indices에 파라미터가 있습니다: {params}")
-                        print(f"     → 자동 수정: 빈 객체로 변경")
+                        print(f"경고: 단계 {idx}에서 list_indices에 파라미터가 있습니다: {params}")
+                        print(f"     자동 수정: 빈 객체로 변경")
                         params = {}
 
                 if operation == "search_documents":
@@ -478,8 +604,8 @@ Task 타입: {task.task_type.value}
 
                     if index and index != "PLACEHOLDER_INDEX" and "*" not in index:
                         if any(char in index for char in ["<", ">", "인덱스", "이름", "레이블"]):
-                            print(f"⚠️  경고: 단계 {idx}에서 잘못된 index placeholder: '{index}'")
-                            print(f"     → 자동 수정: '{index}' → 'PLACEHOLDER_INDEX'")
+                            print(f"경고: 단계 {idx}에서 잘못된 index placeholder: '{index}'")
+                            print(f"     자동 수정: '{index}' -> 'PLACEHOLDER_INDEX'")
                             params["index"] = "PLACEHOLDER_INDEX"
 
             if tool == "sleuthkit":
@@ -487,8 +613,8 @@ Task 타입: {task.task_type.value}
                     fs_offset = params.get("fs_offset_sectors")
 
                     if fs_offset is None or fs_offset == "" or fs_offset == "0" or fs_offset == 0:
-                        print(f"⚠️  경고: 단계 {idx}에서 fs_offset_sectors가 잘못되었습니다: {repr(fs_offset)}")
-                        print(f"     → 자동 수정: {repr(fs_offset)} → 'PLACEHOLDER_OFFSET'")
+                        print(f"경고: 단계 {idx}에서 fs_offset_sectors가 잘못되었습니다: {repr(fs_offset)}")
+                        print(f"     자동 수정: {repr(fs_offset)} -> 'PLACEHOLDER_OFFSET'")
                         params["fs_offset_sectors"] = "PLACEHOLDER_OFFSET"
 
                 if operation == "search_inode_by_path":
@@ -497,21 +623,21 @@ Task 타입: {task.task_type.value}
                     if "\\" in path:
                         original_path = path
                         path = path.replace("\\", "/")
-                        print(f"⚠️  경고: 단계 {idx}에서 백슬래시 경로 감지")
-                        print(f"     → 자동 수정: {original_path} → {path}")
+                        print(f"경고: 단계 {idx}에서 백슬래시 경로 감지")
+                        print(f"     자동 수정: {original_path} -> {path}")
 
                     if path.startswith("/C/") or path.startswith("/D/") or path.startswith("/E/"):
                         corrected_path = "/" + path[3:]
-                        print(f"⚠️  경고: 단계 {idx}에서 잘못된 경로 변환: {path}")
-                        print(f"     → 자동 수정: {path} → {corrected_path}")
+                        print(f"경고: 단계 {idx}에서 잘못된 경로 변환: {path}")
+                        print(f"     자동 수정: {path} -> {corrected_path}")
                         path = corrected_path
 
                     import re
                     drive_match = re.match(r'^([A-Z]):/(.+)$', path)
                     if drive_match:
                         corrected_path = "/" + drive_match.group(2)
-                        print(f"⚠️  경고: 단계 {idx}에서 드라이브 문자 포함: {path}")
-                        print(f"     → 자동 수정: {path} → {corrected_path}")
+                        print(f"경고: 단계 {idx}에서 드라이브 문자 포함: {path}")
+                        print(f"     자동 수정: {path} -> {corrected_path}")
                         path = corrected_path
 
                     params["path"] = path
@@ -520,16 +646,16 @@ Task 타입: {task.task_type.value}
                     inodes = params.get("inodes")
 
                     if inodes is None or inodes == "":
-                        print(f"⚠️  경고: 단계 {idx}에서 inodes가 None/빈 값입니다.")
-                        print(f"     → 자동 수정: {repr(inodes)} → 'PLACEHOLDER_INODES'")
+                        print(f"경고: 단계 {idx}에서 inodes가 None/빈 값입니다.")
+                        print(f"     자동 수정: {repr(inodes)} -> 'PLACEHOLDER_INODES'")
                         params["inodes"] = "PLACEHOLDER_INODES"
                     elif isinstance(inodes, list):
-                        print(f"⚠️  경고: 단계 {idx}에서 inodes가 배열입니다. PLACEHOLDER_INODES를 사용해야 합니다.")
-                        print(f"     → 자동 수정: {inodes} → 'PLACEHOLDER_INODES'")
+                        print(f"경고: 단계 {idx}에서 inodes가 배열입니다. PLACEHOLDER_INODES를 사용해야 합니다.")
+                        print(f"     자동 수정: {inodes} -> 'PLACEHOLDER_INODES'")
                         params["inodes"] = "PLACEHOLDER_INODES"
                     elif isinstance(inodes, str) and inodes.startswith("[") and inodes.endswith("]"):
-                        print(f"⚠️  경고: 단계 {idx}에서 inodes가 JSON 문자열입니다. PLACEHOLDER_INODES를 사용해야 합니다.")
-                        print(f"     → 자동 수정: '{inodes}' → 'PLACEHOLDER_INODES'")
+                        print(f"경고: 단계 {idx}에서 inodes가 JSON 문자열입니다. PLACEHOLDER_INODES를 사용해야 합니다.")
+                        print(f"     자동 수정: '{inodes}' -> 'PLACEHOLDER_INODES'")
                         params["inodes"] = "PLACEHOLDER_INODES"
             default_timeout = 180 if tool == "velociraptor" else 60
             actions.append(Action(
@@ -546,29 +672,142 @@ Task 타입: {task.task_type.value}
             missing = [op for op in required if op not in sleuthkit_ops]
 
             if missing:
-                print(f"\n⚠️  심각한 오류: SleuthKit 파일 추출 워크플로우가 불완전합니다")
+                print(f"\n심각한 오류: SleuthKit 파일 추출 워크플로우가 불완전합니다")
                 print(f"     필수 3단계: {required}")
                 print(f"     현재 단계: {sleuthkit_ops}")
                 print(f"     누락된 단계: {missing}")
-                print(f"\n     → 폴백: 규칙 기반 계획 사용")
+                print(f"\n     폴백: 규칙 기반 계획 사용")
 
                 return []
-        print(f"✓ LLM이 {len(actions)}단계 계획을 생성했습니다.")
+        print(f"LLM이 {len(actions)}단계 계획을 생성했습니다.")
 
         return actions
 
     except json.JSONDecodeError as e:
-        print(f"⚠️  LLM 응답 파싱 실패: {e}")
+        print(f"LLM 응답 파싱 실패: {e}")
         print(f"     응답 내용: {content[:200]}...")
         return []
 
     except TimeoutError as e:
-        print(f"⚠️  LLM 호출 타임아웃: {e}")
+        print(f"LLM 호출 타임아웃: {e}")
         raise
 
     except Exception as e:
-        print(f"⚠️  LLM 계획 생성 중 오류: {e}")
+        print(f"LLM 계획 생성 중 오류: {e}")
         raise
+
+def _extract_function_names_from_results(dependency_results: Dict[str, List[Dict[str, Any]]]) -> List[str]:
+    """dependency_results에서 함수 목록 추출
+
+    Args:
+        dependency_results: 이전 Task 실행 결과
+
+    Returns:
+        List[str]: 함수 이름 리스트
+    """
+    function_names = []
+
+    if not dependency_results:
+        return function_names
+
+    for task_id, results in dependency_results.items():
+        for result in results:
+            if result.get("operation") == "list_functions" and result.get("success"):
+                result_text = str(result.get("result", ""))
+
+                import re
+                matches = re.findall(r'^(\S+)\s+at\s+[0-9a-fA-F]+', result_text, re.MULTILINE)
+                function_names.extend(matches)
+
+                if function_names:
+                    print(f"  {len(function_names)}개 함수 발견")
+                    return function_names
+
+    return function_names
+
+
+def _select_important_functions(available_functions: List[str]) -> List[str]:
+    """중요한 함수 선택 (entry, main, WinMain 등)
+
+    Args:
+        available_functions: 사용 가능한 함수 목록
+
+    Returns:
+        List[str]: 디컴파일할 함수 목록 (최대 5개)
+    """
+    import re
+
+    priority_names = [
+        "entry",
+        "main",
+        "_main",
+        "wmain",
+        "WinMain",
+        "wWinMain",
+        "DllMain",
+        "_DllMain@12",
+    ]
+
+    selected = []
+    available_set = set(available_functions)
+
+    for func_name in priority_names:
+        if func_name in available_set:
+            selected.append(func_name)
+
+    entry_addr = None
+    for func in available_functions:
+        if func == "entry":
+            continue
+        if "entry" in func.lower():
+            match = re.match(r'FUN_([0-9a-fA-F]+)', func)
+            if match:
+                entry_addr = int(match.group(1), 16)
+                break
+
+    if entry_addr is None:
+        all_addrs = []
+        for func in available_functions:
+            match = re.match(r'FUN_([0-9a-fA-F]+)', func)
+            if match:
+                all_addrs.append(int(match.group(1), 16))
+
+        if all_addrs:
+            min_addr = min(all_addrs)
+            entry_addr = min_addr + 0x800
+        else:
+            entry_addr = 0x140001800
+
+    candidate_functions = []
+    for func in available_functions:
+        match = re.match(r'FUN_([0-9a-fA-F]+)', func)
+        if match:
+            addr = int(match.group(1), 16)
+            if addr < entry_addr and (entry_addr - addr) < 0x2000:
+                candidate_functions.append((addr, func))
+
+    candidate_functions.sort()
+    for addr, func in candidate_functions[:3]:
+        if func not in selected:
+            selected.append(func)
+
+    if "main" not in selected and "_main" not in selected:
+        close_to_entry = []
+        for func in available_functions:
+            match = re.match(r'FUN_([0-9a-fA-F]+)', func)
+            if match:
+                addr = int(match.group(1), 16)
+                if entry_addr - 0x200 <= addr < entry_addr:
+                    close_to_entry.append((abs(entry_addr - addr), func))
+
+        close_to_entry.sort()
+        for dist, func in close_to_entry[:2]:
+            if func not in selected:
+                selected.append(func)
+                print(f"  entry 근처 함수 발견: {func} (entry가 호출할 가능성 높음)")
+
+    return selected[:5] if selected else []
+
 
 def _find_disk_image_from_paths(file_paths: List[str] = None) -> str:
     """파일 경로 배열 또는 data 디렉터리에서 디스크 이미지 파일 자동 검색
@@ -643,9 +882,57 @@ def _generate_default_plan_for_task(
     Returns:
         List[Action]: 기본 Low-level Action 리스트
     """
-    print("⚠️  기본 계획을 사용합니다.")
+    print("기본 계획을 사용합니다.")
     description_lower = task.description.lower()
     tool_hint = task.metadata.get("tool_hint", "")
+
+    if tool_hint == "ghidra" or any(kw in description_lower for kw in ["ghidra", "바이너리", "리버스", "디컴파일", "함수", "문자열", "실행 파일", "executable", "binary", "reverse"]):
+        analysis_phase = task.metadata.get("analysis_phase", "full")
+
+        if analysis_phase == "metadata":
+            print("  Ghidra Phase 1: 메타데이터 수집")
+            return [
+                Action(tool="ghidra", operation="list_functions", params={}, reason="전체 함수 목록 추출"),
+                Action(tool="ghidra", operation="list_imports", params={"offset": 0, "limit": 50}, reason="Import 함수 목록"),
+                Action(tool="ghidra", operation="list_exports", params={"offset": 0, "limit": 50}, reason="Export 함수 목록"),
+                Action(tool="ghidra", operation="list_segments", params={"offset": 0, "limit": 20}, reason="메모리 세그먼트 구조"),
+                Action(tool="ghidra", operation="list_strings", params={"offset": 0, "limit": 100}, reason="바이너리 문자열 추출", timeout_seconds=120),
+            ]
+
+        elif analysis_phase == "decompile":
+            print("  Ghidra Phase 2: 주요 함수 디컴파일")
+
+            available_functions = _extract_function_names_from_results(dependency_results)
+            target_functions = _select_important_functions(available_functions)
+
+            if not target_functions:
+                print("  함수 목록을 찾을 수 없습니다. 기본 함수명 사용")
+                target_functions = ["entry", "main"]
+
+            print(f"  디컴파일 대상 함수 ({len(target_functions)}개): {', '.join(target_functions)}")
+            print(f"  Tip: 함수를 찾을 수 없어도 계속 진행됩니다 (다른 함수 디컴파일 시도)")
+
+            actions = []
+            for idx, func_name in enumerate(target_functions, 1):
+                actions.append(
+                    Action(tool="ghidra", operation="decompile_function",
+                           params={"name": func_name},
+                           reason=f"[{idx}/{len(target_functions)}] {func_name} 함수 디컴파일",
+                           retry_count=0)
+                )
+
+            return actions
+
+        else:
+            print("  Ghidra 전체 분석 모드 (레거시)")
+            return [
+                Action(tool="ghidra", operation="list_functions", params={}, reason="전체 함수 목록"),
+                Action(tool="ghidra", operation="list_imports", params={"offset": 0, "limit": 50}, reason="Import 함수 목록"),
+                Action(tool="ghidra", operation="list_exports", params={"offset": 0, "limit": 50}, reason="Export 함수 목록"),
+                Action(tool="ghidra", operation="decompile_function", params={"name": "entry"}, reason="entry 함수 디컴파일"),
+                Action(tool="ghidra", operation="list_segments", params={"offset": 0, "limit": 20}, reason="메모리 세그먼트 구조"),
+                Action(tool="ghidra", operation="list_strings", params={"offset": 0, "limit": 100}, reason="바이너리 문자열 추출", timeout_seconds=120),
+            ]
 
     if any(kw in description_lower for kw in ["아티팩트", "수집", "velociraptor", "artifact", "프리패치", "prefetch", "프로세스", "pslist", "netstat", "네트워크", "브라우저 히스토리", "레지스트리", "이벤트 로그", "kape"]):
         hostname = "Virtual Host"
@@ -745,7 +1032,7 @@ def _generate_default_plan_for_task(
                 target_path = unquoted_match.group(1)
 
         if not target_path:
-            print(f"  ⚠️  Windows 파일 경로를 찾을 수 없습니다.")
+            print(f"  Windows 파일 경로를 찾을 수 없습니다.")
             print(f"     Task 설명: {task.description}")
             print(f"     예시: C:\\Users\\hacker\\Downloads\\file.exe")
 
