@@ -9,7 +9,7 @@ import json
 import csv
 import io
 import xml.etree.ElementTree as ET
-from .job_storage import _get_client
+from .job_storage import _get_client, add_mcp_tool
 
 
 def _parse_json_string(text: str) -> Optional[Any]:
@@ -352,7 +352,8 @@ def log_mcp_execution(
     request: Dict[str, Any],
     response: Any,
     success: bool,
-    stage: Optional[int] = None
+    stage: Optional[int] = None,
+    job_id: Optional[str] = None
 ) -> bool:
     """MCP 도구 실행 결과를 MongoDB에 저장
 
@@ -363,6 +364,7 @@ def log_mcp_execution(
         response: 도구 실행 결과 데이터
         success: 실행 성공 여부
         stage: 스테이지 번호 (선택사항)
+        job_id: Job ID (선택사항, AGENT_STATES 업데이트용)
 
     Returns:
         bool: 저장 성공 여부
@@ -385,6 +387,9 @@ def log_mcp_execution(
         }
 
         db.MCP_EVIDENCES.insert_one(evidence)
+
+        if job_id and success:
+            add_mcp_tool(job_id, mcp_name, tool_name)
 
         return True
 

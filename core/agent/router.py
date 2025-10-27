@@ -8,7 +8,7 @@ import time
 import uuid
 from typing import Dict, Any, Optional, List, Literal
 from .graph import create_workflow
-from .storage.job_storage import save_job, save_result
+from .storage.job_storage import save_agent_state, update_agent_status
 from .schemas.results import JobSummary
 
 WORKFLOW_MODE: Literal["simple", "two_stage"] = "two_stage"
@@ -36,7 +36,7 @@ def run_job(
     Args:
         user_prompt: 사용자 요청 (예: "지난 24시간 IIS에서 cmd.exe 스폰 탐지")
         file_paths: 파일 경로 배열 (디스크 이미지 등, 선택)
-        file_meta: 파일 메타데이터 (선택)
+        file_meta: 파일 ��타데이터 (선택)
         generate_report_flag: 리포트 생성 여부 (기본값: False)
         report_dir: 리포트 저장 디렉터리 (기본값: ./data/reports)
 
@@ -44,8 +44,8 @@ def run_job(
         Dict[str, Any]: 작업 결과
             - job_id: 작업 ID
             - summary: 작업 요약 (성공/실패, 실행 시간 등)
-            - state: 최종 상태 (계획, 결과 등)
-            - report: 리포트 데이터 (generate_report_flag=True인 경우)
+            - state: 최�� 상태 (계획, 결과 등)
+            - report: 리포트 데이터 (generate_report_flag=True��� 경우)
 
     Example:
         >>> result = run_job(
@@ -97,7 +97,14 @@ def run_job(
             "error": None
         }
 
-    save_job(job_id, initial_state)
+    save_agent_state(
+        agent_id=job_id,
+        stage_id=0,
+        plan=[],
+        status="running",
+        mcp_tools=[],
+        additional_data=initial_state 
+    )
 
     try:
         if WORKFLOW_MODE == "two_stage":
@@ -132,7 +139,16 @@ def run_job(
             fail_count=fail_count,
             execution_time_seconds=execution_time
         )
-        save_result(job_id, final_state)
+
+        save_agent_state(
+            agent_id=job_id,
+            status="completed" if fail_count == 0 else "failed",
+            additional_data={
+                "result": final_state,
+                "summary": summary.to_dict(),
+                "execution_time_seconds": execution_time
+            }
+        )
 
         result = {
             "job_id": job_id,
@@ -155,6 +171,15 @@ def run_job(
         print(f"   작업 실패 (Job ID: {job_id})")
         print(f"   오류: {error_msg}")
         print("=" * 80)
+
+        save_agent_state(
+            agent_id=job_id,
+            status="failed",
+            additional_data={
+                "error": error_msg,
+                "execution_time_seconds": execution_time
+            }
+        )
 
         return {
             "job_id": job_id,
