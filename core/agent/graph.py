@@ -114,7 +114,7 @@ def node_plan(state: Dict[str, Any]) -> Dict[str, Any]:
 
         if not plan:
             error_msg = "실행 계획을 생성할 수 없습니다. 요청을 다시 확인해주세요."
-            print(f"\n⚠️  {error_msg}\n")
+            print(f"\n[X]  {error_msg}\n")
 
             return {
                 **state,
@@ -151,7 +151,7 @@ def node_plan(state: Dict[str, Any]) -> Dict[str, Any]:
 
     except Exception as e:
         error_msg = f"계획 생성 중 오류 발생: {str(e)}"
-        print(f"\n❌ {error_msg}\n")
+        print(f"\n[X] {error_msg}\n")
         import traceback
         traceback.print_exc()
 
@@ -207,7 +207,7 @@ def node_execute(state: Dict[str, Any]) -> Dict[str, Any]:
         reason=action_dict.get("reason", ""),
         timeout_seconds=action_dict.get("timeout_seconds", 300)
     )
-    result = execute_action(action)
+    result = execute_action(action, job_id=state.get("job_id"))
     results.append(result.to_dict())
 
     return {
@@ -349,6 +349,7 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
     import time
     from .high_level_planner import generate_high_level_plan
     from .task_queue import TaskQueue
+    from .storage.job_storage import save_agent_state, update_stage
 
     print("\n" + "="*60)
     print("[Phase 1] High-level Planning")
@@ -365,7 +366,7 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
 
         if not high_level_tasks:
             error_msg = "High-level 계획을 생성할 수 없습니다."
-            print(f"\n❌ {error_msg}\n")
+            print(f"\n[X] {error_msg}\n")
             return {
                 **state,
                 "high_level_tasks": [],
@@ -378,7 +379,7 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
 
         if not task_queue.validate_dependencies():
             error_msg = "Task 간 순환 의존성이 감지되었습니다!"
-            print(f"\n❌ {error_msg}\n")
+            print(f"\n[X] {error_msg}\n")
             return {
                 **state,
                 "high_level_tasks": [],
@@ -396,6 +397,17 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
         timing = state.get("timing", {"high_level_planning": 0.0, "tasks": {}})
         timing["high_level_planning"] = high_level_planning_time
 
+        job_id = state.get("job_id")
+        if job_id:
+            plan_list = [{"task_id": t.task_id, "description": t.description} for t in high_level_tasks]
+            save_agent_state(
+                agent_id=job_id,
+                stage_id=1,
+                plan=plan_list,
+                status="running",
+                mcp_tools=[]
+            )
+
         return {
             **state,
             "high_level_tasks": [t.to_dict() for t in high_level_tasks],
@@ -410,7 +422,7 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
 
     except Exception as e:
         error_msg = f"High-level 계획 생성 실패: {str(e)}"
-        print(f"\n❌ {error_msg}\n")
+        print(f"\n[X] {error_msg}\n")
         import traceback
         traceback.print_exc()
 
@@ -432,7 +444,7 @@ def node_get_next_task(state: Dict[str, Any]) -> Dict[str, Any]:
 
     Returns:
         Dict[str, Any]: 업데이트된 상태
-            - current_task: 다음 Task (dict) 또는 None
+            - current_task: 다음 Task (dict) 또�� None
     """
     from .schemas.task import HighLevelTask, TaskStatus
     from .task_queue import TaskQueue
@@ -471,6 +483,14 @@ def node_get_next_task(state: Dict[str, Any]) -> Dict[str, Any]:
             "execution": 0.0,
             "total": 0.0
         }
+
+        job_id = state.get("job_id")
+        if job_id:
+            try:
+                stage_num = int(next_task.task_id.split("_")[1])
+                update_stage(job_id, stage_num + 1)
+            except:
+                pass
 
         return {
             **state,
@@ -535,7 +555,7 @@ def node_low_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
 
         if not actions:
             error_msg = f"Task {current_task.task_id}의 Low-level 계획 생성 실패"
-            print(f"\n⚠️  {error_msg}")
+            print(f"\n[X]  {error_msg}")
             return {
                 **state,
                 "plan": [],
@@ -563,7 +583,7 @@ def node_low_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
 
     except Exception as e:
         error_msg = f"Low-level 계획 생성 중 오류: {str(e)}"
-        print(f"\n❌ {error_msg}")
+        print(f"\n[X] {error_msg}")
         import traceback
         traceback.print_exc()
 
@@ -637,7 +657,7 @@ def node_execute_two_stage(state: Dict[str, Any]) -> Dict[str, Any]:
         timeout_seconds=action_dict.get("timeout_seconds", 300)
     )
 
-    result = execute_action(action)
+    result = execute_action(action, job_id=state.get("job_id"))
     results.append(result.to_dict())
 
     timing = state.get("timing", {"high_level_planning": 0.0, "tasks": {}})
