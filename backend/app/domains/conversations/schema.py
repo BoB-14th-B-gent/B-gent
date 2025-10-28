@@ -3,7 +3,7 @@ from typing import Optional
 from datetime import datetime
 
 class ConversationCreateInput(BaseModel):
-    input: str = Field(..., description="사용자 입력 원문")
+    input: str = Field(...)
 
     @field_validator("input")
     @classmethod
