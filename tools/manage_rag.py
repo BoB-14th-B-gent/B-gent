@@ -21,7 +21,7 @@ COLLECTION_NAME = "mcp_capabilities"
 def get_client():
     """ChromaDB 클라이언트 가져오기"""
     import chromadb
-    from core.agent.config import get_config
+    from agent.config import get_config
     cfg = get_config()
     client = chromadb.PersistentClient(path=cfg.chroma.dir)
 
@@ -375,7 +375,7 @@ def load_mcp_tools():
     console.print("\n[cyan]⏳ MCP 서버 연결 중...[/cyan]")
 
     try:
-        from core.agent.mcp_singleton import get_mcp_client
+        from agent.mcp_singleton import get_mcp_client
         client = get_mcp_client()
         mcp_tools = client.get_all_tools()
         console.print(f"[green]✅ MCP 서버에서 {len(mcp_tools)}개 도구 발견[/green]\n")
@@ -543,7 +543,7 @@ if __name__ == "__main__":
     finally:
         # MCP 클라이언트 정리
         try:
-            from core.agent.mcp_singleton import reset_mcp_client
+            from agent.mcp_singleton import reset_mcp_client
             reset_mcp_client()
         except:
             pass

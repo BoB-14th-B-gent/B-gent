@@ -31,7 +31,7 @@ def get_mcp_client() -> MCPClientManagerSync:
         RuntimeError: 활성화된 MCP 서버가 없는 경우
 
     Example:
-        >>> from core.agent.mcp_singleton import get_mcp_client
+        >>> from agent.mcp_singleton import get_mcp_client
         >>> client = get_mcp_client()
         >>> tools = client.get_all_tools()
         >>> result = client.call_tool("elastic", "search_documents", {...})

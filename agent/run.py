@@ -7,7 +7,7 @@ import sys
 import os
 import atexit
 import logging
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 logging.basicConfig(
     level=logging.WARNING,
     format='%(message)s'
@@ -29,7 +29,7 @@ from rich.live import Live
 from rich.align import Align
 import time
 from datetime import datetime
-from core.agent.router import run_job, WORKFLOW_MODE
+from agent.router import run_job, WORKFLOW_MODE
 console = Console()
 current_step = ""
 step_history = []
@@ -429,7 +429,7 @@ def cleanup():
     _cleanup_done = True
 
     try:
-        from core.agent.mcp_singleton import reset_mcp_client
+        from agent.mcp_singleton import reset_mcp_client
         with SuppressOutput():
             reset_mcp_client()
     except Exception:
@@ -466,7 +466,7 @@ if __name__ == "__main__":
 
         try:
             with SuppressOutput():
-                from core.agent.config import get_config
+                from agent.config import get_config
                 cfg = get_config()
 
             progress.update(task, description="[OK] Configuration loaded")

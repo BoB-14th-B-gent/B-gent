@@ -1,0 +1,1511 @@
+# Threat Hunting Workflow - Alert ì—†ì„ ë•Œ ì²´ê³„ì  ë¶„ì„ ìˆœì„œ [DSL-only]
+
+ëª©ì : Alertê°€ ì—†ê±°ë‚˜ ì‹œì‘ì ì´ ë¶ˆëª…í™•í•  ë•Œ, í†µê³„ ì´ìƒ íƒì§€ ê¸°ë°˜ìœ¼ë¡œ ìœ„í˜‘ì„ ì°¾ëŠ” ë‹¨ê³„ë³„ ì›Œí¬í”Œë¡œìš°.
+ì›ì¹™: ES|QL ê¸ˆì§€, ëª¨ë“  ì¿¼ë¦¬ëŠ” Elasticsearch DSL(JSON)ë§Œ ì‚¬ìš©.
+
+ì£¼ì˜: ë³¸ ë¬¸ì„œëŠ” Alertê°€ ì—†ì„ ë•Œë¥¼ ì¤‘ì‹¬ìœ¼ë¡œ ì‘ì„±ë˜ì—ˆìœ¼ë‚˜, Alert Branchì—ì„œë„ í•„ìš” ì‹œ ì°¸ì¡° ê°€ëŠ¥.
+- Alert í›„ì† ì¡°ì‚¬ ì‹œ: í•´ë‹¹ Phaseì˜ ì¿¼ë¦¬ í™œìš©
+- ì—°ê´€ ë¶„ì„ ì‹œ: "Pivot ë¶„ì„" ì°¸ì¡°
+- ê³µê²© ì²´ì¸ ì¬êµ¬ì„± ì‹œ: "ê³ ê¸‰ íŒ¨í„´: ì‹œí€€ìŠ¤ íƒì§€" ì°¸ì¡°
+
+---
+
+## 0) í•µì‹¬ ì „ëµ
+
+1. ë² ì´ìŠ¤ë¼ì¸ êµ¬ì¶• â†’ ì •ìƒ íŒ¨í„´ íŒŒì•…
+2. í†µê³„ì  ì´ìƒ íƒì§€ â†’ ë“œë¬¸ ê²ƒ, ê°‘ì‘ìŠ¤ëŸ¬ìš´ ë³€í™”
+3. ê³ ìœ„í—˜ ì‹ í˜¸ ìš°ì„  â†’ ë¹ ë¥´ê²Œ ì°¾ì„ ìˆ˜ ìˆëŠ” ê²ƒë¶€í„°
+4. MITRE ATT&CK ê¸°ë°˜ â†’ ê³µê²© ë‹¨ê³„ë³„ ì²´ê³„ì  í—ŒíŒ…
+
+---
+
+## 1) Phase 0: ì‹œê³„ ì•µì»¤ë§ (T_anchor ì„¤ì •)
+
+SIEMì´ ìµœì‹  ë°ì´í„°ë¥¼ ì¦‰ì‹œ ìˆ˜ì§‘í•˜ì§€ ì•Šì„ ìˆ˜ ìˆìœ¼ë¯€ë¡œ, ë°ì´í„° ìì²´ì˜ ìµœì‹  íƒ€ì„ìŠ¤íƒ¬í”„ë¥¼ ê¸°ì¤€ìœ¼ë¡œ ì‚¼ëŠ”ë‹¤.
+
+### 1-1) ìµœì‹  íƒ€ì„ìŠ¤íƒ¬í”„ ì¶”ì¶œ
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 1,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": { "match_all": {} },
+      "_source": ["@timestamp"]
+    }
+  }
+}
+```
+
+ì—¬ëŸ¬ ì¸ë±ìŠ¤ê°€ ìˆë‹¤ë©´ ê°ê° í™•ì¸í•˜ì—¬ ê°€ì¥ ìµœê·¼ @timestampë¥¼ T_anchorë¡œ ì •ì˜.
+
+### 1-2) ì´ˆê¸° ì ˆëŒ€ì°½ ì„¤ì •
+
+- ABS_START = T_anchor - 24h
+- ABS_END = T_anchor
+
+ë°ì´í„°ê°€ ë“œë¬¸ ê²½ìš° (íˆíŠ¸ < 10) -48hê¹Œì§€ í™•ì¥ ê³ ë ¤.
+
+ëª¨ë“  í›„ì† ì¿¼ë¦¬ëŠ” ì´ ì ˆëŒ€ì‹œê°„ì„ ì‚¬ìš©í•œë‹¤.
+
+---
+
+## 2) Phase 1: ë² ì´ìŠ¤ë¼ì¸ êµ¬ì¶• (ì •ìƒ íŒ¨í„´ íŒŒì•…)
+
+### 2-1) í˜¸ìŠ¤íŠ¸ë³„ ì´ë²¤íŠ¸ ë¹ˆë„ ë¶„ì„
+
+ëª©ì : ë¹„ì •ìƒì ìœ¼ë¡œ í™œë™ì´ ë§ê±°ë‚˜ ì ì€ í˜¸ìŠ¤íŠ¸ ì‹ë³„
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 0,
+      "query": {
+        "range": { 
+          "@timestamp": { 
+            "gte": "<ABS_START>", 
+            "lte": "<ABS_END>" 
+          } 
+        }
+      },
+      "aggs": {
+        "by_host": {
+          "terms": { 
+            "field": "host.name.keyword", 
+            "size": 100,
+            "order": { "_count": "desc" }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+ë¶„ì„ í¬ì¸íŠ¸:
+- ìƒìœ„ 10% í˜¸ìŠ¤íŠ¸ = ì˜ì‹¬ (ê³¼ë„í•œ í™œë™)
+- í•˜ìœ„ 10% í˜¸ìŠ¤íŠ¸ = ì˜ì‹¬ (ë¹„ì •ìƒ ì •ì )
+- í‰ì†Œì™€ ë‹¤ë¥¸ í˜¸ìŠ¤íŠ¸ = ìµœìš°ì„  ì¡°ì‚¬
+
+### 2-2) ì‹œê°„ëŒ€ë³„ ì´ë²¤íŠ¸ ë¶„í¬
+
+ëª©ì : ì—…ë¬´ ì™¸ ì‹œê°„(ì•¼ê°„, ì£¼ë§) í™œë™ íƒì§€
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 0,
+      "query": {
+        "range": { 
+          "@timestamp": { 
+            "gte": "<ABS_START>", 
+            "lte": "<ABS_END>" 
+          } 
+        }
+      },
+      "aggs": {
+        "by_hour": {
+          "date_histogram": {
+            "field": "@timestamp",
+            "calendar_interval": "1h"
+          },
+          "aggs": {
+            "top_hosts": {
+              "terms": { 
+                "field": "host.name.keyword", 
+                "size": 5 
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+ë¶„ì„ í¬ì¸íŠ¸:
+- ìƒˆë²½ 2-5ì‹œ í™œë™ ìŠ¤íŒŒì´í¬ = ì˜ì‹¬
+- ì£¼ë§ í™œë™ = ì˜ì‹¬
+- í‰ì†Œì™€ ë‹¤ë¥¸ ì‹œê°„ëŒ€ íŒ¨í„´ = ì¡°ì‚¬
+
+### 2-3) ì‚¬ìš©ìë³„ í™œë™ íŒ¨í„´
+
+ëª©ì : ë¹„ì •ìƒ ì‚¬ìš©ì í–‰ë™ ì‹ë³„
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 0,
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "exists": { "field": "user.name" } }
+          ]
+        }
+      },
+      "aggs": {
+        "by_user": {
+          "terms": { 
+            "field": "user.name.keyword", 
+            "size": 100 
+          },
+          "aggs": {
+            "unique_hosts": {
+              "cardinality": { "field": "host.name.keyword" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+ë¶„ì„ í¬ì¸íŠ¸:
+- í•œ ì‚¬ìš©ìê°€ ë§ì€ í˜¸ìŠ¤íŠ¸ì— ì ‘ê·¼ = íš¡ì  ì´ë™ ì˜ì‹¬
+- ì„œë¹„ìŠ¤ ê³„ì •ì´ ì•„ë‹Œë° 24ì‹œê°„ í™œë™ = ì˜ì‹¬
+
+---
+
+## 3) Phase 2: ê³ ìœ„í—˜ ì‹ í˜¸ ìš°ì„  íƒì§€
+
+í¬íŠ¸ ë²ˆí˜¸ë§Œìœ¼ë¡œëŠ” ì•…ì„±/ì •ìƒì„ êµ¬ë¶„í•  ìˆ˜ ì—†ìŒ (80/443ë„ C2ì— ì‚¬ìš©ë¨)
+ë”°ë¼ì„œ 3ê°€ì§€ ë…ë¦½ì ì¸ ê´€ì ìœ¼ë¡œ ë™ì‹œ íƒì§€
+
+ì¤‘ìš”: ì•„ë˜ 3ê°œ ê²€ì‚¬ëŠ” ìˆœì°¨ê°€ ì•„ë‹Œ ë³‘ë ¬ ì‹¤í–‰. ê°ê° ë‹¤ë¥¸ ìœ„í˜‘ì„ ì°¾ìŒ
+
+### 3-1) ê´€ì  1: ë¹„í‘œì¤€ í¬íŠ¸
+
+ëª©ì : ì €ìˆ˜ì¤€ ê³µê²©ì, ìë™í™” ë„êµ¬ ë¹ ë¥¸ ë°œê²¬
+
+ê²€ì‚¬ ëŒ€ìƒ: ë¹„í‘œì¤€ í¬íŠ¸ë§Œ (80/443 ë“± ì œì™¸)
+í•œê³„: ê³ ê¸‰ APTëŠ” 80/443 ì‚¬ìš©í•˜ë¯€ë¡œ ì´ê²ƒë§Œìœ¼ë¡œëŠ” ë¶€ì¡±
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "exists": { "field": "destination.port" } }
+          ],
+          "must_not": [
+            { "terms": { "destination.port": [80, 443, 53, 22, 3389, 445, 135, 139, 389, 636, 88, 464, 3268, 3269] } }
+          ]
+        }
+      },
+      "aggs": {
+        "by_port": {
+          "terms": { "field": "destination.port", "size": 20 },
+          "aggs": {
+            "top_processes": {
+              "terms": { "field": "process.name.keyword", "size": 5 }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+ì˜ˆìƒ ë°œê²¬: 4444, 5555, 8000, 8080, 8443, 9001, 1337 ë“±
+
+íˆíŠ¸ ë°œê²¬ ì‹œ: ì ˆëŒ€ì‹œê°„ ì¬ì„¤ì •í•˜ì—¬ 2ì°¨ ì •ë°€ ê²€ìƒ‰
+
+### 3-2) ê´€ì  2: ë¹„ì½˜ íŒ¨í„´
+
+ëª©ì : ì£¼ê¸°ì  C2 í†µì‹  íƒì§€
+
+ê²€ì‚¬ ëŒ€ìƒ: ëª¨ë“  í¬íŠ¸ (80, 443 í¬í•¨)
+í•µì‹¬: C2ëŠ” ì¼ì • ì£¼ê¸°ë¡œ ì²´í¬ì¸í•˜ë¯€ë¡œ ì‹œê°„ íŒ¨í„´ìœ¼ë¡œ íƒì§€ ê°€ëŠ¥
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 0,
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "exists": { "field": "destination.ip" } },
+            { "exists": { "field": "destination.port" } }
+          ]
+        }
+      },
+      "aggs": {
+        "by_source": {
+          "terms": { "field": "source.ip.keyword", "size": 100 },
+          "aggs": {
+            "by_destination": {
+              "terms": { "field": "destination.ip.keyword", "size": 50 },
+              "aggs": {
+                "by_port": {
+                  "terms": { "field": "destination.port", "size": 10 },
+                  "aggs": {
+                    "connections_per_minute": {
+                      "date_histogram": {
+                        "field": "@timestamp",
+                        "fixed_interval": "1m"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+ë¶„ì„ ê¸°ì¤€:
+- ë§¤ ë¶„ë§ˆë‹¤ ì—°ê²° = ì˜ì‹¬ (í¬íŠ¸ ë¬´ê´€)
+- 443 í¬íŠ¸ì—¬ë„ ë§¤ ë¶„ ì—°ê²°ë˜ë©´ ì¡°ì‚¬
+- ê°™ì€ destinationì— > 100íšŒ = ì¦‰ì‹œ ì¡°ì‚¬
+
+ì˜ˆìƒ ë°œê²¬: 
+- 443 í¬íŠ¸ C2 (Cobalt Strike, Metasploit)
+- 80 í¬íŠ¸ C2 (ì¼ë¶€ í”„ë ˆì„ì›Œí¬)
+
+ìƒì„¸ ì¡°ì‚¬ ì¿¼ë¦¬:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "sort": [{ "@timestamp": { "order": "asc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "term": { "source.ip.keyword": "<ì˜ì‹¬_IP>" } },
+            { "term": { "destination.ip.keyword": "<ì˜ì‹¬_ëª©ì ì§€>" } }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+### 3-3) ê´€ì  3: í”„ë¡œì„¸ìŠ¤ ê¸°ë°˜
+
+ëª©ì : ë¹„ì •ìƒ í”„ë¡œì„¸ìŠ¤ì˜ ë„¤íŠ¸ì›Œí¬ í™œë™ íƒì§€
+
+ê²€ì‚¬ ëŒ€ìƒ: ëª¨ë“  í¬íŠ¸ (80, 443 í¬í•¨)
+í•µì‹¬: ë¸Œë¼ìš°ì €ì˜ 443ì€ ì •ìƒ, PowerShellì˜ 443ì€ ì˜ì‹¬
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "exists": { "field": "destination.ip" } },
+            { "exists": { "field": "process.name" } }
+          ],
+          "should": [
+            {
+              "bool": {
+                "must": [
+                  { "terms": { "destination.port": [80, 443] } }
+                ],
+                "must_not": [
+                  { "terms": { "process.name.keyword": [
+                    "chrome.exe", "firefox.exe", "msedge.exe", "iexplore.exe",
+                    "teams.exe", "outlook.exe", "slack.exe",
+                    "OneDrive.exe", "Dropbox.exe", "svchost.exe"
+                  ] } }
+                ]
+              }
+            },
+            {
+              "bool": {
+                "must": [
+                  { "exists": { "field": "destination.port" } },
+                  { "wildcard": { "process.executable": "*\\\\Downloads\\\\*" } }
+                ]
+              }
+            },
+            {
+              "bool": {
+                "must": [
+                  { "exists": { "field": "destination.port" } },
+                  { "terms": { "process.name.keyword": ["powershell.exe", "cmd.exe", "rundll32.exe", "regsvr32.exe", "mshta.exe"] } }
+                ]
+              }
+            }
+          ],
+          "minimum_should_match": 1
+        }
+      }
+    }
+  }
+}
+```
+
+ì˜ˆìƒ ë°œê²¬:
+- PowerShellì´ 443ìœ¼ë¡œ í†µì‹  (ë‹¤ìš´ë¡œë“œ ì‹œë„)
+- Downloads í´ë” ì‹¤í–‰íŒŒì¼ì˜ 80/443 í†µì‹ 
+- rundll32/regsvr32ì˜ ë„¤íŠ¸ì›Œí¬ í™œë™
+
+ì¦‰ì‹œ ì¡°ì‚¬ ëŒ€ìƒ:
+- PowerShell/cmd.exeì˜ ëª¨ë“  ì™¸ë¶€ í†µì‹ 
+- Downloads í´ë” ì‹¤í–‰íŒŒì¼ì˜ ëª¨ë“  í†µì‹ 
+- LOLBinsì˜ ë„¤íŠ¸ì›Œí¬ í™œë™
+
+---
+
+## 3ê°€ì§€ ê´€ì ì˜ ì‹¤í–‰ ì˜ˆì‹œ
+
+```
+ì‹œë‚˜ë¦¬ì˜¤: ë™ì¼í•œ 24ì‹œê°„ ë¡œê·¸ ë¶„ì„
+
+ê´€ì  1 ì‹¤í–‰ (ë¹„í‘œì¤€ í¬íŠ¸):
+â†’ 8000 í¬íŠ¸ í†µì‹  1ê±´ ë°œê²¬
+â†’ í”„ë¡œì„¸ìŠ¤: unknown.exe
+
+ê´€ì  2 ì‹¤í–‰ (ë¹„ì½˜ íŒ¨í„´):
+â†’ 443 í¬íŠ¸ì—ì„œ ë§¤ ë¶„ë§ˆë‹¤ ì—°ê²° ë°œê²¬
+â†’ í”„ë¡œì„¸ìŠ¤: svchost.exe (ì˜ì‹¬)
+
+ê´€ì  3 ì‹¤í–‰ (í”„ë¡œì„¸ìŠ¤ ê¸°ë°˜):
+â†’ powershell.exeê°€ 443ìœ¼ë¡œ í†µì‹  ë°œê²¬
+â†’ ëª…ë ¹ì–´: Invoke-WebRequest
+
+ê²°ê³¼ ì¢…í•©:
+- 3ê°€ì§€ ë…ë¦½ì ì¸ ìœ„í˜‘ ë°œê²¬
+- ê´€ì  1ë§Œ ì‹¤í–‰í–ˆë‹¤ë©´ 443 í¬íŠ¸ ìœ„í˜‘ 2ê±´ ë†“ì¹¨
+- ëª¨ë“  ê´€ì  ì‹¤í–‰ìœ¼ë¡œ ì™„ì „í•œ ê°€ì‹œì„± í™•ë³´
+```
+
+---
+
+## 4) Phase 3: ë„¤íŠ¸ì›Œí¬ ì´ìƒ íƒì§€
+
+### 4-1) ëŒ€ëŸ‰ ì—°ê²° ì‹œë„
+
+í¬íŠ¸ ìŠ¤ìº”, C2 ë¹„ì½˜ íƒì§€
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 0,
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "exists": { "field": "destination.ip" } }
+          ]
+        }
+      },
+      "aggs": {
+        "by_source": {
+          "terms": { "field": "source.ip.keyword", "size": 100 },
+          "aggs": {
+            "unique_destinations": {
+              "cardinality": { "field": "destination.ip.keyword" }
+            },
+            "unique_ports": {
+              "cardinality": { "field": "destination.port" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+ë¶„ì„ í¬ì¸íŠ¸:
+- unique_destinations > 100 = í¬íŠ¸ ìŠ¤ìº”
+- unique_ports > 50 = ìŠ¤ìº” í™œë™
+- 1ë¶„ë§ˆë‹¤ ê°™ì€ IP:Port ì—°ê²° = C2 ë¹„ì½˜
+
+### 4-2) DNS í„°ë„ë§/DGA íƒì§€
+
+ë¹„ì •ìƒ DNS íŒ¨í„´
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "exists": { "field": "dns.question.name" } }
+          ],
+          "should": [
+            { "regexp": { "dns.question.name": ".*\\.onion$" } },
+            { "regexp": { "dns.question.name": "^[a-z0-9]{20,}\\." } },
+            { "script": { "script": { "source": "doc['dns.question.name.keyword'].value.length() > 50" } } }
+          ],
+          "minimum_should_match": 1
+        }
+      }
+    }
+  }
+}
+```
+
+### 4-3) ë‚´ë¶€ IP ê°„ ë¹„ì •ìƒ í†µì‹ 
+
+íš¡ì  ì´ë™ íƒì§€
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "exists": { "field": "source.ip" } },
+            { "exists": { "field": "destination.ip" } }
+          ],
+          "should": [
+            { "terms": { "destination.port": [445, 139, 135, 3389] } }
+          ],
+          "must_not": [
+            { "terms": { "process.name.keyword": ["System", "svchost.exe"] } }
+          ],
+          "minimum_should_match": 1
+        }
+      },
+      "aggs": {
+        "by_source": {
+          "terms": { "field": "source.ip.keyword", "size": 50 },
+          "aggs": {
+            "unique_targets": {
+              "cardinality": { "field": "destination.ip.keyword" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+---
+
+## 5) Phase 4: íŒŒì¼ ì‹œìŠ¤í…œ ì´ìƒ
+
+### 5-1) ì‹œìŠ¤í…œ í´ë” ì˜ì‹¬ íŒŒì¼
+
+ë£¨íŠ¸í‚·, ë“œë¡œí¼ íƒì§€
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } }
+          ],
+          "should": [
+            {
+              "bool": {
+                "must": [
+                  { "wildcard": { "file.path": "*\\\\System32\\\\*" } }
+                ],
+                "must_not": [
+                  { "wildcard": { "file.path": "*.dll" } },
+                  { "wildcard": { "file.path": "*.sys" } },
+                  { "wildcard": { "file.path": "*.exe" } }
+                ]
+              }
+            },
+            { "wildcard": { "file.path": "*\\\\Temp\\\\*.exe" } },
+            { "wildcard": { "file.path": "*\\\\AppData\\\\Roaming\\\\*.exe" } }
+          ],
+          "minimum_should_match": 1
+        }
+      }
+    }
+  }
+}
+```
+
+### 5-2) íŒŒì¼ í•´ì‹œ ë¹ˆë„ ë¶„ì„
+
+ë“œë¬¸ íŒŒì¼ = ì˜ì‹¬
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 0,
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "exists": { "field": "file.hash.sha256" } }
+          ]
+        }
+      },
+      "aggs": {
+        "rare_hashes": {
+          "terms": { 
+            "field": "file.hash.sha256.keyword", 
+            "size": 100,
+            "order": { "_count": "asc" }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+ë¶„ì„: count=1ì¸ í•´ì‹œ â†’ ìƒì„¸ ì¡°ì‚¬
+
+---
+
+## 6) Phase 5: ê³„ì • ë° ê¶Œí•œ ì´ìƒ
+
+### 6-1) Brute Force ì‹œë„
+
+ì‹¤íŒ¨í•œ ë¡œê·¸ì¸ ì§‘ì¤‘
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 0,
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "term": { "event.code": "4625" } }
+          ]
+        }
+      },
+      "aggs": {
+        "by_user": {
+          "terms": { "field": "user.name.keyword", "size": 100 },
+          "aggs": {
+            "by_source_ip": {
+              "terms": { "field": "source.ip.keyword", "size": 10 }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+ì„ê³„ê°’: 10íšŒ ì´ìƒ ì‹¤íŒ¨ = ì¦‰ì‹œ ì¡°ì‚¬
+
+### 6-2) ìƒˆ ê³„ì • ìƒì„±
+
+ë°±ë„ì–´ ê³„ì • íƒì§€
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 50,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "term": { "event.code": "4720" } }
+          ]
+        }
+      },
+      "_source": ["@timestamp", "host.name", "user.name", "event.action"]
+    }
+  }
+}
+```
+
+### 6-3) ê¶Œí•œ ê·¸ë£¹ ë³€ê²½
+
+ê¶Œí•œ ìƒìŠ¹ íƒì§€
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 50,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "terms": { "event.code": ["4728", "4732", "4756"] } }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+---
+
+## 7) Phase 6: MITRE ATT&CK ê¸°ë°˜ ì‹¬í™” í—ŒíŒ…
+
+### 7-1) Persistence (ì§€ì†ì„±)
+
+ë ˆì§€ìŠ¤íŠ¸ë¦¬ Run í‚¤ ìˆ˜ì •
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } }
+          ],
+          "should": [
+            { "wildcard": { "registry.path": "*\\\\Run\\\\*" } },
+            { "wildcard": { "registry.path": "*\\\\RunOnce\\\\*" } },
+            { "regexp": { "process.command_line": "(?i).*(schtasks.*create).*" } }
+          ],
+          "minimum_should_match": 1
+        }
+      }
+    }
+  }
+}
+```
+
+### 7-2) Defense Evasion (íƒì§€ íšŒí”¼)
+
+ë³´ì•ˆ ë„êµ¬ ë¹„í™œì„±í™”
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } }
+          ],
+          "should": [
+            { "regexp": { "process.command_line": "(?i).*(Set-MpPreference|DisableRealtimeMonitoring).*" } },
+            { "regexp": { "process.command_line": "(?i).*(wevtutil.*clear-log).*" } },
+            { "regexp": { "process.command_line": "(?i).*(Stop-Service.*WinDefend).*" } }
+          ],
+          "minimum_should_match": 1
+        }
+      }
+    }
+  }
+}
+```
+
+### 7-3) Credential Access (ìê²©ì¦ëª… íƒˆì·¨)
+
+LSASS ë¤í”„ ì‹œë„
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } }
+          ],
+          "should": [
+            {
+              "bool": {
+                "must": [
+                  { "wildcard": { "process.name.keyword": "*procdump*" } },
+                  { "wildcard": { "process.command_line": "*lsass*" } }
+                ]
+              }
+            },
+            { "regexp": { "process.command_line": "(?i).*(sekurlsa|lsadump|mimikatz).*" } }
+          ],
+          "minimum_should_match": 1
+        }
+      }
+    }
+  }
+}
+```
+
+### 7-4) Discovery (ì •ì°°)
+
+ì‹œìŠ¤í…œ ì •ë³´ ìˆ˜ì§‘
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } }
+          ],
+          "should": [
+            { "regexp": { "process.command_line": "(?i).*(systeminfo|whoami|ipconfig|net user|net group).*" } },
+            { "regexp": { "powershell.script_block.text": "(?i).*(Get-ComputerInfo|Get-NetIPAddress|Get-LocalUser).*" } }
+          ],
+          "must_not": [
+            { "match_phrase": { "process.command_line": "healthcheck" } }
+          ],
+          "minimum_should_match": 1
+        }
+      }
+    }
+  }
+}
+```
+
+---
+
+## 8) Pivot ë¶„ì„ (ì—°ì‡„ ì¶”ì )
+
+### 8-1) IOC í™•ì¥ ê²€ìƒ‰ - íŒŒì¼ í•´ì‹œ ê¸°ë°˜
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "term": { "file.hash.md5.keyword": "<FOUND_HASH>" } }
+          ]
+        }
+      },
+      "aggs": {
+        "affected_hosts": {
+          "terms": { "field": "host.name.keyword", "size": 100 }
+        }
+      }
+    }
+  }
+}
+```
+
+### 8-2) IOC í™•ì¥ ê²€ìƒ‰ - IP ê¸°ë°˜
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } }
+          ],
+          "should": [
+            { "term": { "source.ip.keyword": "<SUSPICIOUS_IP>" } },
+            { "term": { "destination.ip.keyword": "<SUSPICIOUS_IP>" } }
+          ],
+          "minimum_should_match": 1
+        }
+      },
+      "aggs": {
+        "by_host": {
+          "terms": { "field": "host.name.keyword", "size": 50 }
+        }
+      }
+    }
+  }
+}
+```
+
+### 8-3) íƒ€ì„ë¼ì¸ ìƒê´€ë¶„ì„ - íŠ¹ì • í˜¸ìŠ¤íŠ¸ ì „ì²´ í™œë™
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 500,
+      "sort": [{ "@timestamp": { "order": "asc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "term": { "host.name.keyword": "<SUSPICIOUS_HOST>" } }
+          ]
+        }
+      },
+      "_source": ["@timestamp", "event.action", "process.name", "process.command_line", "user.name", "destination.ip", "file.path"]
+    }
+  }
+}
+```
+
+---
+
+## 10) ê²°ê³¼ íŒë‹¨ ê¸°ì¤€
+
+### ì¦‰ì‹œ ì¡°ì‚¬ ëŒ€ìƒ (Critical)
+
+- ë¹„í‘œì¤€ í¬íŠ¸ í†µì‹  + ì˜ì‹¬ í”„ë¡œì„¸ìŠ¤
+- Downloads í´ë” ì‹¤í–‰íŒŒì¼ + ë„¤íŠ¸ì›Œí¬ ì—°ê²°
+- PowerShell ì¸ì½”ë”© ëª…ë ¹ì–´
+- Office â†’ Shell ìŠ¤í°
+- LSASS ë¤í”„ ì‹œë„
+- 443 í¬íŠ¸ ë¹„ì½˜ íŒ¨í„´
+
+### ì‹¬ì¸µ ì¡°ì‚¬ ëŒ€ìƒ (High)
+
+- ëŒ€ëŸ‰ ë„¤íŠ¸ì›Œí¬ ì—°ê²° (>100 unique IPs)
+- DNS ì¿¼ë¦¬ ì´ìƒ (ê¸´ ë„ë©”ì¸, DGA íŒ¨í„´)
+- ì—…ë¬´ ì™¸ ì‹œê°„ ëŒ€ëŸ‰ í™œë™
+- ìƒˆ ê³„ì • ìƒì„± + ê¶Œí•œ ê·¸ë£¹ ì¶”ê°€
+
+### ëª¨ë‹ˆí„°ë§ ê°•í™” (Medium)
+
+- ë“œë¬¸ í”„ë¡œì„¸ìŠ¤ ì‹¤í–‰ (ë¹ˆë„ ë¶„ì„ ê²°ê³¼)
+- ì •ì°° ëª…ë ¹ì–´ (systeminfo, whoami)
+- ì‹œìŠ¤í…œ í´ë” íŒŒì¼ ìƒì„±
+
+---
+
+## 11) í—ŒíŒ… íš¨ìœ¨í™” íŒ
+
+### Tip 1: ì¿¼ë¦¬ ê²°ê³¼ ì‹œê°„ëŒ€ë¡œ ì ˆëŒ€ì‹œê°„ ì¬ìƒì„±
+
+1ì°¨ ê²€ìƒ‰ ê²°ê³¼ì˜ @timestamp ìˆ˜ì§‘
+â†’ min_ts, max_ts ê³„ì‚°
+â†’ start = min_ts - 10m, end = max_ts + 10m
+â†’ ëª¨ë“  í›„ì† ì¿¼ë¦¬ì— ì´ ì ˆëŒ€ì‹œê°„ ì ìš©
+
+### Tip 2: ì§‘ê³„ë¡œ ìš°ì„ ìˆœìœ„ ê²°ì •
+
+size:0 + aggsë¡œ Top-N ì¶”ì¶œ
+â†’ ìƒìœ„ 10ê°œ í˜¸ìŠ¤íŠ¸/ì‚¬ìš©ì/í”„ë¡œì„¸ìŠ¤ë§Œ ìƒì„¸ ì¡°ì‚¬
+â†’ ë…¸ì´ì¦ˆ ì œê±°
+
+### Tip 3: ì •ìƒ íŒ¨í„´ ì œì™¸ (must_not)
+
+ì•Œë ¤ì§„ ì •ìƒ í”„ë¡œì„¸ìŠ¤, ë„ë©”ì¸, IPë¥¼ ë¯¸ë¦¬ ì œì™¸
+â†’ Signal-to-Noise ë¹„ìœ¨ í–¥ìƒ
+
+### Tip 4: ì ì§„ì  í•„í„°ë§
+
+1ì°¨: ë„“ì€ ë²”ìœ„ (24h, ëª¨ë“  í˜¸ìŠ¤íŠ¸)
+2ì°¨: ì§‘ê³„ë¡œ ìƒìœ„ Nê°œ ì¶”ì¶œ
+3ì°¨: íŠ¹ì • í˜¸ìŠ¤íŠ¸/ì‚¬ìš©ìë¡œ ì¢í˜€ì„œ ì •ë°€ ë¶„ì„
+
+### Tip 5: ìë™í™” ì¿¼ë¦¬ë¶ êµ¬ì¶•
+
+ìì£¼ ì‚¬ìš©í•˜ëŠ” í—ŒíŒ… ì¿¼ë¦¬ë¥¼ ì¹´í…Œê³ ë¦¬ë³„ë¡œ ì €ì¥
+â†’ RAG ì‹œìŠ¤í…œì— ì„ë² ë”©
+â†’ ìœ ì‚¬ ìƒí™© ì‹œ ì¦‰ì‹œ ì¬ì‚¬ìš©
+
+---
+
+## 12) ì¿¼ë¦¬ ì„±ëŠ¥ ìµœì í™”
+
+### ìµœì í™” ì›ì¹™
+
+1. ì‹œê°„ ë²”ìœ„ ìµœì†Œí™”: í•„ìš”í•œ ë§Œí¼ë§Œ ê²€ìƒ‰
+2. í•„ë“œ í•„í„° ìš°ì„ : exists, term, termsë¥¼ filterì— ë°°ì¹˜
+3. ì •ê·œì‹ ìµœì†Œí™”: ê°€ëŠ¥í•˜ë©´ wildcardë‚˜ prefix ì‚¬ìš©
+4. ì§‘ê³„ í¬ê¸° ì œí•œ: sizeë¥¼ ì ì ˆíˆ ì„¤ì • (ê¸°ë³¸ 10-100)
+5. _source í•„í„°ë§: í•„ìš”í•œ í•„ë“œë§Œ ë°˜í™˜
+
+### ëŠë¦° ì¿¼ë¦¬ ê°œì„  ì˜ˆì‹œ
+
+Before (ëŠë¦¼):
+```json
+{
+  "query": {
+    "regexp": { "message": ".*suspicious.*" }
+  }
+}
+```
+
+After (ë¹ ë¦„):
+```json
+{
+  "query": {
+    "bool": {
+      "filter": [
+        { "exists": { "field": "process.name" } }
+      ],
+      "should": [
+        { "match_phrase": { "message": "suspicious" } },
+        { "wildcard": { "process.name": "*suspicious*" } }
+      ],
+      "minimum_should_match": 1
+    }
+  }
+}
+```
+
+---
+
+## 13) í†µê³„ì  ì„ê³„ê°’ ê°€ì´ë“œ
+
+### ë„¤íŠ¸ì›Œí¬
+
+- í¬íŠ¸ ìŠ¤ìº”: unique_destinations > 100 / 1ì‹œê°„
+- C2 ë¹„ì½˜: ê°™ì€ destinationì— > 10íšŒ / 10ë¶„
+- ë°ì´í„° ìœ ì¶œ: outbound connections > 1000 / 1ì‹œê°„
+
+### í”„ë¡œì„¸ìŠ¤
+
+- ë“œë¬¸ í”„ë¡œì„¸ìŠ¤: 30ì¼ê°„ count < 5
+- ì˜ì‹¬ ë¶€ëª¨-ìì‹: Office â†’ Shell ì¡°í•© = ì¦‰ì‹œ ì¡°ì‚¬
+- ì‹œìŠ¤í…œ í´ë” ì‹¤í–‰: System32 ì™¸ë¶€ ì‹¤í–‰ = ì¡°ì‚¬
+
+### ê³„ì •
+
+- Brute Force: ì‹¤íŒ¨ ë¡œê·¸ì¸ > 10íšŒ / 1ì‹œê°„
+- íš¡ì  ì´ë™: 1 ì‚¬ìš©ì â†’ > 10 í˜¸ìŠ¤íŠ¸ / 1ì‹œê°„
+- ê¶Œí•œ ìƒìŠ¹: ìƒˆ ê´€ë¦¬ì ê³„ì • ìƒì„± = ì¦‰ì‹œ ì¡°ì‚¬
+
+### DNS
+
+- DGA: ë„ë©”ì¸ ê¸¸ì´ > 50ì
+- í„°ë„ë§: ì¿¼ë¦¬ ë¹ˆë„ > 100íšŒ / ë¶„
+- ì˜ì‹¬ TLD: .onion, .bit, ì•Œ ìˆ˜ ì—†ëŠ” TLD
+
+---
+
+## 14) False Positive ì œê±° íŒ¨í„´
+
+### ê³µí†µ ì •ìƒ ì œì™¸ (must_notì— ì¶”ê°€)
+
+```json
+{
+  "must_not": [
+    { "match_phrase": { "message": "healthcheck" } },
+    { "match_phrase": { "message": "monitoring" } },
+    { "match_phrase": { "process.name": "System" } },
+    { "match_phrase": { "process.name": "svchost.exe" } },
+    { "match_phrase": { "user.name": "SYSTEM" } },
+    { "match_phrase": { "user.name": "NT AUTHORITY\\\\SYSTEM" } },
+    { "wildcard": { "process.command_line": "*Windows\\\\Update*" } },
+    { "wildcard": { "process.command_line": "*Microsoft\\\\EdgeUpdate*" } },
+    { "terms": { "destination.ip.keyword": ["127.0.0.1", "::1"] } }
+  ]
+}
+```
+
+### ì—…ë°ì´íŠ¸/ì •ìƒ ë„ë©”ì¸ ì œì™¸
+
+```json
+{
+  "must_not": [
+    { "wildcard": { "dns.question.name": "*.microsoft.com" } },
+    { "wildcard": { "dns.question.name": "*.windows.com" } },
+    { "wildcard": { "dns.question.name": "*.windowsupdate.com" } },
+    { "wildcard": { "dns.question.name": "*.github.com" } },
+    { "wildcard": { "dns.question.name": "*.cloudflare.com" } },
+    { "wildcard": { "dns.question.name": "*.google.com" } }
+  ]
+}
+```
+
+---
+
+## 15) í™˜ê²½ë³„ ë§ì¶¤ ì„¤ì •
+
+### ì†Œê·œëª¨ í™˜ê²½ (< 100 í˜¸ìŠ¤íŠ¸)
+
+- ì ˆëŒ€ì‹œê°„ ë²”ìœ„: T_anchor - 7d ~ T_anchor
+- ì§‘ê³„ size: 50-100
+- ì„ê³„ê°’: ë” ë‚®ê²Œ ì„¤ì •
+
+### ì¤‘ê·œëª¨ í™˜ê²½ (100-1000 í˜¸ìŠ¤íŠ¸)
+
+- ì ˆëŒ€ì‹œê°„ ë²”ìœ„: T_anchor - 24h ~ T_anchor
+- ì§‘ê³„ size: 100-500
+- ì„ê³„ê°’: í‘œì¤€ ì‚¬ìš©
+
+### ëŒ€ê·œëª¨ í™˜ê²½ (> 1000 í˜¸ìŠ¤íŠ¸)
+
+- ì ˆëŒ€ì‹œê°„ ë²”ìœ„: T_anchor - 1h ~ T_anchor (ì´ˆê¸°), í•„ìš” ì‹œ í™•ì¥
+- ì§‘ê³„ size: 100-200
+- ì„ê³„ê°’: ë” ë†’ê²Œ ì„¤ì •
+- ìƒ˜í”Œë§ ê³ ë ¤
+
+---
+
+## 16) í—ŒíŒ… ê²°ê³¼ â†’ íƒì§€ ë£° ì „í™˜
+
+### ë°œê²¬í•œ íŒ¨í„´ì„ ìë™ íƒì§€ë¡œ
+
+Step 1: í—ŒíŒ…ìœ¼ë¡œ íŒ¨í„´ ë°œê²¬
+```
+"Downloads í´ë”ì—ì„œ .pdf.exe ì‹¤í–‰" íŒ¨í„´ ë°œê²¬
+â†’ 3ê±´ íƒì§€, ëª¨ë‘ ì•…ì„±
+```
+
+Step 2: íƒì§€ ë£°ë¡œ ì „í™˜
+```json
+{
+  "name": "Suspicious Double Extension Execution",
+  "query": {
+    "bool": {
+      "filter": [
+        { "range": { "@timestamp": { "gte": "now-5m" } } }
+      ],
+      "should": [
+        { "regexp": { "file.path": ".*\\.(pdf|doc|xls)\\.(exe|scr|com)$" } },
+        { "regexp": { "process.executable": ".*\\.(pdf|doc|xls)\\.(exe|scr|com)$" } }
+      ],
+      "minimum_should_match": 1
+    }
+  },
+  "severity": "high",
+  "alert_action": "create_case"
+}
+```
+
+Step 3: ì§€ì†ì  ê°œì„ 
+```
+False Positive ë°œìƒ â†’ must_notì— ì˜ˆì™¸ ì¶”ê°€
+ìƒˆë¡œìš´ ë³€ì¢… ë°œê²¬ â†’ shouldì— íŒ¨í„´ ì¶”ê°€
+```
+
+---
+
+## 17) ì‹¤ì „ ì‹œë‚˜ë¦¬ì˜¤ë³„ ì›Œí¬í”Œë¡œìš°
+
+### ì‹œë‚˜ë¦¬ì˜¤ 1: "ì‹œìŠ¤í…œì´ ëŠë ¤ì¡Œë‹¤"ëŠ” ì‹ ê³ 
+
+Step 1: í•´ë‹¹ í˜¸ìŠ¤íŠ¸ ì „ì²´ í™œë™ í™•ì¸
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 0,
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<T_anchor - 1h>", "lte": "<T_anchor>" } } },
+            { "term": { "host.name.keyword": "<ì‹ ê³ _í˜¸ìŠ¤íŠ¸>" } }
+          ]
+        }
+      },
+      "aggs": {
+        "by_process": {
+          "terms": { "field": "process.name.keyword", "size": 20 }
+        },
+        "network_activity": {
+          "filter": { "exists": { "field": "destination.ip" } },
+          "aggs": {
+            "unique_destinations": {
+              "cardinality": { "field": "destination.ip.keyword" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Step 2: ë¹„ì •ìƒ í”„ë¡œì„¸ìŠ¤ í™•ì¸
+- ìƒìœ„ í”„ë¡œì„¸ìŠ¤ ì¤‘ ìƒì†Œí•œ ê²ƒ â†’ ìƒì„¸ ì¡°ì‚¬
+- ë„¤íŠ¸ì›Œí¬ í™œë™ ê¸‰ì¦ â†’ ì—°ê²° ìƒì„¸ í™•ì¸
+
+Step 3: íƒ€ì„ë¼ì¸ ì¬êµ¬ì„±
+- ëŠë ¤ì§€ê¸° ì‹œì‘í•œ ì‹œì  íŒŒì•…
+- ê·¸ ì‹œì  ì „í›„ Â±30ë¶„ ëª¨ë“  ì´ë²¤íŠ¸ ì¡°íšŒ
+- ì ˆëŒ€ì‹œê°„ ì¬ì„¤ì •í•˜ì—¬ ì •ë°€ ë¶„ì„
+
+### ì‹œë‚˜ë¦¬ì˜¤ 2: "ì™¸ë¶€ ë³´ì•ˆì—…ì²´ê°€ ìš°ë¦¬ IPë¥¼ ì•…ì„±ìœ¼ë¡œ ì‹ ê³ "
+
+Step 1: í•´ë‹¹ IP ì‚¬ìš© í˜¸ìŠ¤íŠ¸ ì‹ë³„
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 0,
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<T_anchor - 7d>", "lte": "<T_anchor>" } } },
+            { "term": { "source.ip.keyword": "<ì‹ ê³ ëœ_IP>" } }
+          ]
+        }
+      },
+      "aggs": {
+        "by_host": {
+          "terms": { "field": "host.name.keyword", "size": 10 }
+        }
+      }
+    }
+  }
+}
+```
+
+Step 2: í•´ë‹¹ í˜¸ìŠ¤íŠ¸ë“¤ì˜ ì•„ì›ƒë°”ìš´ë“œ í†µì‹  ë¶„ì„
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "sort": [{ "@timestamp": { "order": "desc" } }],
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "terms": { "host.name.keyword": ["<HOST1>", "<HOST2>"] } },
+            { "exists": { "field": "destination.ip" } }
+          ],
+          "must_not": [
+            { "wildcard": { "destination.ip": "192.168.*" } },
+            { "wildcard": { "destination.ip": "10.*" } }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+Step 3: ì˜ì‹¬ í”„ë¡œì„¸ìŠ¤ ì°¾ê¸°
+- Quick Hunt ì²´í¬ë¦¬ìŠ¤íŠ¸ ì‹¤í–‰
+- C2 í†µì‹  íŒ¨í„´ í™•ì¸
+
+### ì‹œë‚˜ë¦¬ì˜¤ 3: "ëœì„¬ì›¨ì–´ ê°ì—¼ ì˜ì‹¬"
+
+Step 1: ëŒ€ëŸ‰ íŒŒì¼ ìˆ˜ì • íƒì§€
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 0,
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<T_anchor - 1h>", "lte": "<T_anchor>" } } },
+            { "exists": { "field": "file.path" } }
+          ]
+        }
+      },
+      "aggs": {
+        "by_host": {
+          "terms": { "field": "host.name.keyword", "size": 50 },
+          "aggs": {
+            "file_changes": {
+              "cardinality": { "field": "file.path.keyword" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Step 2: ëœì„¬ ë…¸íŠ¸ íŒŒì¼ ê²€ìƒ‰
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<T_anchor - 24h>", "lte": "<T_anchor>" } } }
+          ],
+          "should": [
+            { "wildcard": { "file.path": "*README*" } },
+            { "wildcard": { "file.path": "*DECRYPT*" } },
+            { "wildcard": { "file.path": "*RANSOM*" } },
+            { "wildcard": { "file.path": "*.txt" } }
+          ],
+          "minimum_should_match": 1
+        }
+      }
+    }
+  }
+}
+```
+
+Step 3: ì´ˆê¸° ê°ì—¼ ë²¡í„° ì—­ì¶”ì 
+- ì²« íŒŒì¼ ìˆ˜ì • ì‹œì  í™•ì¸
+- ê·¸ ì „ 1ì‹œê°„ ë™ì•ˆì˜ í”„ë¡œì„¸ìŠ¤/ë„¤íŠ¸ì›Œí¬ í™œë™
+- Downloads, ì´ë©”ì¼ ì²¨ë¶€íŒŒì¼ ì‹¤í–‰ í™•ì¸
+
+---
+
+## 18) ê³ ê¸‰ íŒ¨í„´: ì‹œí€€ìŠ¤ íƒì§€
+
+### ê³µê²© ì²´ì¸ íƒì§€ (ë‹¤ë‹¨ê³„ íŒ¨í„´)
+
+íŒ¨í„´: í”¼ì‹± â†’ ì‹¤í–‰ â†’ C2 ì—°ê²°
+
+Step 1: ì´ë©”ì¼/ë¸Œë¼ìš°ì €ì—ì„œ ë‹¤ìš´ë¡œë“œ
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } },
+            { "terms": { "process.parent.name.keyword": ["outlook.exe", "chrome.exe", "msedge.exe"] } },
+            { "wildcard": { "file.path": "*\\\\Downloads\\\\*" } }
+          ]
+        }
+      },
+      "_source": ["@timestamp", "host.name", "user.name", "file.path", "file.hash.md5"]
+    }
+  }
+}
+```
+
+Step 2: 10ë¶„ ë‚´ ì‹¤í–‰ í™•ì¸
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<DOWNLOAD_TIME>", "lte": "<DOWNLOAD_TIME+10m>" } } },
+            { "term": { "host.name.keyword": "<SAME_HOST>" } },
+            { "wildcard": { "process.executable": "*\\\\Downloads\\\\*" } }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+Step 3: ì‹¤í–‰ í›„ 10ë¶„ ë‚´ ë„¤íŠ¸ì›Œí¬ ì—°ê²°
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 100,
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<EXEC_TIME>", "lte": "<EXEC_TIME+10m>" } } },
+            { "term": { "host.name.keyword": "<SAME_HOST>" } },
+            { "exists": { "field": "destination.ip" } }
+          ],
+          "must_not": [
+            { "terms": { "destination.port": [80, 443, 53] } }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+ì´ 3ë‹¨ê³„ê°€ ëª¨ë‘ ì—°ê²°ë˜ë©´ â†’ High Confidence ìœ„í˜‘
+
+---
+
+## 19) ë©”ëª¨ë¦¬ íš¨ìœ¨ì ì¸ ëŒ€ëŸ‰ ê²€ìƒ‰
+
+### ëŒ€ìš©ëŸ‰ í™˜ê²½ì—ì„œì˜ Scroll API í™œìš©
+
+ì´ˆê¸° ê²€ìƒ‰:
+
+MCP í˜¸ì¶œ:
+```json
+{
+  "tool": "search",
+  "arguments": {
+    "index": "logs-*",
+    "query_body": {
+      "size": 1000,
+      "query": {
+        "bool": {
+          "filter": [
+            { "range": { "@timestamp": { "gte": "<ABS_START>", "lte": "<ABS_END>" } } }
+          ],
+          "should": [
+            { "regexp": { "process.command_line": "(?i).*(invoke-webrequest).*" } }
+          ],
+          "minimum_should_match": 1
+        }
+      },
+      "scroll": "5m"
+    }
+  }
+}
+```
+
+í›„ì† í˜ì´ì§•: scroll_id ì‚¬ìš©í•˜ì—¬ ê³„ì† ì¡°íšŒ
+
+---
+
+## 20) ìµœì¢… ì²´í¬ë¦¬ìŠ¤íŠ¸
+
+### í—ŒíŒ… ì‹œì‘ ì „
+
+- [ ] ì¸ë±ìŠ¤ ëª©ë¡ í™•ì¸ (list_indices)
+- [ ] T_anchor ì„¤ì • (ìµœì‹  @timestamp ì¶”ì¶œ)
+- [ ] í•„ë“œ ë§¤í•‘ í™•ì¸ (get_mappings)
+- [ ] ì ˆëŒ€ì‹œê°„ ë²”ìœ„ ê²°ì • (T_anchor ê¸°ì¤€)
+- [ ] False Positive ì œì™¸ ë¦¬ìŠ¤íŠ¸ ì¤€ë¹„
+
+### í—ŒíŒ… ì‹¤í–‰ ì¤‘
+
+- [ ] Top 10 ì˜ì‹¬ í˜¸ìŠ¤íŠ¸ ì‹ë³„
+- [ ] ê° í˜¸ìŠ¤íŠ¸ë³„ ìƒì„¸ ì¡°ì‚¬
+- [ ] íˆíŠ¸ ë°œê²¬ ì‹œ ì ˆëŒ€ì‹œê°„ ì¬ì„¤ì •
+- [ ] Pivotìœ¼ë¡œ ì—°ê´€ í˜¸ìŠ¤íŠ¸ ì¶”ê°€ ì¡°ì‚¬
+- [ ] íƒ€ì„ë¼ì¸ ì¬êµ¬ì„±
+
+### í—ŒíŒ… ì™„ë£Œ í›„
+
+- [ ] ë°œê²¬ ì‚¬í•­ ë¬¸ì„œí™”
+- [ ] IOC ëª©ë¡ ì‘ì„±
+- [ ] íƒì§€ ë£° ìƒì„±/ì—…ë°ì´íŠ¸
+- [ ] ëŒ€ì‘ ì¡°ì¹˜ ê¶Œê³ 
+- [ ] ë² ì´ìŠ¤ë¼ì¸ ì—…ë°ì´íŠ¸
+
+---n  }\n}\n```\n\nStep 3: ì´ˆê¸° ê°ì—¼ ë²¡í„° ì—­ì¶”ì \n- ì²« íŒŒì¼ ìˆ˜ì • ì‹œì  í™•ì¸\n- ê·¸ ì „ 1ì‹œê°„ ë™ì•ˆì˜ í”„ë¡œì„¸ìŠ¤/ë„¤íŠ¸ì›Œí¬ í™œë™\n- Downloads, ì´ë©”ì¼ ì²¨ë¶€íŒŒì¼ ì‹¤í–‰ í™•ì¸\n\n---\n\n## 18) ê³ ê¸‰ íŒ¨í„´: ì‹œí€€ìŠ¤ íƒì§€\n\n### ê³µê²© ì²´ì¸ íƒì§€ (ë‹¤ë‹¨ê³„ íŒ¨í„´)\n\níŒ¨í„´: í”¼ì‹± â†’ ì‹¤í–‰ â†’ C2 ì—°ê²°\n\nStep 1: ì´ë©”ì¼/ë¸Œë¼ìš°ì €ì—ì„œ ë‹¤ìš´ë¡œë“œ\n\nMCP í˜¸ì¶œ:\n```json\n{\n  \"tool\": \"search\",\n  \"arguments\": {\n    \"index\": \"logs-*\",\n    \"query_body\": {\n      \"size\": 100,\n      \"query\": {\n        \"bool\": {\n          \"filter\": [\n            { \"range\": { \"@timestamp\": { \"gte\": \"<ABS_START>\", \"lte\": \"<ABS_END>\" } } },\n            { \"terms\": { \"process.parent.name.keyword\": [\"outlook.exe\", \"chrome.exe\", \"msedge.exe\"] } },\n            { \"wildcard\": { \"file.path\": \"*\\\\\\\\Downloads\\\\\\\\*\" } }\n          ]\n        }\n      },\n      \"_source\": [\"@timestamp\", \"host.name\", \"user.name\", \"file.path\", \"file.hash.md5\"]\n    }\n  }\n}\n```\n\nStep 2: 10ë¶„ ë‚´ ì‹¤í–‰ í™•ì¸\n\nMCP í˜¸ì¶œ:\n```json\n{\n  \"tool\": \"search\",\n  \"arguments\": {\n    \"index\": \"logs-*\",\n    \"query_body\": {\n      \"size\": 100,\n      \"query\": {\n        \"bool\": {\n          \"filter\": [\n            { \"range\": { \"@timestamp\": { \"gte\": \"<DOWNLOAD_TIME>\", \"lte\": \"<DOWNLOAD_TIME+10m>\" } } },\n            { \"term\": { \"host.name.keyword\": \"<SAME_HOST>\" } },\n            { \"wildcard\": { \"process.executable\": \"*\\\\\\\\Downloads\\\\\\\\*\" } }\n          ]\n        }\n      }\n    }\n  }\n}\n```\n\nStep 3: ì‹¤í–‰ í›„ 10ë¶„ ë‚´ ë„¤íŠ¸ì›Œí¬ ì—°ê²°\n\nMCP í˜¸ì¶œ:\n```json\n{\n  \"tool\": \"search\",\n  \"arguments\": {\n    \"index\": \"logs-*\",\n    \"query_body\": {\n      \"size\": 100,\n      \"query\": {\n        \"bool\": {\n          \"filter\": [\n            { \"range\": { \"@timestamp\": { \"gte\": \"<EXEC_TIME>\", \"lte\": \"<EXEC_TIME+10m>\" } } },\n            { \"term\": { \"host.name.keyword\": \"<SAME_HOST>\" } },\n            { \"exists\": { \"field\": \"destination.ip\" } }\n          ],\n          \"must_not\": [\n            { \"terms\": { \"destination.port\": [80, 443, 53] } }\n          ]\n        }\n      }\n    }\n  }\n}\n```\n\nì´ 3ë‹¨ê³„ê°€ ëª¨ë‘ ì—°ê²°ë˜ë©´ â†’ High Confidence ìœ„í˜‘\n\n---\n\n## 19) ë©”ëª¨ë¦¬ íš¨ìœ¨ì ì¸ ëŒ€ëŸ‰ ê²€ìƒ‰\n\n### ëŒ€ìš©ëŸ‰ í™˜ê²½ì—ì„œì˜ Scroll API í™œìš©\n\nì´ˆê¸° ê²€ìƒ‰:\n\nMCP í˜¸ì¶œ:\n```json\n{\n  \"tool\": \"search\",\n  \"arguments\": {\n    \"index\": \"logs-*\",\n    \"query_body\": {\n      \"size\": 1000,\n      \"query\": {\n        \"bool\": {\n          \"filter\": [\n            { \"range\": { \"@timestamp\": { \"gte\": \"<ABS_START>\", \"lte\": \"<ABS_END>\" } } }\n          ],\n          \"should\": [\n            { \"regexp\": { \"process.command_line\": \"(?i).*(invoke-webrequest).*\" } }\n          ],\n          \"minimum_should_match\": 1\n        }\n      },\n      \"scroll\": \"5m\"\n    }\n  }\n}\n```\n\ní›„ì† í˜ì´ì§•: scroll_id ì‚¬ìš©í•˜ì—¬ ê³„ì† ì¡°íšŒ\n\n---\n\n## 20) ìµœì¢… ì²´í¬ë¦¬ìŠ¤íŠ¸\n\n### í—ŒíŒ… ì‹œì‘ ì „\n\n- [ ] ì¸ë±ìŠ¤ ëª©ë¡ í™•ì¸ (list_indices)\n- [ ] T_anchor ì„¤ì • (ìµœì‹  @timestamp ì¶”ì¶œ)\n- [ ] í•„ë“œ ë§¤í•‘ í™•ì¸ (get_mappings)\n- [ ] ì ˆëŒ€ì‹œê°„ ë²”ìœ„ ê²°ì • (T_anchor ê¸°ì¤€)\n- [ ] False Positive ì œì™¸ ë¦¬ìŠ¤íŠ¸ ì¤€ë¹„\n\n### í—ŒíŒ… ì‹¤í–‰ ì¤‘\n\n- [ ] Top 10 ì˜ì‹¬ í˜¸ìŠ¤íŠ¸ ì‹ë³„\n- [ ] ê° í˜¸ìŠ¤íŠ¸ë³„ ìƒì„¸ ì¡°ì‚¬\n- [ ] íˆíŠ¸ ë°œê²¬ ì‹œ ì ˆëŒ€ì‹œê°„ ì¬ì„¤ì •\n- [ ] Pivotìœ¼ë¡œ ì—°ê´€ í˜¸ìŠ¤íŠ¸ ì¶”ê°€ ì¡°ì‚¬\n- [ ] íƒ€ì„ë¼ì¸ ì¬êµ¬ì„±\n\n### í—ŒíŒ… ì™„ë£Œ í›„\n\n- [ ] ë°œê²¬ ì‚¬í•­ ë¬¸ì„œí™”\n- [ ] IOC ëª©ë¡ ì‘ì„±\n- [ ] íƒì§€ ë£° ìƒì„±/ì—…ë°ì´íŠ¸\n- [ ] ëŒ€ì‘ ì¡°ì¹˜ ê¶Œê³ \n- [ ] ë² ì´ìŠ¤ë¼ì¸ ì—…ë°ì´íŠ¸\n\n---", expected f64oolean                                                ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                                                                                                                         ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                                                                                                                                                                                                                    ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                                                                                                                      ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                                                      ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                                                                                                                                                                                                                                                                                                                    ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                                                                                                                                                                                                                      ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                                                                                                                                                                                                                                                                                                                                                                                  ÿÿ                                                                                                                                                                                        ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                                                                                                                                                         ÿÿ                                                                                                                          ÿÿ                                                                                                                                                                                                                                                      ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                       ÅE `         )                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                                                                                                                                                        ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                      €ÄE `         '                                                                  ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                        ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                                                       ÿÿ                                                                                                                                                         ÿÿ                                                                                                                                                         ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                                                      ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ       ÀÅE `         3                                                                                                                                                               ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                                                                                                                      ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                                                                                        ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                                                                  `ÄE `         *                                                                                                 ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                            ÿÿ        ÀE `                                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                                                                                                                       ÿÿ                                                            ÿÿ                                      @ÁE `         	     ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                                                                                                                                                                                                                                                                                                                    ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                                                                                                                         ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                                                                                                                  ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                            ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                       ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                                                       ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                                                                                                                                                 ÿÿ                                                                                                                                                                                        ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                                                                                                                                                                                                                      ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                                      ÅE `         (                                                                                                                                                                                              ÿÿ                                                                                                                                                                                        ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                   `ÁE `                                                                                                                                                                                                        ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                                                                                         ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                                                                                                                                                         ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                                                                                        ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                                                                                                                                                                                                                                                                                                                                                 ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                                                                                           ÿÿ                                                                                                                                                         ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                                                      ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                                                                                        ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                                                                                                                                                                                                                       ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                                                                                                                    ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                                                           ÿÿ                                                            ÿÿ       àÁE `                                                                            ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                                                                                                                                                                                                                                                    ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                                                                                   ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                                                                                                                                                                                                                                                                                                                                                                                                                 ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                                                       ÿÿ                                                                                                                          ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                                                                                                                                                                                        ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                                                                                                                                                                                                                 ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                                                                                                                        ÿÿ                                                                                                                                                                                        ÿÿ                                                                                                                                                                                                                       ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                                                                                                                                                                                                                                                      ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                                                                                   ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                                                                                                                                                      ÿÿ                             ÿÿ                             ÿÿ                                                                     €ÅE `         1                                                                                                 ÿÿ                                                            ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                                                                                                                      ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                                                                                                                                                                                                                      ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                                                                                                                                                        ÿÿ         È… `              ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                                                                                                                         ÿÿ                                                                                                                                                                                                                                                                                                                                                   ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                                                                                                                                                                                                                                                                                                                                                   ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                                                                                                                                                                                       ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                       ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ       €C  `                                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                                                                                   ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                                                                                                                          ÿÿ                             ÿÿ       ÀÄE `         %                                                                  ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                                                                  C  `              ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                      o¦ `  
+       8                                                                  ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              ÿÿ                                                                                                                                                                                        ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                                                                                                                                                        ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                            ÿÿ       €n¦ `  
+       +                                   ÿÿ                                                                                                                                                                                        ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                                                       ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                                                                                                                                                                                   ÿÿ                                                                                                                                                         ÿÿ                                                                                                                          ÿÿ                                                                                                                          ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                                                         ÿÿ                                                                                                                          ÿÿ                                                                                                                                                                                        ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                                                                                                                     ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                                                                                                                          ÿÿ                                                                                                                                                         ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                            ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                                                    ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                                                                                                                         ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                                                                                                                                                                                                                       ÿÿ                                                                                           ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                                                                                                                                                                                ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                                                            ÿÿ                             ÿÿ                                                                                                                                                                                                                       ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                             ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                                                                                                                                                                                                                                                                                 ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                         ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                                                                                                                                                                                                                       ÿÿ                                                                                                                                                         ÿÿ                                                            ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                                                                                          ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                                                                                                                                                                                        ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                                                                                           ÿÿ                                                                      ÃE `              ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                         ÿÿ                                                                                           ÿÿ                             ÿÿ                                                            ÿÿ                                                            ÿÿ                                                            ÿÿ                             ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                                                                                                                                                                                      ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                           ÿÿ                             ÿÿ                             ÿÿ                                                            ÿÿ                             ÿÿ                                      àÄE `         &                                                                                                 ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                                                                                                                                                        ÿÿ                                                                                           ÿÿ                                                                                                                          ÿÿ                             ÿÿ                                                            ÿÿ                                                                                                                                                                                                                                                      ÿÿ               

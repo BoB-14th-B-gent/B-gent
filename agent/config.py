@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Optional
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 def _load_env_file():
     """python-dotenv가 없을 때 수동으로 .env 파일 로드
 
@@ -22,7 +24,7 @@ def _load_env_file():
         4. key=value 형식으로 파싱
         5. 환경 변수에 없는 값만 설정
     """
-    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
 
     if os.path.exists(env_path):
 
@@ -227,9 +229,10 @@ def get_config() -> AppConfig:
         uri=os.getenv("MONGO_URI", "mongodb://localhost:27017"),
         db=os.getenv("MONGO_DB", "bgent"),
     )
-    chroma = ChromaConfig(
-        dir=os.getenv("CHROMA_DIR", "./data/chroma")
-    )
+    chroma_dir = os.getenv("CHROMA_DIR", "./data/chroma")
+    if not os.path.isabs(chroma_dir):
+        chroma_dir = os.path.normpath(os.path.join(PROJECT_ROOT, chroma_dir))
+    chroma = ChromaConfig(dir=chroma_dir)
     profile = os.getenv("LLM_PROFILE", "local").lower()
 
     if profile == "gpu":
@@ -267,7 +270,7 @@ def get_config() -> AppConfig:
     mcp_servers = []
 
     if mcp_enabled:
-        mcp_config_file = os.getenv("MCP_CONFIG_FILE", "./mcp_servers.json")
+        mcp_config_file = os.getenv("MCP_CONFIG_FILE", os.path.join(os.path.dirname(__file__), "mcp_servers.json"))
 
         if os.path.exists(mcp_config_file):
 
