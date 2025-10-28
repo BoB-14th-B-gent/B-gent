@@ -3,6 +3,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 from bson import ObjectId
 from app.db.mongo import get_db
+from app.domains.messages.service import create_message
 
 CONV_COLL = os.getenv("CONVERSATIONS_COLL")
 
@@ -35,6 +36,15 @@ def create_conversation_with_input(input_text: str) -> Dict[str, Any]:
         "updated_at": now,
     }
     conv_id = db[CONV_COLL].insert_one(conv_doc).inserted_id
+
+    create_message(
+        str(conv_id),
+        {
+            "role": "USER",
+            "stage_id": 1,
+            "content": input_text,
+        },
+    )
 
     return {"_id": str(conv_id), "title": title, "created_at": now}
 
