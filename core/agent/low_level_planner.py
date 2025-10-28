@@ -726,6 +726,148 @@ def _extract_function_names_from_results(dependency_results: Dict[str, List[Dict
     return function_names
 
 
+def _extract_function_names_with_offsets(dependency_results: Dict[str, List[Dict[str, Any]]]) -> List[tuple]:
+    """dependency_results에서 함수 목록과 오프셋 추출
+
+    Args:
+        dependency_results: 이전 Task 실행 결과
+
+    Returns:
+        List[tuple]: [(함수명, 오프셋), ...] 형식
+    """
+    import re
+    function_list = []
+
+    if not dependency_results:
+        return function_list
+
+    for task_id, results in dependency_results.items():
+        for result in results:
+            action = result.get("action", {})
+            if action.get("operation") == "list_functions" and result.get("success"):
+                result_text = str(result.get("result", ""))
+                matches = re.findall(r'^(\S+)\s+at\s+([0-9a-fA-F]+)', result_text, re.MULTILINE)
+
+                for func_name, addr_str in matches:
+                    try:
+                        offset = int(addr_str, 16)
+                        function_list.append((func_name, offset))
+                    except ValueError:
+                        continue
+
+                if function_list:
+                    return function_list
+
+    return function_list
+
+
+def _extract_called_functions_from_decompiled(dependency_results: Dict[str, List[Dict[str, Any]]]) -> List[str]:
+    """이미 디컴파일된 함수에서 호출하는 함수 추출
+
+    Args:
+        dependency_results: 이전 Task 실행 결과
+
+    Returns:
+        List[str]: 호출된 함수 목록
+    """
+    import re
+    called_funcs = set()
+
+    if not dependency_results:
+        return []
+
+    try:
+        for task_id, results in dependency_results.items():
+            for result in results:
+                action = result.get("action", {})
+
+                if action.get("operation") == "decompile_function" and result.get("success"):
+                    result_text = str(result.get("result", ""))
+
+                    matches = re.findall(r'\b(FUN_[0-9a-fA-F]{8})\s*\(', result_text)
+                    called_funcs.update(matches)
+
+        return list(called_funcs)
+    except Exception:
+        return []
+
+
+def _select_important_functions_dynamic(
+    available_functions: List[tuple],
+    dependency_results: Dict[str, List[Dict[str, Any]]]
+) -> List[str]:
+    """오프셋 기반 동적 함수 선택
+
+    Args:
+        available_functions: [(함수명, 오프셋), ...] 리스트
+        dependency_results: 이전 Task 실행 결과
+
+    Returns:
+        List[str]: 디컴파일할 함수 이름 리스트 (최대 12개)
+    """
+    if not available_functions:
+        return ["entry", "main"]
+
+    priority_names = ["entry", "main", "_main", "wmain", "WinMain", "wWinMain", "DllMain"]
+
+    selected = []
+    available_dict = {name: offset for name, offset in available_functions}
+
+    for func_name in priority_names:
+        if func_name in available_dict:
+            selected.append(func_name)
+
+    called_functions = _extract_called_functions_from_decompiled(dependency_results)
+    for func_name in called_functions[:3]:
+        if func_name not in selected and func_name in available_dict:
+            selected.append(func_name)
+
+    important_funcs = []
+    for func_name, offset in available_functions:
+        if func_name not in selected:
+            # 32비트
+            if 0x00402000 <= offset < 0x00403000:
+                important_funcs.append((offset, func_name))
+            # 64비트
+            elif 0x140002000 <= offset < 0x140003000:
+                important_funcs.append((offset, func_name))
+
+    important_funcs.sort()
+    for offset, func_name in important_funcs[:2]:
+        if func_name not in selected and len(selected) < 12:
+            selected.append(func_name)
+
+    entry_offset = available_dict.get("entry")
+    if entry_offset:
+        near_entry = []
+        for func_name, offset in available_functions:
+            if func_name != "entry" and func_name not in selected:
+                distance = abs(offset - entry_offset)
+                if distance < 0x2000:
+                    near_entry.append((distance, func_name))
+
+        near_entry.sort()
+        for distance, func_name in near_entry[:5]:
+            if func_name not in selected and len(selected) < 12:
+                selected.append(func_name)
+
+    low_addr_funcs = []
+    for func_name, offset in available_functions:
+        if func_name.startswith("FUN_") and func_name not in selected:
+            if 0x00401000 <= offset < 0x00402000 or 0x140001000 <= offset < 0x140002000:
+                low_addr_funcs.append((offset, func_name))
+
+    low_addr_funcs.sort()
+    for offset, func_name in low_addr_funcs[:2]:
+        if len(selected) < 12:
+            selected.append(func_name)
+
+    if not selected:
+        return ["entry", "main"]
+
+    return selected[:12]
+
+
 def _select_important_functions(available_functions: List[str]) -> List[str]:
     """중요한 함수 선택 (entry, main, WinMain 등)
 
@@ -900,14 +1042,52 @@ def _generate_default_plan_for_task(
             ]
 
         elif analysis_phase == "decompile":
-            print("  Ghidra Phase 2: 주요 함수 디컴파일")
+            has_previous_decompile = False
+            if dependency_results:
+                for task_id, results in dependency_results.items():
+                    for result in results:
+                        action = result.get("action", {})
+                        if action.get("operation") == "decompile_function" and result.get("success"):
+                            has_previous_decompile = True
+                            break
+                    if has_previous_decompile:
+                        break
 
-            available_functions = _extract_function_names_from_results(dependency_results)
-            target_functions = _select_important_functions(available_functions)
+            if has_previous_decompile:
+                print("  Ghidra Phase 3: Call Chain 함수 디컴파일 (Task 2 결과 활용)")
 
-            if not target_functions:
-                print("  함수 목록을 찾을 수 없습니다. 기본 함수명 사용")
-                target_functions = ["entry", "main"]
+                called_functions = _extract_called_functions_from_decompiled(dependency_results)
+
+                if called_functions:
+                    print(f"  Task 2 entry 함수가 호출하는 함수 발견: {', '.join(called_functions[:12])}")
+                    target_functions = called_functions[:12]
+                else:
+                    print("  Call chain을 찾을 수 없습니다. 오프셋 기반 선택으로 폴백")
+                    available_functions_with_offsets = _extract_function_names_with_offsets(dependency_results)
+                    if available_functions_with_offsets:
+                        target_functions = _select_important_functions_dynamic(
+                            available_functions_with_offsets,
+                            dependency_results
+                        )
+                    else:
+                        target_functions = ["main"]
+            else:
+                print("  Ghidra Phase 2: 주요 함수 디컴파일")
+
+                available_functions_with_offsets = _extract_function_names_with_offsets(dependency_results)
+
+                if available_functions_with_offsets:
+                    target_functions = _select_important_functions_dynamic(
+                        available_functions_with_offsets,
+                        dependency_results
+                    )
+                else:
+                    available_functions = _extract_function_names_from_results(dependency_results)
+                    target_functions = _select_important_functions(available_functions)
+
+                if not target_functions:
+                    print("  함수 목록을 찾을 수 없습니다. 기본 함수명 사용")
+                    target_functions = ["entry", "main"]
 
             print(f"  디컴파일 대상 함수 ({len(target_functions)}개): {', '.join(target_functions)}")
             print(f"  Tip: 함수를 찾을 수 없어도 계속 진행됩니다 (다른 함수 디컴파일 시도)")
