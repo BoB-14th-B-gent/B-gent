@@ -142,10 +142,9 @@ def generate_low_level_plan(
         print("RAG에서 도구를 찾지 못했습니다. 기본 계획을 생성합니다.")
         return _generate_default_plan_for_task(task, dependency_results)
 
-    tool_hint = task.metadata.get("tool_hint", "")
-    if tool_hint == "ghidra":
-        print("  Ghidra 작업 감지 → 종합 분석 모드 강제 활성화")
-        return _generate_default_plan_for_task(task, dependency_results)
+    # Ghidra 작업: LLM이 먼저 시도 (강제 폴백 제거)
+    # tool_hint == "ghidra"일 때도 LLM이 사용자 요청의 복잡도를 판단하여 계획 생성
+    # 실패 시에만 규칙 기반 폴백 사용
 
     try:
         plan = _generate_plan_with_llm_for_task(task, candidates, dependency_results)
@@ -233,7 +232,10 @@ def _generate_plan_with_llm_for_task(
 - 예: "인덱스 목록 조회" Task → list_indices만 실행 (search는 다른 Task에서)
 
 핵심 규칙:
-1. operation은 제공된 도구 목록의 tool_name과 정확히 일치해야 함
+1. **operation은 반드시 "사용 가능한 도구" 목록에 있는 tool_name과 정확히 일치해야 함**
+   - ❌ 절대 금지: 임의로 도구 이름을 생성하거나 추측하지 마세요
+   - ❌ 절대 금지: decompile_function_by_address, disassemble_function 같은 존재하지 않는 도구 사용
+   - ✅ 올바른 방법: 아래 "사용 가능한 도구" JSON에서 tool_name을 그대로 복사
 2. params는 input_schema의 required 필드를 모두 포함
 3. *현재 Task 설명에 명시된 작업만* 수행 (다른 작업 추가 금지)
 4. 한 Task 내에서 여러 단계가 필요한 경우만 모두 계획에 포함
@@ -386,36 +388,93 @@ def _generate_plan_with_llm_for_task(
   중요: index 값은 정확히 "PLACEHOLDER_INDEX" (영문)만 허용
   중요: body에 "sort" 필드를 절대 포함하지 마세요
 
-- *Ghidra 바이너리 리버스 엔지니어링: 다단계 종합 분석*
-  Task가 "분석", "리버스 엔지니어링", "함수 추출" 등 종합적인 분석을 요구하면
-  다음 도구들을 순차적으로 모두 호출하여 완전한 분석 수행:
+- *Ghidra 바이너리 리버스 엔지니어링: 사용자 요청에 따라 적절한 분석 수행*
 
-  *필수 분석 단계 (순서대로):*
-  1. get_current_address - 현재 분석 위치 확인
-  2. get_current_function - 현재 함수 정보 확인
-  3. list_functions - 전체 함수 목록
-  4. list_imports - Import 함수 (외부 라이브러리)
-  5. list_exports - Export 함수
-  6. decompile_function - 주요 함수 디컴파일 (entry, main 등)
-  7. list_segments - 메모리 세그먼트 구조
-  8. list_strings - 바이너리 문자열 추출
+  **사용 가능한 Ghidra 도구 (이 목록에 없는 도구는 절대 사용 금지)**:
+  - list_functions: 함수 목록 추출 (params: offset, limit)
+  - list_imports: Import 함수 목록 (params: offset, limit)
+  - list_exports: Export 함수 목록 (params: offset, limit)
+  - list_segments: 메모리 세그먼트 목록 (params: offset, limit)
+  - list_strings: 문자열 추출 (params: offset, limit)
+  - decompile_function: 함수 디컴파일 (params: name - 함수 이름 필수)
+  - get_current_address: 현재 주소 확인 (params: 없음)
+  - get_current_function: 현재 함수 확인 (params: 없음)
 
-  *완전한 예시 (바이너리 종합 분석):*
+  **절대 사용 금지**: decompile_function_by_address, disassemble_function, get_function_at 등 위 목록에 없는 도구
+
+  *분석 복잡도 판단 규칙*:
+  1. **간단한 분석 요청** ("분석해줘", "파일 분석", "바이너리 분석"):
+     → 핵심 정보만 추출 (list_functions, list_imports, decompile_function 1-2개)
+     → 사용자가 추가 정보를 원하면 나중에 요청할 것
+
+  2. **구체적인 단일 작업** ("main 함수 디컴파일", "문자열 추출", "함수 목록"):
+     → 해당 도구만 호출
+
+  3. **복잡한 분석 요청** ("특정 문자열 참조하는 함수 찾기", "호출 체인 분석"):
+     → 필요한 도구들을 조합 (list_strings + list_functions + decompile_function 여러 개)
+
+  *간단한 분석 예시* (추상적 요청: "분석해줘", "파일 분석"):
   ```json
   {
     "plan": [
       {
         "tool": "ghidra",
-        "operation": "get_current_address",
-        "params": {},
-        "reason": "현재 분석 위치 확인"
+        "operation": "list_functions",
+        "params": {"offset": 0, "limit": 20},
+        "reason": "주요 함수 목록 확인 (첫 20개)"
       },
       {
         "tool": "ghidra",
-        "operation": "get_current_function",
-        "params": {},
-        "reason": "현재 함수 정보 확인"
+        "operation": "list_imports",
+        "params": {"offset": 0, "limit": 20},
+        "reason": "Import 함수 확인"
       },
+      {
+        "tool": "ghidra",
+        "operation": "decompile_function",
+        "params": {"name": "entry"},
+        "reason": "entry 함수 디컴파일"
+      }
+    ]
+  }
+  ```
+
+  *복잡한 분석 예시* (구체적 요청: "Correct! 문자열 참조하는 함수 찾기"):
+  ```json
+  {
+    "plan": [
+      {
+        "tool": "ghidra",
+        "operation": "list_strings",
+        "params": {"offset": 0, "limit": 100},
+        "reason": "바이너리 문자열 추출 (Correct! 찾기)"
+      },
+      {
+        "tool": "ghidra",
+        "operation": "list_functions",
+        "params": {},
+        "reason": "전체 함수 목록"
+      },
+      {
+        "tool": "ghidra",
+        "operation": "decompile_function",
+        "params": {"name": "entry"},
+        "reason": "entry 함수 디컴파일"
+      },
+      {
+        "tool": "ghidra",
+        "operation": "decompile_function",
+        "params": {"name": "FUN_140001000"},
+        "reason": "문자열 참조 가능성 있는 함수"
+      }
+    ]
+  }
+  ```
+
+  *전체 분석 예시* (명시적 요청: "바이너리 전체 분석", "모든 정보 추출"):
+  ```json
+  {
+    "plan": [
       {
         "tool": "ghidra",
         "operation": "list_functions",
@@ -456,19 +515,12 @@ def _generate_plan_with_llm_for_task(
   }
   ```
 
-  *단일 작업 예시:*
-  - Task: "main 함수를 디컴파일해줘"
-    → decompile_function만 호출
-  - Task: "문자열만 추출해줘"
-    → list_strings만 호출
-  - Task: "함수 목록 보여줘"
-    → list_functions만 호출
-
-  *중요 규칙:*
-  * "분석", "리버스 엔지니어링", "조사" 같은 종합적인 요청 시 → 위 8단계 모두 수행
-  * "디컴파일", "문자열 추출" 같은 구체적 요청 시 → 해당 도구만 호출
+  *중요 규칙*:
+  * **기본값**: 추상적인 요청("분석해줘")은 간단한 분석 (list_functions limit=20, list_imports, decompile_function 1개)
+  * **명시적 요청**: "전체 분석", "모든 함수", "자세히" 등의 키워드가 있을 때만 전체 분석 수행
+  * **단일 작업**: "main 디컴파일", "문자열 추출", "함수 목록" → 해당 도구만 호출
   * decompile_function의 params는 {"name": "함수명"} 형식
-  * list 계열 도구는 offset, limit 파라미터 지원 (선택 사항)
+  * list 계열 도구는 offset, limit 파라미터 지원 - **과도한 출력 방지를 위해 limit 사용 권장**
   * operation은 반드시 RAG 검색 결과의 tool_name과 정확히 일치
 
 - *Phase 2 (decompile) Task 전용 규칙*:
@@ -545,10 +597,15 @@ Task 타입: {task.task_type.value}
         print(f"  LLM 호출 중...")
         response = llm.chat(messages, response_format_json=True, timeout=None)
         content = response["choices"][0]["message"]["content"]
+
+        print(f"\n[DEBUG] LLM 원본 응답 (처음 500자):")
+        print(content[:500])
+        print()
+
         data = json.loads(content)
         plan_data = data.get("plan", [])
 
-        print(f"\n[DEBUG] LLM이 생성한 계획:")
+        print(f"[DEBUG] LLM이 생성한 계획 ({len(plan_data)}개 단계):")
         print(json.dumps(plan_data, ensure_ascii=False, indent=2))
         print()
         valid_tools = {}
@@ -569,8 +626,10 @@ Task 타입: {task.task_type.value}
 
             if tool not in valid_tools:
                 print(f"경고: 단계 {idx}에서 알 수 없는 서버 '{tool}' 사용. 사용 가능한 서버: {list(valid_tools.keys())}")
+                print(f"     이 단계를 건너뜁니다.")
+                continue
 
-            elif operation not in valid_tools[tool]:
+            if operation not in valid_tools[tool]:
                 corrected = False
                 if operation == "get_indices" and "list_indices" in valid_tools[tool]:
                     print(f"경고: 단계 {idx}에서 '{operation}' -> 'list_indices' 자동 수정")
@@ -1075,18 +1134,26 @@ def _generate_default_plan_for_task(
                 print("  Ghidra Phase 2: 주요 함수 디컴파일")
 
                 available_functions_with_offsets = _extract_function_names_with_offsets(dependency_results)
+                print(f"  [DEBUG] 추출된 함수 (오프셋 포함): {len(available_functions_with_offsets)}개")
+                if available_functions_with_offsets:
+                    print(f"  [DEBUG] 샘플: {available_functions_with_offsets[:3]}")
 
                 if available_functions_with_offsets:
                     target_functions = _select_important_functions_dynamic(
                         available_functions_with_offsets,
                         dependency_results
                     )
+                    print(f"  [DEBUG] 동적 선택된 함수: {target_functions}")
                 else:
                     available_functions = _extract_function_names_from_results(dependency_results)
+                    print(f"  [DEBUG] 추출된 함수 (이름만): {len(available_functions)}개")
+                    if available_functions:
+                        print(f"  [DEBUG] 샘플: {available_functions[:5]}")
                     target_functions = _select_important_functions(available_functions)
+                    print(f"  [DEBUG] 정적 선택된 함수: {target_functions}")
 
                 if not target_functions:
-                    print("  함수 목록을 찾을 수 없습니다. 기본 함수명 사용")
+                    print("  [경고] 함수 목록을 찾을 수 없습니다. 기본 함수명 사용")
                     target_functions = ["entry", "main"]
 
             print(f"  디컴파일 대상 함수 ({len(target_functions)}개): {', '.join(target_functions)}")
@@ -1094,10 +1161,24 @@ def _generate_default_plan_for_task(
 
             actions = []
             for idx, func_name in enumerate(target_functions, 1):
+                # 빈 함수 이름 검증
+                if not func_name or not isinstance(func_name, str) or func_name.strip() == "":
+                    print(f"  [경고] 빈 함수 이름 발견 (인덱스 {idx}), 건너뜁니다.")
+                    continue
+
                 actions.append(
                     Action(tool="ghidra", operation="decompile_function",
                            params={"name": func_name},
                            reason=f"[{idx}/{len(target_functions)}] {func_name} 함수 디컴파일",
+                           retry_count=0)
+                )
+
+            if not actions:
+                print(f"  [경고] 유효한 함수가 없습니다. entry를 기본으로 추가합니다.")
+                actions.append(
+                    Action(tool="ghidra", operation="decompile_function",
+                           params={"name": "entry"},
+                           reason="기본 entry 함수 디컴파일",
                            retry_count=0)
                 )
 
