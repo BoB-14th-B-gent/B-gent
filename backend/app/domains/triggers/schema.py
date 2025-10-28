@@ -28,6 +28,10 @@ class TriggerDetailOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+class TriggerListOut(BaseModel):
+    conversation_id: str
+    items: List[TriggerDetailOut]
+
 class TriggerPatchPrompt(BaseModel):
     prompt_id: str
 
