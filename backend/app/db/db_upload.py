@@ -7,11 +7,9 @@ from bson.binary import Binary
 from pymongo import MongoClient
 import gridfs
 from dotenv import load_dotenv
+from .mongo import get_client, get_db, get_fs
 
 load_dotenv()
-
-MONGO_URI = os.getenv("MONGO_URI")
-DB_NAME = os.getenv("DB_NAME")
 
 MAX_INLINE_JSON_BYTES = 1 * 1024 * 1024
 GRIDFS_SAMPLE_BYTES = 64 * 1024
@@ -25,15 +23,6 @@ REPORTS_COLL = os.getenv("REPORTS_COLL")
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-def get_client() -> MongoClient:
-    return MongoClient(MONGO_URI)
-
-def get_db(client: MongoClient):
-    return client[DB_NAME]
-
-def get_fs(db) -> gridfs.GridFS:
-    return gridfs.GridFS(db)
 
 def _infer_dtype(path: Path, content_type: Optional[str]) -> Optional[str]:
     if content_type:

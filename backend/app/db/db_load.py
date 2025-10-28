@@ -4,11 +4,9 @@ from pymongo import MongoClient
 from datetime import datetime, timezone
 import gridfs, os, json
 from dotenv import load_dotenv
+from .mongo import get_client, get_db, get_fs
 
 load_dotenv()
-
-MONGO_URI = os.getenv("MONGO_URI")
-DB_NAME = os.getenv("DB_NAME")
 
 INPUT_EVIDENCE_COLL = os.getenv("INPUT_EVIDENCE_COLL")
 PROMPT_COLL = os.getenv("PROMPT_COLL")
@@ -16,22 +14,9 @@ MCP_EVIDENCE_COLL = os.getenv("MCP_EVIDENCE_COLL")
 TRIGGER_COLL = os.getenv("TRIGGER_COLL")
 REPORTS_COLL = os.getenv("REPORTS_COLL")
 
-MAX_PREVIEW_BYTES      = 2 * 1024 * 1024
-MAX_PROMPT_CHARS       = 120_000
+MAX_PREVIEW_BYTES = 2 * 1024 * 1024
+MAX_PROMPT_CHARS = 120_000
 MAX_EVIDENCES_PER_CALL = 100
-
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
-
-def get_client() -> MongoClient:
-    return MongoClient(MONGO_URI, retryWrites=True)
-
-def get_db(c: MongoClient):
-    return c[DB_NAME]
-
-def get_fs(db):
-    return gridfs.GridFS(db)
 
 def load_prompt(prompt_id: ObjectId | str) -> Optional[Dict[str, Any]]:
     _id = ObjectId(prompt_id) if not isinstance(prompt_id, ObjectId) else prompt_id
