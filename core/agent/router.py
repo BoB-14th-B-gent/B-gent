@@ -113,7 +113,7 @@ def run_job(
             print(f"  Simple Planning 모드")
 
         workflow = create_workflow(mode=WORKFLOW_MODE)
-        final_state = workflow.invoke(initial_state)
+        final_state = workflow.invoke(initial_state, config={"recursion_limit": 50})
         execution_time = time.time() - start_time
 
         if WORKFLOW_MODE == "two_stage":
