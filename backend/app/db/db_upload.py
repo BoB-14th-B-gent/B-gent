@@ -95,83 +95,76 @@ def upload_file(
     if p.is_dir():
         raise IsADirectoryError(f"{p} is a directory (expected a file)")
 
-    client = get_client()
-    try:
-        db = get_db(client)
+    db = get_db()
 
-        size = p.stat().st_size
-        content_type, _ = mimetypes.guess_type(p.name)
-        dtype = (detected_type or _infer_dtype(p, content_type))
+    size = p.stat().st_size
+    content_type, _ = mimetypes.guess_type(p.name)
+    dtype = (detected_type or _infer_dtype(p, content_type))
 
-        strategy = choose_strategy(size, mode, inline_threshold_bytes)
+    strategy = choose_strategy(size, mode, inline_threshold_bytes)
 
-        if strategy == "inline" and dtype == "json" and size > MAX_INLINE_JSON_BYTES:
-            strategy = "gridfs"
+    if strategy == "inline" and dtype == "json" and size > MAX_INLINE_JSON_BYTES:
+        strategy = "gridfs"
 
-        result: Dict[str, Any] = {"strategy": strategy}
+    result: Dict[str, Any] = {"strategy": strategy}
 
-        if strategy == "inline":
-            meta_doc: Dict[str, Any] = {
-                "source_type": "file_inline",
-                "filename": p.name,
-                "content_type": content_type or "application/octet-stream",
-                "size": size,
-                "detected_type": dtype,
-                "ingested_at": int(time.time()),
-                "stats": {},
-            }
-            try:
-                if dtype == "json":
-                    txt = p.read_text(encoding="utf-8", errors="strict")
-                    meta_doc["data"] = json.loads(txt)
-                else:
-                    raw = p.read_bytes()
-                    if len(raw) >= BSON_DOC_HARD_LIMIT - 1024:
-                        raise ValueError("inline BSON size would exceed limit; use gridfs")
-                    meta_doc["raw"] = Binary(raw)
-            except Exception as e:
-                meta_doc["stats"]["parse_error"] = str(e)
-                raw = p.read_bytes()
-                if len(raw) >= BSON_DOC_HARD_LIMIT - 1024:
-                    strategy = "gridfs"
-                else:
-                    meta_doc["raw"] = Binary(raw)
-
-            if strategy == "inline":
-                result["meta_id"] = insert_file_meta(db, collection, meta_doc)
-                return result
-
-        fs = get_fs(db)
-        files_doc = store_file_to_gridfs(fs, str(p), extra_meta={"detected_type": dtype})
-
-        sample: Optional[Any] = None
-        try:
-            if dtype == "json" or (content_type and "text" in content_type):
-                sample = (p.read_text(encoding="utf-8", errors="ignore"))[:GRIDFS_SAMPLE_BYTES]
-            else:
-                sample = Binary(p.read_bytes()[:GRIDFS_SAMPLE_BYTES])
-        except Exception:
-            sample = None
-
-        meta_doc = {
-            "source_type": "file",
-            "gridfs_id": files_doc["_id"],
-            "filename": files_doc.get("filename"),
-            "content_type": (files_doc.get("metadata") or {}).get("content_type"),
-            "size": files_doc.get("length"),
+    if strategy == "inline":
+        meta_doc: Dict[str, Any] = {
+            "source_type": "file_inline",
+            "filename": p.name,
+            "content_type": content_type or "application/octet-stream",
+            "size": size,
             "detected_type": dtype,
             "ingested_at": int(time.time()),
             "stats": {},
-            "sample": sample,
         }
-        result["meta_id"] = insert_file_meta(db, collection, meta_doc)
-        result["gridfs_id"] = str(files_doc["_id"])
-        return result
-    finally:
         try:
-            client.close()
-        except Exception:
-            pass
+            if dtype == "json":
+                txt = p.read_text(encoding="utf-8", errors="strict")
+                meta_doc["data"] = json.loads(txt)
+            else:
+                raw = p.read_bytes()
+                if len(raw) >= BSON_DOC_HARD_LIMIT - 1024:
+                    raise ValueError("inline BSON size would exceed limit; use gridfs")
+                meta_doc["raw"] = Binary(raw)
+        except Exception as e:
+            meta_doc["stats"]["parse_error"] = str(e)
+            raw = p.read_bytes()
+            if len(raw) >= BSON_DOC_HARD_LIMIT - 1024:
+                strategy = "gridfs"
+            else:
+                meta_doc["raw"] = Binary(raw)
+
+        if strategy == "inline":
+            result["meta_id"] = insert_file_meta(db, collection, meta_doc)
+            return result
+
+    fs = get_fs(db)
+    files_doc = store_file_to_gridfs(fs, str(p), extra_meta={"detected_type": dtype})
+
+    sample: Optional[Any] = None
+    try:
+        if dtype == "json" or (content_type and "text" in content_type):
+            sample = (p.read_text(encoding="utf-8", errors="ignore"))[:GRIDFS_SAMPLE_BYTES]
+        else:
+            sample = Binary(p.read_bytes()[:GRIDFS_SAMPLE_BYTES])
+    except Exception:
+        sample = None
+
+    meta_doc = {
+        "source_type": "file",
+        "gridfs_id": files_doc["_id"],
+        "filename": files_doc.get("filename"),
+        "content_type": (files_doc.get("metadata") or {}).get("content_type"),
+        "size": files_doc.get("length"),
+        "detected_type": dtype,
+        "ingested_at": int(time.time()),
+        "stats": {},
+        "sample": sample,
+    }
+    result["meta_id"] = insert_file_meta(db, collection, meta_doc)
+    result["gridfs_id"] = str(files_doc["_id"])
+    return result
 
 def preprocessor_upload_file(
     file_path: str,
@@ -189,7 +182,7 @@ def preprocessor_upload_file(
         inline_threshold_bytes=inline_threshold_bytes,
     )
     if extra_meta:
-        c = get_client(); db = get_db(c)
+        db = get_db()
         db[INPUT_EVIDENCE_COLL].update_one(
             {"_id": ObjectId(res["meta_id"])},
             {"$set": extra_meta}
@@ -204,7 +197,7 @@ def preprocessor_save_prompt(
     attachments: Optional[List[Dict[str, Any]]] = None,
     context_tags: Optional[List[str]] = None,
 ) -> ObjectId:
-    c = get_client(); db = get_db(c)
+    db = get_db()
     doc = {
         "created_at": _now(),
         "user_prompt": user_prompt,
@@ -250,7 +243,7 @@ def agent_mcp_upload_file(
         mode=mode,
         inline_threshold_bytes=inline_threshold_bytes,
     )
-    c = get_client(); db = get_db(c)
+    db = get_db()
     db[MCP_EVIDENCE_COLL].update_one(
         {"_id": ObjectId(r["meta_id"])},
         {"$set": {
@@ -271,7 +264,7 @@ def agent_start_trigger(
     include_all_input: bool = True,
     max_refs_per_trigger: Optional[int] = None,
 ) -> ObjectId:
-    c = get_client(); db = get_db(c)
+    db = get_db()
     snapshot_ts = _now()
 
     refs: List[Dict[str, Any]] = []
@@ -309,7 +302,7 @@ def agent_append_mcp_evidence(
     if not ids:
         return False
 
-    c = get_client(); db = get_db(c)
+    db = get_db()
     res = db[TRIGGER_COLL].update_one(
         {"_id": _tid, "status": {"$in": ["collecting", "ready"]}},
         {"$push": {"evidence_refs": {"$each": [
@@ -323,7 +316,7 @@ def agent_finish_trigger_ready(
     trigger_id: ObjectId | str,
 ) -> bool:
     _tid = ObjectId(trigger_id) if not isinstance(trigger_id, ObjectId) else trigger_id
-    c = get_client(); db = get_db(c)
+    db = get_db()
     res = db[TRIGGER_COLL].update_one(
         {"_id": _tid, "status": "collecting"},
         {"$set": {"status": "ready", "timeframe.end": _now()}}
@@ -332,7 +325,7 @@ def agent_finish_trigger_ready(
 
 def worker_lock_trigger_ready_to_processing(trigger_id: ObjectId | str) -> bool:
     _tid = ObjectId(trigger_id) if not isinstance(trigger_id, ObjectId) else trigger_id
-    c = get_client(); db = get_db(c)
+    db = get_db()
     res = db[TRIGGER_COLL].update_one(
         {"_id": _tid, "status": "ready"},
         {"$set": {"status": "processing", "started_at": _now()}}
@@ -361,7 +354,7 @@ def worker_save_report_and_mark_done(
     confidence: Optional[Dict[str, Any]] = None,
 ) -> ObjectId:
     _tid = ObjectId(trigger_id) if not isinstance(trigger_id, ObjectId) else trigger_id
-    c = get_client(); db = get_db(c)
+    db = get_db()
 
     rk = _run_key(sources, evidence_refs)
     existing = db[REPORTS_COLL].find_one({"run_key": rk}, {"_id": 1})
