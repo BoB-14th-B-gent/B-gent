@@ -75,3 +75,29 @@ def get_message_detail(conversation_id: str, message_id: str) -> Optional[Dict[s
         "role": doc["role"],
         "content": doc["content"],
     }
+
+
+def get_latest_user_message_for_stage(conversation_id: str) -> Optional[Dict[str, Any]]:
+    if not conversation_id or not ObjectId.is_valid(conversation_id):
+        raise ValueError("invalid conversation_id")
+
+    db = get_db()
+    doc = db[MSG_COLL].find_one(
+        {
+            "conversation_id": ObjectId(conversation_id),
+            "stage_id": 1,
+            "role": "USER",
+        },
+    )
+
+    if not doc:
+        return None
+
+    return {
+        "_id": str(doc["_id"]),
+        "conversation_id": conversation_id,
+        "role": doc["role"],
+        "stage_id": doc["stage_id"],
+        "content": doc["content"],
+        "created_at": doc.get("created_at"),
+    }
