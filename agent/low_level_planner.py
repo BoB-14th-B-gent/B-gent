@@ -134,7 +134,15 @@ def generate_low_level_plan(
             print(f"    {idx}. {meta.get('server')}.{meta.get('tool_name')}")
 
     description_lower = task.description.lower()
-    if any(kw in description_lower for kw in ["아티팩트", "수집", "velociraptor", "artifact", "브라우저 히스토리", "레지스트리", "이벤트 로그"]):
+    # Velociraptor 강제 사용 조건: task_type이 artifact_collection이거나, 명시적으로 Velociraptor 언급
+    # "수집"이라는 단어만으로는 판단하지 않음 (Elasticsearch 로그 수집과 혼동 방지)
+    is_velociraptor_task = (
+        task.task_type.value == "artifact_collection" or
+        "velociraptor" in description_lower or
+        any(kw in description_lower for kw in ["아티팩트", "artifact", "브라우저 히스토리", "레지스트리 키", "prefetch", "shellbag"])
+    )
+
+    if is_velociraptor_task:
         print("  Velociraptor 아티팩트 수집 작업: 규칙 기반 계획 사용")
         return _generate_default_plan_for_task(task, dependency_results)
 
@@ -229,13 +237,20 @@ def _generate_plan_with_llm_for_task(
 *중요: 현재 Task의 범위만 계획하세요*
 - 주어진 Task 설명에 명시된 작업*만* 수행
 - 다른 Task의 작업을 포함하지 말 것
-- 예: "인덱스 목록 조회" Task → list_indices만 실행 (search는 다른 Task에서)
+- 주의: Task 설명이 "수집 **및** 분석"처럼 **여러 작업을 포함**하면 모두 계획에 포함해야 함
+- 예시:
+  - "인덱스 목록 조회만" Task → list_indices만 실행
+  - "로그 수집 및 분석" Task → list_indices + search_documents 실행
 
 핵심 규칙:
 1. **operation은 반드시 "사용 가능한 도구" 목록에 있는 tool_name과 정확히 일치해야 함**
    - ❌ 절대 금지: 임의로 도구 이름을 생성하거나 추측하지 마세요
+   - ❌ 절대 금지: "search", "get", "index" 같은 짧은 이름 사용 (반드시 전체 이름 사용)
    - ❌ 절대 금지: decompile_function_by_address, disassemble_function 같은 존재하지 않는 도구 사용
    - ✅ 올바른 방법: 아래 "사용 가능한 도구" JSON에서 tool_name을 그대로 복사
+   - 예시: ❌ "search" → ✅ "search_documents"
+   - 예시: ❌ "index" → ✅ "index_document"
+   - 예시: ❌ "get" → ✅ "get_document"
 2. params는 input_schema의 required 필드를 모두 포함
 3. *현재 Task 설명에 명시된 작업만* 수행 (다른 작업 추가 금지)
 4. 한 Task 내에서 여러 단계가 필요한 경우만 모두 계획에 포함
@@ -375,14 +390,47 @@ def _generate_plan_with_llm_for_task(
   - 잘못된 예시: {"body": {"query": {...}, "sort": [{"@timestamp": "desc"}]}} ← sort 사용 금지
   - 주의: 파라미터 이름은 정확히 "body"를 사용 "query_body"나 다른 이름 사용 금지
   - 주의: index 값은 반드시 영문 "PLACEHOLDER_INDEX" 한글이나 다른 표현 절대 금지
-  *3. Task별 예시:*
+  *3. Task별 예시 (매우 중요 - 반드시 이 패턴을 따르세요):*
 
-  예시 1 - Task: "Elasticsearch 인덱스 목록 조회"
+  예시 1 - Task: "Elasticsearch 인덱스 목록 조회만" (메타데이터만)
   올바른 계획: [{"tool": "elastic", "operation": "list_indices", "params": {}, "reason": "인덱스 목록 조회"}]
-  잘못된 계획: list_indices + search_documents (search는 다른 Task)
 
-  예시 2 - Task: "Elasticsearch에서 최근 10개 데이터 분석" (이전 Task에서 인덱스 목록 조회 완료)
-  올바른 계획: [{"tool": "elastic", "operation": "search_documents", "params": {"index": "PLACEHOLDER_INDEX", "body": {"query": {"match_all": {}}, "size": 10}}, "reason": "최근 데이터 10개 조회"}]
+  예시 2 - Task: "Elasticsearch에서 최근 10개 데이터 분석" (이전 Task에서 인덱스 목록 이미 조회함)
+  올바른 계획: [{"tool": "elastic", "operation": "search_documents", "params": {"index": "PLACEHOLDER_INDEX", "body": {"query": {"match_all": {}}, "size": 10}}, "reason": "최근 데이터 조회"}]
+
+  **예시 3 - Task: "Elasticsearch에서 로그 수집 및 분석" (수집 + 분석을 하나의 Task에서 수행)**
+  **올바른 계획 (2단계 모두 포함):**
+  ```json
+  {
+    "plan": [
+      {
+        "tool": "elastic",
+        "operation": "list_indices",
+        "params": {},
+        "reason": "인덱스 목록 조회"
+      },
+      {
+        "tool": "elastic",
+        "operation": "search_documents",
+        "params": {
+          "index": "PLACEHOLDER_INDEX",
+          "body": {
+            "query": {"match_all": {}},
+            "size": 100
+          }
+        },
+        "reason": "로그 데이터 분석"
+      }
+    ]
+  }
+  ```
+  **잘못된 계획: list_indices만 실행 (분석을 빠뜨림)**
+
+  *중요 규칙*:
+  - Task 설명에 "수집 및 분석", "조회 및 분석", "검색 및 분석" 같이 **"및 분석"**이 포함되면
+    → list_indices + search_documents 2단계 모두 실행
+  - Task 설명이 "인덱스 목록 조회"만 언급하면
+    → list_indices만 실행
 
   중요: search_documents의 파라미터는 반드시 "index"와 "body" 2개
   중요: index 값은 정확히 "PLACEHOLDER_INDEX" (영문)만 허용
@@ -631,9 +679,19 @@ Task 타입: {task.task_type.value}
 
             if operation not in valid_tools[tool]:
                 corrected = False
-                if operation == "get_indices" and "list_indices" in valid_tools[tool]:
-                    print(f"경고: 단계 {idx}에서 '{operation}' -> 'list_indices' 자동 수정")
-                    operation = "list_indices"
+                # 자동 수정 규칙
+                auto_corrections = {
+                    "get_indices": "list_indices",
+                    "search": "search_documents",
+                    "index": "index_document",
+                    "get": "get_document",
+                    "delete": "delete_document",
+                }
+
+                if operation in auto_corrections and auto_corrections[operation] in valid_tools[tool]:
+                    corrected_op = auto_corrections[operation]
+                    print(f"경고: 단계 {idx}에서 '{operation}' -> '{corrected_op}' 자동 수정")
+                    operation = corrected_op
                     corrected = True
                 elif operation == "list_indices" and "list_indices" in valid_tools[tool]:
                     print(f"  단계 {idx}: '{operation}'는 유효한 도구입니다.")
