@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
+BASE_DIR = Path(__file__).resolve().parents[5]
 DATA_DIR = BASE_DIR / "data"
 SUPPORTED_EXTS = {".json", ".jsonl", ".xml", ".csv"}
 
