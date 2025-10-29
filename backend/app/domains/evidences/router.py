@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 from .schema import EvidenceFromConversationIn, EvidenceCreatedOut, EvidenceListOut, EvidenceInputDetail
@@ -33,3 +34,20 @@ def get_preview(evidence_id: str):
     if not result:
         raise HTTPException(404, "not found")
     return result
+=======
+from fastapi import APIRouter
+
+router = APIRouter()
+
+@router.post("/input", summary="전처리기 증거 업로드")
+def upload_preprocessor_evidence():
+    return
+
+@router.get("/input/{evidence_id}", summary="전처리기 증거 상세 조회")
+def get_preprocessor_evidence():
+    return
+
+@router.get("", summary="전체 증거 목록 조회")
+def get_evidences():
+    return
+>>>>>>> origin/dev/input-evidence
