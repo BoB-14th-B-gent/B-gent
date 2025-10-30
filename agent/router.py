@@ -1,7 +1,8 @@
 """메인 라우터 (오케스트레이터) 모듈
 
-작업 흐름을 관리하고 LangGraph 워크플로우를 실행
-Two-Stage Planning 지원
+작업 흐름을 관리하고 LangGraph 워크플로우 또는 ReAct Agent 실행
+- two_stage: Two-Stage Planning (빠르고 효율적)
+- react: ReAct Agent (유연하고 추론 기반)
 """
 from __future__ import annotations
 import time
@@ -11,7 +12,7 @@ from .graph import create_workflow
 from .storage.job_storage import save_agent_state, update_agent_status
 from .schemas.results import JobSummary
 
-WORKFLOW_MODE: Literal["simple", "two_stage"] = "two_stage"
+WORKFLOW_MODE: Literal["simple", "two_stage", "react"] = "react"
 
 def run_job(
     user_prompt: str,
@@ -107,7 +108,67 @@ def run_job(
     )
 
     try:
-        if WORKFLOW_MODE == "two_stage":
+        if WORKFLOW_MODE == "react":
+            # ReAct Agent: 추론 기반 반복 실행
+            print(f"  ReAct Agent 모드 (추론 기반)")
+            from .react_agent import ReActAgent
+
+            agent = ReActAgent()
+            react_result = agent.run(user_prompt, file_paths, job_id=job_id)
+            execution_time = time.time() - start_time
+
+            # ReAct 결과를 기존 형식으로 변환
+            observations = react_result.get("observations", [])
+            results = []
+            for obs in observations:
+                action = obs.get("action", {})
+                results.append({
+                    "success": True,
+                    "action": action,
+                    "result": obs.get("observation", ""),
+                    "execution_time_seconds": 0
+                })
+
+            summary = JobSummary(
+                job_id=job_id,
+                user_prompt=user_prompt,
+                ok=react_result.get("success", True),
+                total_steps=len(results),
+                success_count=len(results),
+                fail_count=0,
+                execution_time_seconds=execution_time
+            )
+
+            save_agent_state(
+                agent_id=job_id,
+                status="completed",
+                additional_data={
+                    "result": react_result,
+                    "summary": summary.to_dict(),
+                    "execution_time_seconds": execution_time
+                }
+            )
+
+            result = {
+                "job_id": job_id,
+                "summary": summary.to_dict(),
+                "state": {
+                    "answer": react_result.get("answer", ""),
+                    "observations": observations,
+                    "iterations": react_result.get("iterations", 0),
+                    "results": results
+                }
+            }
+
+            print("\n" + "=" * 80)
+            print(f"   작업 완료 (Job ID: {job_id})")
+            print(f"   실행 시간: {execution_time:.2f}초")
+            print(f"   반복 횟수: {react_result.get('iterations', 0)}")
+            print("=" * 80)
+
+            return result
+
+        elif WORKFLOW_MODE == "two_stage":
             print(f"  Two-Stage Planning 모드")
         else:
             print(f"  Simple Planning 모드")

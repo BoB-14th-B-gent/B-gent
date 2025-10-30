@@ -115,13 +115,33 @@ def run_with_progress(user_prompt: str, file_paths: list = None, generate_report
         update_thread = threading.Thread(target=periodic_update, daemon=True)
         update_thread.start()
 
+        result = None
         try:
-            with SuppressOutput():
+            # DEBUG 환경변수가 설정되어 있으면 출력 억제 안 함
+            if os.getenv("DEBUG"):
                 result = run_job(
                     user_prompt=user_prompt,
                     file_paths=file_paths,
                     generate_report_flag=generate_report
                 )
+            else:
+                with SuppressOutput():
+                    result = run_job(
+                        user_prompt=user_prompt,
+                        file_paths=file_paths,
+                        generate_report_flag=generate_report
+                    )
+        except Exception as e:
+            # 에러 발생 시 에러 정보를 포함한 결과 반환
+            console.print(f"\n[red]Error during execution:[/red] {str(e)}")
+            import traceback
+            traceback.print_exc()
+            result = {
+                "job_id": "error",
+                "summary": {"ok": False},
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
         finally:
             stop_event.set()
             update_thread.join(timeout=1)
@@ -298,6 +318,66 @@ def display_execution_results(result: dict):
                 ))
             console.print()
 
+def display_react_results(result: dict):
+    """ReAct Agent 결과 표시"""
+    state = result.get('state', {})
+    observations = state.get('observations', [])
+    answer = state.get('answer', '')
+    iterations = state.get('iterations', 0)
+
+    console.print()
+    console.print("[bold blue]ReAct Agent - Iterative Reasoning Results[/bold blue]")
+    console.print()
+
+    # 각 반복 표시
+    for obs in observations:
+        iteration = obs.get('iteration', 0)
+        thought = obs.get('thought', '')
+        action = obs.get('action', {})
+        observation = obs.get('observation', '')
+
+        console.print(f"[bold cyan]Iteration {iteration}:[/bold cyan]")
+        console.print()
+
+        # Thought
+        console.print(f"[yellow]Thinking:[/yellow]")
+        console.print(f"  {thought}")
+        console.print()
+
+        # Action
+        tool = action.get('tool', 'unknown')
+        operation = action.get('operation', 'unknown')
+        console.print(f"[green]Action:[/green] {tool}.{operation}")
+        console.print()
+
+        # Observation
+        obs_preview = observation[:500] if len(observation) > 500 else observation
+        console.print(f"[blue]Observation:[/blue]")
+        console.print(Panel(
+            obs_preview + ("...(truncated)" if len(observation) > 500 else ""),
+            border_style="dim",
+            box=box.MINIMAL
+        ))
+        console.print()
+
+    # Final Answer
+    console.print("[bold green]Final Answer:[/bold green]")
+    answer_text = answer if answer else "[yellow]No final answer provided - Agent may have reached max iterations without completing analysis[/yellow]"
+    console.print(Panel(
+        answer_text,
+        title="[bold]Analysis Result[/bold]",
+        border_style="green" if answer else "yellow",
+        box=box.ROUNDED
+    ))
+
+    # Summary
+    summary = result.get('summary', {})
+    console.print()
+    console.print(f"[bold blue]Summary:[/bold blue]")
+    console.print(f"  Total Iterations: {iterations}")
+    console.print(f"  Execution Time: {summary.get('execution_time_seconds', 0):.2f}s")
+    console.print()
+
 def display_result(result: dict):
     """결과 출력"""
     console.print()
@@ -316,6 +396,12 @@ def display_result(result: dict):
             box=box.ROUNDED
         ))
         console.print()
+        return
+
+    # ReAct 모드 결과 표시
+    state = result.get('state', {})
+    if 'observations' in state and 'iterations' in state:
+        display_react_results(result)
         return
 
     display_plans(result)
@@ -352,35 +438,6 @@ def display_result(result: dict):
 def interactive_mode():
     """대화형 터미널 모드"""
     console.print()
-    console.print(Panel(
-        Align.center(
-            "[bold]Interactive Mode[/bold]\n\n"
-            "Enter your analysis prompt freely\n"
-            "[dim]Type 'quit', 'exit', or 'q' to exit[/dim]"
-        ),
-        border_style="blue",
-        box=box.ROUNDED
-    ))
-
-    examples = Table(box=box.ROUNDED, show_header=True, border_style="blue")
-    examples.add_column("Category", style="blue bold", width=18)
-    examples.add_column("Example Prompts", style="white")
-
-    examples.add_row(
-        "Metadata",
-        "- Show me the list of indices\n- Tell me the schema of winlogbeat-* index"
-    )
-    examples.add_row(
-        "Log Search",
-        "- Find cmd.exe execution events in IIS from last 24h\n- Search for Event ID 4624 logs"
-    )
-    examples.add_row(
-        "File Analysis",
-        "- Extract suspicious files from disk image\n- Analyze Windows registry hives"
-    )
-
-    console.print(examples)
-    console.print()
 
     try:
         while True:
@@ -397,6 +454,20 @@ def interactive_mode():
                     continue
 
                 result = run_with_progress(prompt)
+
+                # 결과 확인
+                if not result:
+                    console.print(Panel(
+                        "[red]No result returned from agent[/red]\n\n"
+                        "[yellow]Possible causes:[/yellow]\n"
+                        "- LLM response timeout (try faster model)\n"
+                        "- Internal error (check logs)\n"
+                        "- MCP server connection issue",
+                        title="[red]Execution Failed[/red]",
+                        border_style="red",
+                        box=box.ROUNDED
+                    ))
+                    continue
 
                 display_result(result)
 
@@ -435,10 +506,49 @@ def cleanup():
     except Exception:
         pass
 
+def select_mode():
+    """워크플로우 모드 선택
+
+    환경변수 WORKFLOW_MODE가 설정되어 있으면 해당 모드 사용
+    없으면 사용자에게 선택 요청
+    """
+    import os
+
+    # 환경변수 확인
+    env_mode = os.getenv("WORKFLOW_MODE", "").lower()
+    if env_mode in ["react", "two_stage"]:
+        return env_mode
+
+    # 사용자 선택
+    console.print()
+    console.print(Panel(
+        "[bold]Select Workflow Mode[/bold]\n\n"
+        "[cyan]1[/cyan]. ReAct Agent (Recommended) - Iterative reasoning with LLM\n"
+        "[cyan]2[/cyan]. Two-Stage Planning - Fast structured planning\n\n",
+        border_style="blue",
+        box=box.ROUNDED
+    ))
+
+    console.print("[bold blue]Mode[/bold blue] [1-2]: ", end="")
+    choice = input().strip()
+
+    if choice == "2":
+        return "two_stage"
+    else:
+        return "react"  # Default
+
 def main():
     """메인 함수"""
     print_banner()
     console.print()
+
+    # 모드 선택
+    from agent import router
+    selected_mode = select_mode()
+    router.WORKFLOW_MODE = selected_mode
+
+    mode_name = "ReAct Agent" if selected_mode == "react" else "Two-Stage Planning"
+    console.print(f"\n[green]✓[/green] Selected mode: [bold]{mode_name}[/bold]\n")
 
     try:
         interactive_mode()

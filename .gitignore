@@ -33,25 +33,5 @@ wheels/
 .AppleDouble
 .LSOverride
 
-# ChromaDB
-data/chroma/
-
-# Extracted files 
-data/extracted_files/
-
-# reports
-data/reports/
-
-# Disk evidence files
-data/*.E*
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Logs
-*.log
-logs/
+# Uploaded files 
+data/
