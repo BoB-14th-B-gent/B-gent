@@ -1,1 +1,10 @@
 @import "tailwindcss";
+
+.rf-animated-dash {
+  animation: rf-dash 1.2s linear infinite;
+  stroke-linecap: round;
+}
+
+@keyframes rf-dash {
+  to { stroke-dashoffset: -100; }
+}
