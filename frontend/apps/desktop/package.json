@@ -1,0 +1,17 @@
+{
+  "name": "desktop",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main/index.js",
+  "scripts": {
+    "dev": "vite --config ./vite.config.mjs",
+    "build": "vite build --config ./vite.config.mjs",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.bgenteam.desktop",
+    "files": ["dist/**", "dist-electron/**", "node_modules/**", "package.json"],
+    "asar": true
+  }
+}
