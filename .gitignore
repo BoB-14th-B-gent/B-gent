@@ -27,6 +27,8 @@ wheels/
 .env
 .env.local
 .env.*.local
+frontend/apps/*/.env
+frontend/apps/*/.env.local
 
 # macOS
 .DS_Store
@@ -56,6 +58,8 @@ data/*.E*
 *.log
 logs/
 
-# env files
-frontend/apps/*/.env
-frontend/apps/*/.env.local
+# Node
+node_modules/
+dist/
+dist-electron/
+.vite/
