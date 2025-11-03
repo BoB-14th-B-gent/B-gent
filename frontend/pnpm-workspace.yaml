@@ -1,0 +1,10 @@
+packages:
+  - apps/*
+  - shared
+
+ignoredBuiltDependencies:
+  - '@parcel/watcher'
+
+onlyBuiltDependencies:
+  - electron
+  - electron-winstaller
