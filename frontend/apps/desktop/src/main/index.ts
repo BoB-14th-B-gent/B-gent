@@ -1,0 +1,1 @@
+console.log('Electron main process loaded')

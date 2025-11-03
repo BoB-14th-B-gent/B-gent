@@ -55,3 +55,7 @@ data/*.E*
 # Logs
 *.log
 logs/
+
+# env files
+frontend/apps/*/.env
+frontend/apps/*/.env.local
