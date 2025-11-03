@@ -6,12 +6,38 @@
   "scripts": {
     "dev": "vite --config ./vite.config.mjs",
     "build": "vite build --config ./vite.config.mjs",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "pack": "electron-builder --mac --dir",
+    "dist": "electron-builder --mac"
   },
   "build": {
     "appId": "com.bgenteam.desktop",
-    "files": ["dist/**", "dist-electron/**", "node_modules/**", "package.json"],
-    "asar": true
+    "productName": "B-Gent",
+    "directories": { "output": "release" },
+    "files": [
+      "dist-electron/**",
+      "assets/**",
+      "node_modules/**",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "../renderer/dist", "to": "renderer" }
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": ["dmg", "zip"],
+      "icon": "assets/icon.icns"
+    },
+    "dmg": { "iconSize": 128 }
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "electron": "^39.0.0",
+    "vite": "^7.1.12",
+    "vite-plugin-electron": "^0.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "electron-builder": "^26.0.12"
   }
 }

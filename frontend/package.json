@@ -1,7 +1,8 @@
 {
   "scripts": {
     "dev": "pnpm -C apps/renderer dev & RENDERER_URL=http://localhost:5173 pnpm -C apps/desktop dev",
-    "build": "pnpm -C apps/renderer build && pnpm -C apps/desktop build",
-    "dist": "pnpm build && pnpm -C apps/desktop dist"
+    "build:renderer": "pnpm -C apps/renderer build",
+    "build:desktop": "pnpm -C apps/desktop build",
+    "dist:mac": "pnpm -C apps/renderer build && pnpm -C apps/desktop dist"
   }
 }
