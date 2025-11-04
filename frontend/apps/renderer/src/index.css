@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 .rf-animated-dash {
   animation: rf-dash 1.2s linear infinite;
@@ -6,7 +6,9 @@
 }
 
 @keyframes rf-dash {
-  to { stroke-dashoffset: -100; }
+  to {
+    stroke-dashoffset: -100;
+  }
 }
 
 @font-face {
