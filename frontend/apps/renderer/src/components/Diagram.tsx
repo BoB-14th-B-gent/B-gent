@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
 import ReactFlow from 'reactflow'
 import 'reactflow/dist/style.css'
 
@@ -7,12 +7,47 @@ import { nodeTypes } from '@/components/nodes'
 import { edgeTypes } from '@/components/edges'
 import { useUIStore } from '@/store/ui'
 
+import PromptPanel from '@/components/panels/PromptPanel'
+
 export default function Diagram() {
-  const openPanel = useUIStore(s => s.openPanel)
+  const selectedNodeId = useUIStore(s => s.selectedNodeId)
   const setSelectedNode = useUIStore(s => s.setSelectedNode)
 
-  const nodes = useMemo(() => mapNodes(), [])
+  const promptOpen = useUIStore(s => s.promptOpen)
+  const openPrompt = useUIStore(s => s.openPrompt)
+  const closePrompt = useUIStore(s => s.closePrompt)
+
+  const nodes = useMemo(() => {
+    const base = mapNodes()
+    return base.map(n => ({
+      ...n,
+      data: {
+        ...n.data,
+        isActive: n.id === selectedNodeId,
+        onClick: () => {
+          if (n.type === 'prompt') {
+            if (selectedNodeId === n.id && promptOpen) {
+              closePrompt()
+              setSelectedNode(null)
+            } else {
+              setSelectedNode(n.id)
+              openPrompt()
+            }
+          } else {
+            setSelectedNode(n.id)
+            closePrompt()
+          }
+        },
+      },
+    }))
+  }, [selectedNodeId, promptOpen, setSelectedNode, openPrompt, closePrompt])
+
   const edges = useMemo(() => mapEdges(), [])
+
+  const handlePaneClick = useCallback(() => {
+    setSelectedNode(null)
+    closePrompt()
+  }, [setSelectedNode, closePrompt])
 
   return (
     <div
@@ -28,24 +63,41 @@ export default function Diagram() {
         alignItems: 'center',
         overflow: 'hidden',
         padding: 32,
+        position: 'relative',
       }}
     >
       <ReactFlow
+        panOnDrag
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
+        fitViewOptions={{ padding: 0.2 }}
         proOptions={{ hideAttribution: true }}
+        nodesConnectable={false}
+        connectOnClick={false}
         nodesDraggable={false}
         elementsSelectable={false}
-        panOnDrag
         zoomOnScroll
+        onPaneClick={handlePaneClick}
         onNodeClick={(_, node) => {
-          setSelectedNode(node.id)
-          openPanel()
+          if (node.type === 'prompt') {
+            if (selectedNodeId === node.id && promptOpen) {
+              closePrompt()
+              setSelectedNode(null)
+            } else {
+              setSelectedNode(node.id)
+              openPrompt()
+            }
+          } else {
+            setSelectedNode(node.id)
+            closePrompt()
+          }
         }}
       />
+
+      <PromptPanel />
     </div>
   )
 }
