@@ -5,7 +5,7 @@ OpenAI/Ollama 호환 LLM API 호출 제공
 from __future__ import annotations
 import requests, json
 from typing import List, Dict, Any, Optional
-from .config import get_config
+from ..config import get_config
 _cfg = get_config()
 
 class LLMClient:

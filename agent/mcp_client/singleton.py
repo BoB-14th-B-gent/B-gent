@@ -4,8 +4,8 @@
 """
 from __future__ import annotations
 from typing import Optional
-from .mcp_client import MCPClientManagerSync, MCPServerConfig
-from .config import get_config
+from .client import MCPClientManagerSync, MCPServerConfig
+from ..config import get_config
 _cfg = get_config()
 _mcp_client: Optional[MCPClientManagerSync] = None
 
@@ -31,7 +31,7 @@ def get_mcp_client() -> MCPClientManagerSync:
         RuntimeError: 활성화된 MCP 서버가 없는 경우
 
     Example:
-        >>> from agent.mcp_singleton import get_mcp_client
+        >>> from agent.mcp_client.singleton import get_mcp_client
         >>> client = get_mcp_client()
         >>> tools = client.get_all_tools()
         >>> result = client.call_tool("elastic", "search_documents", {...})
@@ -56,10 +56,8 @@ def get_mcp_client() -> MCPClientManagerSync:
 
         if not server_configs:
             raise RuntimeError("활성화된 MCP 서버가 없습니다.")
-        print("🔌 전역 MCP 클라이언트 초기화 중...")
         _mcp_client = MCPClientManagerSync(server_configs)
         _mcp_client.initialize()
-        print("✓ 전역 MCP 클라이언트 초기화 완료")
 
     return _mcp_client
 

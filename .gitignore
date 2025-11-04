@@ -35,17 +35,11 @@ frontend/apps/*/.env.local
 .AppleDouble
 .LSOverride
 
-# ChromaDB
-data/chroma/
+# Uploaded files 
+data/
 
-# Extracted files 
-data/extracted_files/
-
-# reports
-data/reports/
-
-# Disk evidence files
-data/*.E*
+# RAG DB
+agent/data/chroma
 
 # IDE
 .vscode/

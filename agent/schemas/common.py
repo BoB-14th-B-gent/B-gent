@@ -17,6 +17,7 @@ class AgentState(TypedDict, total=False):
         - task_queue: High-level Task 큐 (직렬화된 TaskQueue)
         - current_task: 현재 처리 중인 Task (dict)
         - completed_tasks: 완료된 Task 목록 (dict list)
+        - react_context: ReAct 루프 컨텍스트 (dict)
     """
     job_id: str
     user_prompt: str
@@ -27,6 +28,7 @@ class AgentState(TypedDict, total=False):
     task_queue_state: Dict[str, Any]
     current_task: Optional[Dict[str, Any]]
     completed_tasks: List[Dict[str, Any]]
+    react_context: Dict[str, Any]
 
     plan: List[Dict[str, Any]]
     results: List[Dict[str, Any]]

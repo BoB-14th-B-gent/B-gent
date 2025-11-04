@@ -7,7 +7,7 @@ import os
 import json
 from pathlib import Path
 from collections import defaultdict
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 sys.path.insert(0, project_root)
 from rich.console import Console
 from rich.panel import Panel
@@ -375,7 +375,7 @@ def load_mcp_tools():
     console.print("\n[cyan]⏳ MCP 서버 연결 중...[/cyan]")
 
     try:
-        from agent.mcp_singleton import get_mcp_client
+        from agent.mcp_client.singleton import get_mcp_client
         client = get_mcp_client()
         mcp_tools = client.get_all_tools()
         console.print(f"[green]✅ MCP 서버에서 {len(mcp_tools)}개 도구 발견[/green]\n")
@@ -541,9 +541,8 @@ if __name__ == "__main__":
         console.print(f"\n[red]❌ 예상치 못한 오류: {e}[/red]")
         sys.exit(1)
     finally:
-        # MCP 클라이언트 정리
         try:
-            from agent.mcp_singleton import reset_mcp_client
+            from agent.mcp_client.singleton import reset_mcp_client
             reset_mcp_client()
         except:
             pass
