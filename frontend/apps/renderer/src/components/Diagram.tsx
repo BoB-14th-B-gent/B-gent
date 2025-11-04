@@ -7,30 +7,30 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
-import PromptNode, { type PromptData } from './nodes/PromptNode';
-import AgentNode, { type AgentData } from './nodes/AgentNode';
-import MCPServerNode, { type MCPServerData } from './nodes/MCPServerNode';
-import MCPReportNode, { type MCPReportData } from './nodes/MCPReportNode';
-import TotalReportNode, { type TotalData } from './nodes/TotalReportNode';
+import PromptNode,     { type PromptData }     from './nodes/PromptNode';
+import AgentNode,      { type AgentData }      from './nodes/AgentNode';
+import MCPServerNode,  { type MCPServerData }  from './nodes/MCPServerNode';
+import MCPReportNode,  { type MCPReportData }  from './nodes/MCPReportNode';
+import TotalReportNode,{ type TotalData }      from './nodes/TotalReportNode';
 import DottedEdge from './edges/DottedEdge';
 import { useUIStore } from '@/store/ui';
 
 const COLORS = {
-  prompt: '#90949B',
-  bgent: '#AFC0CF',
+  prompt:       '#90949B',
+  bgent:        '#AFC0CF',
   velociraptor: '#003D00',
-  elastic: '#054861',
-  tsk: '#F5D356',
-  report: '#7FA9CE',
-  total: '#90949B',
+  elastic:      '#054861',
+  tsk:          '#F5D356',
+  report:       '#7FA9CE',
+  total:        '#90949B',
 } as const;
 
 const nodeTypes: NodeTypes = {
   prompt: PromptNode,
-  agent: AgentNode,
-  mcp: MCPServerNode,
-  doc: MCPReportNode,
-  total: TotalReportNode,
+  agent:  AgentNode,
+  mcp:    MCPServerNode,
+  doc:    MCPReportNode,
+  total:  TotalReportNode,
 };
 
 const edgeTypes: EdgeTypes = {
@@ -39,73 +39,107 @@ const edgeTypes: EdgeTypes = {
 
 type ND = PromptData | AgentData | MCPServerData | MCPReportData | TotalData;
 
-
 const NODES: Node<ND>[] = [
-  { id: 'prompt', type: 'prompt', position: { x: 100, y: 340 },
+  {
+    id: 'prompt',
+    type: 'prompt',
+    position: { x: 100, y: 340 },
     data: {
       label: 'User Prompt',
       bg: '#555C62',
       leftDot: COLORS.prompt,
       rightDot: '#2d5bff',
-      iconUrl: `icons/prompt.svg`,
-    } },
-  { id: 'bgent', type: 'agent', position: { x: 320, y: 340 },
+      iconUrl: '/icons/prompt.svg',
+    },
+  },
+  {
+    id: 'bgent',
+    type: 'agent',
+    position: { x: 320, y: 340 },
     data: {
       label: 'B-gent',
       bg: '#506D99',
       leftDot: '#2d5bff',
       rightDot: '#2d5bff',
-      iconUrl: `icons/bgent.svg`,
-    } },
-  { id: 'velociraptor', type: 'mcp', position: { x: 550, y: 200 },
+      iconUrl: '/icons/bgent.svg',
+    },
+  },
+  {
+    id: 'velociraptor',
+    type: 'mcp',
+    position: { x: 550, y: 200 },
     data: {
       label: 'Velociraptor',
       bg: '#003D00',
       leftDot: '#1f8a5b',
       rightDot: COLORS.report,
-      iconUrl: `icons/velociraptor.svg`,
-    } },
-  { id: 'elastic', type: 'mcp', position: { x: 550, y: 350 },
+      iconUrl: '/icons/velociraptor.svg',
+    },
+  },
+  {
+    id: 'elastic',
+    type: 'mcp',
+    position: { x: 550, y: 350 },
     data: {
       label: 'Elasticsearch',
       bg: '#002A3A',
       leftDot: '#0d7d6f',
       rightDot: COLORS.report,
-      iconUrl: `icons/elastic.svg`,
-    } },
-  { id: 'tsk', type: 'mcp', position: { x: 550, y: 500 },
+      iconUrl: '/icons/elastic.svg',
+    },
+  },
+  {
+    id: 'tsk',
+    type: 'mcp',
+    position: { x: 550, y: 500 },
     data: {
       label: 'The Sleuth Kit',
       bg: '#F5D356',
       leftDot: '#e7a90e',
       rightDot: COLORS.report,
-      iconUrl: `icons/tsk.svg`,
-    } },
-  { id: 'velo-report', type: 'doc', position: { x: 750, y: 209 },
+      iconUrl: '/icons/tsk.svg',
+    },
+  },
+  {
+    id: 'velo-report',
+    type: 'doc',
+    position: { x: 750, y: 209 },
     data: {
-      label: 'Report', 
-      bg: '#C8E5FF', 
-      iconUrl: `icons/report.svg` 
-    } },
-  { id: 'elastic-report', type: 'doc', position: { x: 750, y: 359 },
-    data: { 
-      label: 'Report', 
-      bg: '#C8E5FF', 
-      iconUrl: `icons/report.svg` 
-    } },
-  { id: 'tsk-report', type: 'doc', position: { x: 750, y: 509 },
-    data: { 
-      label: 'Report', 
-      bg: '#C8E5FF', 
-      iconUrl: `icons/report.svg` 
-    } },
-
-  { id: 'total-report',   type: 'total', position: { x: 980, y: 330 },
-    data: { 
-      label: 'Total Report', 
-      bg: '#F3F6FB', 
-      iconUrl: `icons/total.svg` 
-    } },
+      label: 'Report',
+      bg: '#C8E5FF',
+      iconUrl: '/icons/report.svg',
+    },
+  },
+  {
+    id: 'elastic-report',
+    type: 'doc',
+    position: { x: 750, y: 359 },
+    data: {
+      label: 'Report',
+      bg: '#C8E5FF',
+      iconUrl: '/icons/report.svg',
+    },
+  },
+  {
+    id: 'tsk-report',
+    type: 'doc',
+    position: { x: 750, y: 509 },
+    data: {
+      label: 'Report',
+      bg: '#C8E5FF',
+      iconUrl: '/icons/report.svg',
+    },
+  },
+  {
+    id: 'total-report',
+    type: 'total',
+    position: { x: 980, y: 330 },
+    data: {
+      label: 'Total Report',
+      bg: '#F3F6FB',
+      iconUrl: '/icons/total.svg',
+    },
+  },
 ];
 
 const EDGES: Edge[] = [
