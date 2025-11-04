@@ -7,15 +7,23 @@ import sys
 import os
 import atexit
 import logging
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-logging.basicConfig(
-    level=logging.WARNING,
-    format='%(message)s'
-)
+
+if os.getenv("MCP_DEBUG") == "1":
+    logging.basicConfig(level=logging.DEBUG, format='%(message)s')
+else:
+    logging.basicConfig(level=logging.ERROR, format='%(message)s')
+
 logging.getLogger("urllib3").setLevel(logging.ERROR)
 logging.getLogger("pymongo").setLevel(logging.ERROR)
 logging.getLogger("httpx").setLevel(logging.ERROR)
 logging.getLogger("mcp").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("elastic_transport").setLevel(logging.ERROR)
+logging.getLogger("markdown_it").setLevel(logging.ERROR)
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -29,7 +37,8 @@ from rich.live import Live
 from rich.align import Align
 import time
 from datetime import datetime
-from agent.router import run_job, WORKFLOW_MODE
+from agent.core.router import run_job, WORKFLOW_MODE
+
 console = Console()
 current_step = ""
 step_history = []
@@ -93,64 +102,44 @@ def create_status_panel(prompt: str, elapsed: float = 0):
 
 def run_with_progress(user_prompt: str, file_paths: list = None, generate_report: bool = False):
     """진행 상황 표시와 함께 작업 실행"""
-    global current_step, step_history
-    step_history = []
-    current_step = "Initializing agent..."
-
     start_time = time.time()
 
-    with Live(create_status_panel(user_prompt, 0), refresh_per_second=4, console=console) as live:
-        def update_display():
-            elapsed = time.time() - start_time
-            live.update(create_status_panel(user_prompt, elapsed))
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column(style="blue", justify="right")
+    table.add_column(style="white")
+    table.add_row("Task", user_prompt[:60] + "..." if len(user_prompt) > 60 else user_prompt)
+    table.add_row("Status", "Processing...")
 
-        import threading
-        stop_event = threading.Event()
+    console.print()
+    console.print(Panel(
+        table,
+        title="[bold blue]B-gent Execution[/bold blue]",
+        border_style="blue",
+        box=box.ROUNDED
+    ))
 
-        def periodic_update():
-            while not stop_event.is_set():
-                update_display()
-                time.sleep(0.25)
-
-        update_thread = threading.Thread(target=periodic_update, daemon=True)
-        update_thread.start()
-
-        result = None
-        try:
-            # DEBUG 환경변수가 설정되어 있으면 출력 억제 안 함
-            if os.getenv("DEBUG"):
-                result = run_job(
-                    user_prompt=user_prompt,
-                    file_paths=file_paths,
-                    generate_report_flag=generate_report
-                )
-            else:
-                with SuppressOutput():
-                    result = run_job(
-                        user_prompt=user_prompt,
-                        file_paths=file_paths,
-                        generate_report_flag=generate_report
-                    )
-        except Exception as e:
-            # 에러 발생 시 에러 정보를 포함한 결과 반환
-            console.print(f"\n[red]Error during execution:[/red] {str(e)}")
-            import traceback
-            traceback.print_exc()
-            result = {
-                "job_id": "error",
-                "summary": {"ok": False},
-                "error": str(e),
-                "traceback": traceback.format_exc()
-            }
-        finally:
-            stop_event.set()
-            update_thread.join(timeout=1)
-            update_display()
+    result = None
+    try:
+        result = run_job(
+            user_prompt=user_prompt,
+            file_paths=file_paths,
+            generate_report_flag=generate_report
+        )
+    except Exception as e:
+        console.print(f"\n[red]Error during execution:[/red] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        result = {
+            "job_id": "error",
+            "summary": {"ok": False},
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
 
     return result
 
 def display_plans(result: dict):
-    """Phase 1 및 Phase 2 계획 출력"""
+    """Phase 1 계획 출력 (Phase 2는 실시간 출력되므로 생략)"""
     if WORKFLOW_MODE != "two_stage":
         return
 
@@ -172,29 +161,6 @@ def display_plans(result: dict):
             console.print(f"{idx}. [bold white][{task_id}][/bold white] {description}")
             console.print(f"   [dim]Type: {task_type} | Dependencies: {', '.join(dependencies) if dependencies else 'None'}[/dim]")
 
-    completed_tasks = state.get('completed_tasks', [])
-    if completed_tasks:
-        console.print()
-        console.print("[bold blue]Phase 2: Low-level Planning[/bold blue]")
-        console.print(f"[dim]Executed {len(completed_tasks)} tasks with detailed actions[/dim]")
-        console.print()
-
-        for task_idx, task in enumerate(completed_tasks, 1):
-            task_id = task.get('task_id', 'unknown')
-            description = task.get('description', '')
-            low_level_plan = task.get('low_level_plan', [])
-
-            console.print(f"{task_idx}. [bold white][{task_id}][/bold white] {description}")
-
-            if low_level_plan:
-                for action_idx, action in enumerate(low_level_plan, 1):
-                    tool = action.get('tool', 'unknown')
-                    operation = action.get('operation', 'unknown')
-                    reason = action.get('reason', '')
-                    console.print(f"   {action_idx}. {tool}.{operation} - [dim]{reason}[/dim]")
-            else:
-                console.print(f"   [dim]No low-level actions[/dim]")
-
 def display_timing(result: dict):
     """각 단계별 소요 시간 출력"""
     if WORKFLOW_MODE != "two_stage":
@@ -214,7 +180,7 @@ def display_timing(result: dict):
     timing_table = Table(box=box.ROUNDED, show_header=True, border_style="blue")
     timing_table.add_column("Task ID", style="blue", width=12)
     timing_table.add_column("Description", style="white", width=40)
-    timing_table.add_column("Actions", justify="right", style="white", width=10)
+    timing_table.add_column("Iterations", justify="right", style="white", width=12)
     timing_table.add_column("Time", justify="right", style="white", width=12)
 
     total_tasks_time = 0
@@ -223,8 +189,7 @@ def display_timing(result: dict):
     for task in completed_tasks:
         task_id = task.get('task_id', 'unknown')
         description = task.get('description', '')[:40]
-        low_level_plan = task.get('low_level_plan', [])
-        action_count = len(low_level_plan)
+        react_iterations = task.get('react_iterations', 0)
 
         task_timing = task_timings.get(task_id, {})
         task_time = task_timing.get('total', 0.0)
@@ -233,7 +198,7 @@ def display_timing(result: dict):
         timing_table.add_row(
             task_id,
             description,
-            f"{action_count} steps",
+            f"{react_iterations} iter",
             f"{task_time:.2f}s"
         )
 
@@ -243,16 +208,13 @@ def display_timing(result: dict):
     high_level_planning_time = timing.get('high_level_planning', 0.0)
 
     console.print("[bold blue]Phase Breakdown:[/bold blue]")
-    console.print(f"  High-level Planning: {high_level_planning_time:.2f}s")
+    console.print(f"  Planning: {high_level_planning_time:.2f}s")
 
-    total_low_level_planning = 0.0
     total_execution = 0.0
     for task_id, task_timing in task_timings.items():
-        total_low_level_planning += task_timing.get('low_level_planning', 0.0)
         total_execution += task_timing.get('execution', 0.0)
 
-    console.print(f"  Low-level Planning (all tasks): {total_low_level_planning:.2f}s")
-    console.print(f"  MCP Execution (all tasks): {total_execution:.2f}s")
+    console.print(f"  ReAct Execution (all tasks): {total_execution:.2f}s")
     console.print()
 
     summary = result.get('summary', {})
@@ -329,7 +291,6 @@ def display_react_results(result: dict):
     console.print("[bold blue]ReAct Agent - Iterative Reasoning Results[/bold blue]")
     console.print()
 
-    # 각 반복 표시
     for obs in observations:
         iteration = obs.get('iteration', 0)
         thought = obs.get('thought', '')
@@ -339,18 +300,15 @@ def display_react_results(result: dict):
         console.print(f"[bold cyan]Iteration {iteration}:[/bold cyan]")
         console.print()
 
-        # Thought
         console.print(f"[yellow]Thinking:[/yellow]")
         console.print(f"  {thought}")
         console.print()
 
-        # Action
         tool = action.get('tool', 'unknown')
         operation = action.get('operation', 'unknown')
         console.print(f"[green]Action:[/green] {tool}.{operation}")
         console.print()
 
-        # Observation
         obs_preview = observation[:500] if len(observation) > 500 else observation
         console.print(f"[blue]Observation:[/blue]")
         console.print(Panel(
@@ -360,7 +318,6 @@ def display_react_results(result: dict):
         ))
         console.print()
 
-    # Final Answer
     console.print("[bold green]Final Answer:[/bold green]")
     answer_text = answer if answer else "[yellow]No final answer provided - Agent may have reached max iterations without completing analysis[/yellow]"
     console.print(Panel(
@@ -370,13 +327,40 @@ def display_react_results(result: dict):
         box=box.ROUNDED
     ))
 
-    # Summary
     summary = result.get('summary', {})
     console.print()
     console.print(f"[bold blue]Summary:[/bold blue]")
     console.print(f"  Total Iterations: {iterations}")
     console.print(f"  Execution Time: {summary.get('execution_time_seconds', 0):.2f}s")
     console.print()
+
+def display_task_analysis(result: dict):
+    """Two-stage 모드에서 각 Task의 분석 결과 출력"""
+    if WORKFLOW_MODE != "two_stage":
+        return
+
+    state = result.get('state', {})
+    completed_tasks = state.get('completed_tasks', [])
+
+    if not completed_tasks:
+        return
+
+    console.print()
+    console.print("[bold blue]Analysis Results[/bold blue]")
+    console.print()
+
+    for task_idx, task in enumerate(completed_tasks, 1):
+        description = task.get('description', '')
+        react_answer = task.get('react_answer', '')
+
+        if not react_answer:
+            continue
+
+        console.print(f"[bold blue]Task {task_idx}: {description}[/bold blue]")
+        console.print()
+
+        console.print(react_answer)
+        console.print()
 
 def display_result(result: dict):
     """결과 출력"""
@@ -398,15 +382,14 @@ def display_result(result: dict):
         console.print()
         return
 
-    # ReAct 모드 결과 표시
     state = result.get('state', {})
-    if 'observations' in state and 'iterations' in state:
+    if 'observations' in state and 'iterations' in state and WORKFLOW_MODE != "two_stage":
         display_react_results(result)
         return
 
     display_plans(result)
 
-    display_execution_results(result)
+    display_task_analysis(result)
 
     display_timing(result)
 
@@ -453,9 +436,28 @@ def interactive_mode():
                 if not prompt:
                     continue
 
-                result = run_with_progress(prompt)
+                console.print("[dim]Files (comma로 구분):[/dim] ", end="")
+                file_input = input().strip()
 
-                # 결과 확인
+                file_paths = None
+                if file_input:
+                    import os
+                    file_paths = []
+                    for path in file_input.split(','):
+                        path = path.strip()
+                        if not path:
+                            continue
+                        if not os.path.isabs(path):
+                            data_path = os.path.join(os.getcwd(), 'data', path)
+                            if os.path.exists(data_path):
+                                path = data_path
+                            else:
+                                path = os.path.abspath(path)
+                        file_paths.append(path)
+                    console.print(f"[dim]→ {len(file_paths)} file(s) provided[/dim]")
+
+                result = run_with_progress(prompt, file_paths=file_paths)
+
                 if not result:
                     console.print(Panel(
                         "[red]No result returned from agent[/red]\n\n"
@@ -500,55 +502,16 @@ def cleanup():
     _cleanup_done = True
 
     try:
-        from agent.mcp_singleton import reset_mcp_client
+        from agent.mcp_client.singleton import reset_mcp_client
         with SuppressOutput():
             reset_mcp_client()
     except Exception:
         pass
 
-def select_mode():
-    """워크플로우 모드 선택
-
-    환경변수 WORKFLOW_MODE가 설정되어 있으면 해당 모드 사용
-    없으면 사용자에게 선택 요청
-    """
-    import os
-
-    # 환경변수 확인
-    env_mode = os.getenv("WORKFLOW_MODE", "").lower()
-    if env_mode in ["react", "two_stage"]:
-        return env_mode
-
-    # 사용자 선택
-    console.print()
-    console.print(Panel(
-        "[bold]Select Workflow Mode[/bold]\n\n"
-        "[cyan]1[/cyan]. ReAct Agent (Recommended) - Iterative reasoning with LLM\n"
-        "[cyan]2[/cyan]. Two-Stage Planning - Fast structured planning\n\n",
-        border_style="blue",
-        box=box.ROUNDED
-    ))
-
-    console.print("[bold blue]Mode[/bold blue] [1-2]: ", end="")
-    choice = input().strip()
-
-    if choice == "2":
-        return "two_stage"
-    else:
-        return "react"  # Default
-
 def main():
     """메인 함수"""
     print_banner()
     console.print()
-
-    # 모드 선택
-    from agent import router
-    selected_mode = select_mode()
-    router.WORKFLOW_MODE = selected_mode
-
-    mode_name = "ReAct Agent" if selected_mode == "react" else "Two-Stage Planning"
-    console.print(f"\n[green]✓[/green] Selected mode: [bold]{mode_name}[/bold]\n")
 
     try:
         interactive_mode()

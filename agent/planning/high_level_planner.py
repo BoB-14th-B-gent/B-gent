@@ -6,8 +6,8 @@ from __future__ import annotations
 from typing import List, Dict, Any
 import json
 import os
-from .schemas.task import HighLevelTask, TaskType
-from .llm_client import LLMClient
+from ..schemas.task import HighLevelTask, TaskType
+from ..llm_client.client import LLMClient
 
 
 def _classify_file_type(file_path: str) -> str:
@@ -136,8 +136,13 @@ def generate_high_level_plan(
 *중요: 도구 선택 우선순위*:
 1. 사용자가 "Ghidra"를 명시하거나, 바이너리/실행 파일 분석, 디컴파일, 리버스 엔지니어링, 함수 분석을 요청하면 → 무조건 tool_hint: "ghidra"
 2. 사용자가 "Elasticsearch", "인덱스", "로그" 등을 명시하면 → tool_hint: "elastic"
-3. 사용자가 디스크 이미지 파일 추출을 요청하면 → tool_hint: "sleuthkit"
-4. 사용자가 아티팩트 수집을 요청하면 → tool_hint: "velociraptor"
+3. **사용자가 "디스크 이미지 분석", "아티팩트 분석", "포렌식 분석"을 요청하면 → tool_hint: "velociraptor"** (기본값)
+4. **사용자가 명시적으로 "파일 추출", "특정 파일 찾기", "파일 복사"를 요청할 때만 → tool_hint: "sleuthkit"**
+
+**주의: "disk image"만으로는 SleuthKit을 선택하지 마세요!**
+- "analyze disk image" → velociraptor (아티팩트 분석)
+- "extract file from disk image" → sleuthkit (파일 추출)
+- "analyze artifacts" → velociraptor (아티팩트 분석)
 
 *출력 형식* (반드시 JSON):
 ```json
@@ -151,7 +156,8 @@ def generate_high_level_plan(
       "dependencies": ["task_000"],
       "metadata": {
         "tool_hint": "elastic | sleuthkit | velociraptor | ghidra",
-        "priority": "high | medium | low"
+        "priority": "high | medium | low",
+        "target_path": "추출할 파일 경로 (file_extract 태스크인 경우 필수)"
       }
     }
   ]
@@ -171,16 +177,16 @@ def generate_high_level_plan(
    - 예외: 서로 다른 도구가 필요하거나, 명확히 순차 의존성이 있는 경우에만 분리
 
 3. *분석 대상별* Task 분리:
-   - 디스크 이미지에서 파일 추출 → task_type: "file_extract", tool_hint: "sleuthkit"
-   - PE 파일 분석 → task_type: "file_analysis"
+   - **디스크 이미지 아티팩트 분석** → task_type: "artifact_collection", tool_hint: "velociraptor" (기본값)
+   - **디스크 이미지에서 특정 파일 추출** → task_type: "file_extract", tool_hint: "sleuthkit" (명시적 요청 시에만)
+   - PE 파일 분석 → task_type: "file_analysis", tool_hint: "ghidra"
    - 로그 수집/검색/분석 → task_type: "log_collection", tool_hint: "elastic"
-   - 아티팩트 수집 → task_type: "artifact_collection", tool_hint: "velociraptor"
 
 4. *도구별* tool_hint 필수 지정:
-   - Elasticsearch 작업 (인덱스 목록, 데이터 조회/검색/분석) → tool_hint: "elastic" *필수*
-   - SleuthKit 작업 (디스크 이미지, 파일 추출) → tool_hint: "sleuthkit" *필수*
-   - Velociraptor 작업 (아티팩트 수집, 시스템 정보) → tool_hint: "velociraptor" *필수*
-   - Ghidra 작업 (바이너리 리버스 엔지니어링, 함�� 디컴파일, 문자열 추출) → tool_hint: "ghidra" *필수*
+   - **Velociraptor** (아티팩트 수집, 디스크 이미지 분석, 레지스트리/프리페치/브라우저 히스토리 등) → tool_hint: "velociraptor" *기본값*
+   - **SleuthKit** (특정 파일 추출만) → tool_hint: "sleuthkit" *명시적 요청 시에만*
+   - Elasticsearch (로그 수집/검색/분석) → tool_hint: "elastic"
+   - Ghidra (바이너리 리버스 엔지니어링, 디컴파일) → tool_hint: "ghidra"
    - tool_hint를 반드시 지정하세요. 없으면 도구 검색이 실패할 수 있습니다.
 
 5. *의존성 설정*:
@@ -205,33 +211,53 @@ def generate_high_level_plan(
       "task_type": "file_extract",
       "target_files": ["data/Image.E01"],
       "dependencies": [],
-      "metadata": {"tool_hint": "sleuthkit", "priority": "high"}
+      "metadata": {
+        "tool_hint": "sleuthkit",
+        "priority": "high",
+        "target_path": "C:\\Users\\hacker\\Downloads\\Report_2025.pdf.exe"
+      }
     }
   ]
 }
 ```
 
-*예시 1-2* (Task 분리 - 서로 다른 도구 사용):
-입력: "디스크 이미지에서 악성 파일 추출 후 로그 검색"
+*예시 1-2* (디스크 이미지 아티팩트 분석 - Velociraptor 기본값):
+입력: "디스크 이미지에서 악성 행위 분석"
+입력: "디스크 이미지 아티팩트 분석"
+입력: "analyze disk image"
 출력:
 ```json
 {
   "tasks": [
     {
       "task_id": "task_001",
-      "description": "SleuthKit으로 디스크 이미지에서 의심 파일 추출",
+      "description": "Velociraptor로 디스크 이미지 아티팩트 수집 (레지스트리, 프리페치, 브라우저 히스토리 등)",
+      "task_type": "artifact_collection",
+      "target_files": ["data/Image.E01"],
+      "dependencies": [],
+      "metadata": {"tool_hint": "velociraptor", "priority": "high"}
+    }
+  ]
+}
+```
+
+*예시 1-3* (명시적 파일 추출 요청 - SleuthKit):
+입력: "디스크 이미지에서 C:\\Users\\hacker\\suspicious.exe 파일을 추출해줘"
+출력:
+```json
+{
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "description": "SleuthKit으로 디스크 이미지에서 C:\\Users\\hacker\\suspicious.exe 파일 추출",
       "task_type": "file_extract",
       "target_files": ["data/Image.E01"],
       "dependencies": [],
-      "metadata": {"tool_hint": "sleuthkit", "priority": "high"}
-    },
-    {
-      "task_id": "task_002",
-      "description": "Elasticsearch에서 추출된 파일 관련 로그 검색",
-      "task_type": "log_collection",
-      "target_files": [],
-      "dependencies": ["task_001"],
-      "metadata": {"tool_hint": "elastic", "priority": "medium"}
+      "metadata": {
+        "tool_hint": "sleuthkit",
+        "priority": "high",
+        "target_path": "C:\\Users\\hacker\\suspicious.exe"
+      }
     }
   ]
 }
@@ -437,11 +463,6 @@ def generate_high_level_plan(
             )
             tasks.append(task)
 
-        print(f"High-level 계획 생성 완료: {len(tasks)}개 Task")
-        for idx, task in enumerate(tasks, 1):
-            deps_info = f" (의존: {', '.join(task.dependencies)})" if task.dependencies else ""
-            print(f"  {idx}. [{task.task_type.value}] {task.description}{deps_info}")
-
         tasks = _validate_and_fix_ghidra_tasks(tasks, user_prompt)
 
         return tasks
@@ -474,14 +495,9 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str)
     prompt_lower = user_prompt.lower()
     is_ghidra_request = any(kw in prompt_lower for kw in ghidra_keywords)
 
-    if not is_ghidra_request:
-        sys.stderr.write(f"[DEBUG] Ghidra 요청 아님, 원본 반환\n")
-        sys.stderr.flush()
-        return tasks
-
     ghidra_tasks = [t for t in tasks if t.metadata.get("tool_hint") == "ghidra"]
 
-    if not ghidra_tasks:
+    if is_ghidra_request and not ghidra_tasks:
         print("\n[!]  Ghidra 요청이지만 LLM이 잘못된 도구를 선택했습니다!")
         print(f"   LLM 선택: {[t.metadata.get('tool_hint') for t in tasks]}")
         print(f"   자동 수정: Ghidra 2단계 구조로 교체")
@@ -606,15 +622,53 @@ def _generate_default_high_level_plan(
             )
         ]
 
-    if disk_images or any(kw in prompt_lower for kw in ["디스크", "이미지", "추출", "파일", "disk", "image", "extract"]):
-        tasks.append(HighLevelTask(
-            task_id="task_001",
-            description="디스크 이미지 분석 및 파일 추출",
-            task_type=TaskType.FILE_EXTRACT,
-            target_files=disk_images,
-            dependencies=[],
-            metadata={"tool_hint": "sleuthkit", "priority": "high"}
-        ))
+    if disk_images or any(kw in prompt_lower for kw in ["디스크", "이미지", "disk", "image"]):
+        if any(kw in prompt_lower for kw in ["추출", "extract", "찾기", "find", "파일", "file"]):
+            import re
+
+            win_path_pattern = r'[A-Za-z]:\\[^"\s]+'
+            unix_path_pattern = r'/[^\s"]+'
+            filename_pattern = r'\b[\w\-]+\.[a-zA-Z0-9]{2,5}\b'
+
+            target_path = None
+
+            win_matches = re.findall(win_path_pattern, user_prompt)
+            if win_matches:
+                target_path = win_matches[0]
+            elif re.search(unix_path_pattern, user_prompt):
+                unix_matches = re.findall(unix_path_pattern, user_prompt)
+                target_path = unix_matches[0] if unix_matches else None
+            elif re.search(filename_pattern, user_prompt):
+                filename_matches = re.findall(filename_pattern, user_prompt)
+                target_path = filename_matches[0] if filename_matches else None
+
+            if target_path:
+                description = f"SleuthKit으로 디스크 이미지에서 파일 추출: {target_path}"
+            else:
+                description = f"SleuthKit으로 디스크 이미지에서 파일 추출 (프롬프트: {user_prompt[:100]})"
+
+            tasks.append(HighLevelTask(
+                task_id="task_001",
+                description=description,
+                task_type=TaskType.FILE_EXTRACT,
+                target_files=disk_images,
+                dependencies=[],
+                metadata={
+                    "tool_hint": "sleuthkit",
+                    "priority": "high",
+                    "target_path": target_path,
+                    "user_prompt": user_prompt
+                }
+            ))
+        else:
+            tasks.append(HighLevelTask(
+                task_id="task_001",
+                description="Velociraptor로 디스크 이미지 아티팩트 수집 및 분석",
+                task_type=TaskType.ARTIFACT_COLLECTION,
+                target_files=disk_images,
+                dependencies=[],
+                metadata={"tool_hint": "velociraptor", "priority": "high"}
+            ))
 
     if any(kw in prompt_lower for kw in ["로그", "log", "이벤트", "event", "검색", "search", "elastic"]):
         dependencies = ["task_001"] if tasks else []

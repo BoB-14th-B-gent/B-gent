@@ -35,3 +35,6 @@ wheels/
 
 # Uploaded files 
 data/
+
+# RAG DB
+agent/data/chroma

@@ -5,7 +5,7 @@ High-level Task의 큐 관리 및 의존성 해결
 from __future__ import annotations
 from typing import List, Optional, Set, Dict, Any
 from collections import deque
-from .schemas.task import HighLevelTask, TaskStatus
+from ..schemas.task import HighLevelTask, TaskStatus
 
 
 class TaskQueue:

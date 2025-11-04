@@ -1,18 +1,18 @@
 """메인 라우터 (오케스트레이터) 모듈
 
-작업 흐름을 관리하고 LangGraph 워크플로우 또는 ReAct Agent 실행
-- two_stage: Two-Stage Planning (빠르고 효율적)
-- react: ReAct Agent (유연하고 추론 기반)
+하이브리드 워크플로우 실행:
+- High-level Planning: LLM이 추상적 Task 생성
+- ReAct Execution: 각 Task를 ReAct Agent가 동적으로 실행
 """
 from __future__ import annotations
 import time
 import uuid
 from typing import Dict, Any, Optional, List, Literal
 from .graph import create_workflow
-from .storage.job_storage import save_agent_state, update_agent_status
-from .schemas.results import JobSummary
+from ..storage.job_storage import save_agent_state, update_agent_status
+from ..schemas.results import JobSummary
 
-WORKFLOW_MODE: Literal["simple", "two_stage", "react"] = "react"
+WORKFLOW_MODE: Literal["two_stage"] = "two_stage"
 
 def run_job(
     user_prompt: str,
@@ -45,8 +45,8 @@ def run_job(
         Dict[str, Any]: 작업 결과
             - job_id: 작업 ID
             - summary: 작업 요약 (성공/실패, 실행 시간 등)
-            - state: 최�� 상태 (계획, 결과 등)
-            - report: 리포트 데이터 (generate_report_flag=True��� 경우)
+            - state: 최신 상태 (계획, 결과 등)
+            - report: 리포트 데이터 (generate_report_flag=True 경우)
 
     Example:
         >>> result = run_job(
@@ -59,11 +59,6 @@ def run_job(
     job_id = uuid.uuid4().hex[:24]
     start_time = time.time()
     file_paths = file_paths or []
-
-    print(f"Job ID: {job_id}")
-    print(f"요청: {user_prompt}")
-    if file_paths:
-        print(f"   파일: {', '.join(file_paths)}")
         
     if WORKFLOW_MODE == "two_stage":
         initial_state = {
@@ -108,85 +103,17 @@ def run_job(
     )
 
     try:
-        if WORKFLOW_MODE == "react":
-            # ReAct Agent: 추론 기반 반복 실행
-            print(f"  ReAct Agent 모드 (추론 기반)")
-            from .react_agent import ReActAgent
-
-            agent = ReActAgent()
-            react_result = agent.run(user_prompt, file_paths, job_id=job_id)
-            execution_time = time.time() - start_time
-
-            # ReAct 결과를 기존 형식으로 변환
-            observations = react_result.get("observations", [])
-            results = []
-            for obs in observations:
-                action = obs.get("action", {})
-                results.append({
-                    "success": True,
-                    "action": action,
-                    "result": obs.get("observation", ""),
-                    "execution_time_seconds": 0
-                })
-
-            summary = JobSummary(
-                job_id=job_id,
-                user_prompt=user_prompt,
-                ok=react_result.get("success", True),
-                total_steps=len(results),
-                success_count=len(results),
-                fail_count=0,
-                execution_time_seconds=execution_time
-            )
-
-            save_agent_state(
-                agent_id=job_id,
-                status="completed",
-                additional_data={
-                    "result": react_result,
-                    "summary": summary.to_dict(),
-                    "execution_time_seconds": execution_time
-                }
-            )
-
-            result = {
-                "job_id": job_id,
-                "summary": summary.to_dict(),
-                "state": {
-                    "answer": react_result.get("answer", ""),
-                    "observations": observations,
-                    "iterations": react_result.get("iterations", 0),
-                    "results": results
-                }
-            }
-
-            print("\n" + "=" * 80)
-            print(f"   작업 완료 (Job ID: {job_id})")
-            print(f"   실행 시간: {execution_time:.2f}초")
-            print(f"   반복 횟수: {react_result.get('iterations', 0)}")
-            print("=" * 80)
-
-            return result
-
-        elif WORKFLOW_MODE == "two_stage":
-            print(f"  Two-Stage Planning 모드")
-        else:
-            print(f"  Simple Planning 모드")
-
         workflow = create_workflow(mode=WORKFLOW_MODE)
         final_state = workflow.invoke(initial_state, config={"recursion_limit": 50})
         execution_time = time.time() - start_time
 
-        if WORKFLOW_MODE == "two_stage":
-            completed_tasks = final_state.get("completed_tasks", [])
-            all_results = []
-            for task in completed_tasks:
-                task_results = task.get("execution_results", [])
-                all_results.extend(task_results)
+        completed_tasks = final_state.get("completed_tasks", [])
+        all_results = []
+        for task in completed_tasks:
+            task_results = task.get("execution_results", [])
+            all_results.extend(task_results)
 
-            results = all_results
-        else:
-            results = final_state.get("results", [])
+        results = all_results
 
         total_steps = len(results)
         success_count = sum(1 for r in results if r.get("success"))
@@ -217,21 +144,58 @@ def run_job(
             "state": final_state
         }
 
-        print("\n" + "=" * 80)
-        print(f"   작업 완료 (Job ID: {job_id})")
-        print(f"   실행 시간: {execution_time:.2f}초")
-        print(f"   성공/실패: {success_count}/{fail_count}")
-        print("=" * 80)
+        print(f"\n[Summary]")
+        print(f"Total: {len(completed_tasks)} tasks, {total_steps} actions, {execution_time:.2f}s")
+        if fail_count > 0:
+            print(f"Status: {success_count} succeeded, {fail_count} failed")
 
         return result
 
     except Exception as e:
         execution_time = time.time() - start_time
         error_msg = str(e)
-        print("\n" + "=" * 80)
-        print(f"   작업 실패 (Job ID: {job_id})")
-        print(f"   오류: {error_msg}")
-        print("=" * 80)
+
+        if "recursion limit" in error_msg.lower() or "GRAPH_RECURSION_LIMIT" in error_msg:
+            completed_tasks = initial_state.get("completed_tasks", [])
+            all_results = []
+            for task in completed_tasks:
+                task_results = task.get("execution_results", [])
+                all_results.extend(task_results)
+
+            total_steps = len(all_results)
+            success_count = sum(1 for r in all_results if r.get("success"))
+            fail_count = total_steps - success_count
+
+            summary = JobSummary(
+                job_id=job_id,
+                user_prompt=user_prompt,
+                ok=True,
+                total_steps=total_steps,
+                success_count=success_count,
+                fail_count=fail_count,
+                execution_time_seconds=execution_time
+            )
+
+            save_agent_state(
+                agent_id=job_id,
+                status="completed",
+                additional_data={
+                    "summary": summary.to_dict(),
+                    "execution_time_seconds": execution_time,
+                    "note": "Stopped at iteration limit"
+                }
+            )
+
+            print(f"\n[Summary]")
+            print(f"Total: {len(completed_tasks)} tasks, {total_steps} actions, {execution_time:.2f}s")
+
+            return {
+                "job_id": job_id,
+                "summary": summary.to_dict(),
+                "state": initial_state
+            }
+
+        print(f"\n[✗] Error: {error_msg}")
 
         save_agent_state(
             agent_id=job_id,

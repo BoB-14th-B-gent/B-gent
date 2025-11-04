@@ -7,10 +7,17 @@ from __future__ import annotations
 import time
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from typing import Dict, Any, Optional
-from .schemas.actions import Action, ActionResult
-from .mcp_lazy_client import get_mcp_client_for_server
-from .storage.evidence_logger import log_mcp_execution
+from typing import Dict, Any, Optional, List
+from ..schemas.actions import Action, ActionResult
+from ..mcp_client.lazy_loader import get_mcp_client_for_server
+from ..storage.evidence_logger import log_mcp_execution
+from ..constants import (
+    DEFAULT_RETRY_COUNT,
+    MAX_BACKOFF_SECONDS,
+    RETRYABLE_ERROR_PATTERNS,
+    PREVIEW_MAX_LENGTH,
+    SEPARATOR
+)
 
 def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult:
     """액션 실행 (재시도 및 타임아웃 지원)
@@ -80,18 +87,6 @@ def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult
             result = _call_mcp_tool_with_timeout(action, timeout)
             execution_time = time.time() - start_time
 
-            # 결과 타입 검증 (디버깅용)
-            if not isinstance(result, dict):
-                error_msg = f"MCP 응답 타입 오류: {type(result).__name__} (dict 기대됨)"
-                print(f"[X] {error_msg}")
-                print(f"   응답 내용: {str(result)[:500]}")
-                return ActionResult(
-                    action=action,
-                    success=False,
-                    error=error_msg,
-                    execution_time_seconds=execution_time
-                )
-
             if result.get("success"):
                 result_data = result.get("result", "")
 
@@ -104,39 +99,16 @@ def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult
                     job_id=job_id
                 )
 
-                if action.tool == "sleuthkit" and action.operation == "search_inode_by_path":
-                    try:
-                        if isinstance(result_data, str):
-                            import json
-                            parsed = json.loads(result_data)
-                        else:
-                            parsed = result_data
-
-                        inodes = parsed.get("inodes", [])
-                        if isinstance(inodes, list) and any("not found" in str(inode).lower() or "error" in str(inode).lower() for inode in inodes):
-                            error_msg = f"파일을 찾을 수 없습니다: {parsed.get('path', 'unknown')}"
-                            print(f"[X] 실패: {error_msg}")
-                            print(f"   inode 검색 결과: {inodes}")
-                            return ActionResult(
-                                action=action,
-                                success=False,
-                                error=error_msg,
-                                result=result_data,
-                                execution_time_seconds=execution_time
-                            )
-                    except Exception as e:
-                        print(f"[X]  결과 검증 중 오류 (무시하고 계속): {e}")
-
                 if result_data:
                     preview = str(result_data)
-                    if len(preview) > 1000:
-                        preview = preview[:1000] + f"\n... (총 {len(preview)}자, 나머지 생략)"
+                    if len(preview) > PREVIEW_MAX_LENGTH:
+                        preview = preview[:PREVIEW_MAX_LENGTH] + f"\n... (총 {len(preview)}자, 나머지 생략)"
 
                     print(f"[✓] 완료 ({execution_time:.2f}초)")
                     print(f"\n   결과:")
-                    print("-" * 60)
+                    print(SEPARATOR)
                     print(preview)
-                    print("-" * 60)
+                    print(SEPARATOR)
                 else:
                     print(f"[✓] 완료 ({execution_time:.2f}초) - 결과 없음")
 
@@ -160,17 +132,12 @@ def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult
                     job_id=job_id
                 )
 
-                # 전체 응답 출력 (디버깅용)
-                print(f"[X]  MCP 응답 (success=False):")
-                print(f"   응답 전체: {result}")
-                print(f"   에러 메시지: {error_msg}")
-
                 if attempt < max_retries and _is_retryable_error(error_msg):
-                    print(f"[X]  실패 (재시도 가능): {error_msg}")
+                    print(f"[✗]  실패 (재시도 가능): {error_msg}")
                     continue
 
                 else:
-                    print(f"[X] 실패: {error_msg}")
+                    print(f"[✗] 실패: {error_msg}")
 
                     return ActionResult(
                         action=action,
@@ -189,7 +156,7 @@ def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult
                 continue
 
             else:
-                print(f"[X] {error_msg}")
+                print(f"[✗] {error_msg}")
 
                 return ActionResult(
                     action=action,
@@ -204,11 +171,11 @@ def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult
             last_error = error_msg
 
             if attempt < max_retries and _is_retryable_error(error_msg):
-                print(f"[X]  예외 발생 (재시도 가능): {e}")
+                print(f"[✗]  예외 발생 (재시도 가능): {e}")
                 continue
 
             else:
-                print(f"[X] 예외 발생: {e}")
+                print(f"[✗] 예외 발생: {e}")
                 # traceback 출력 (디버깅용)
                 import traceback
                 traceback.print_exc()
@@ -295,27 +262,7 @@ def _is_retryable_error(error_msg: str) -> bool:
 
     Returns:
         bool: 재시도 가능 여부
-
-    Note:
-        재시도 가능 패턴:
-        - connection: 연결 실패
-        - timeout: 타임아웃
-        - temporary: 일시적 에러
-        - unavailable: 서비스 불가
-        - network: 네트워크 에러
-        - refused: 연결 거부
-        - reset: 연결 리셋
     """
-    retryable_patterns = [
-        "connection",
-        "timeout",
-        "temporary",
-        "unavailable",
-        "network",
-        "refused",
-        "reset",
-    ]
     error_lower = error_msg.lower()
-
-    return any(pattern in error_lower for pattern in retryable_patterns)
+    return any(pattern in error_lower for pattern in RETRYABLE_ERROR_PATTERNS)
 

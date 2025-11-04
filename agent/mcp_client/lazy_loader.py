@@ -4,8 +4,8 @@
 """
 from __future__ import annotations
 from typing import Dict, Any, List, Optional
-from .mcp_client import MCPClientManagerSync, MCPServerConfig
-from .config import get_config
+from .client import MCPClientManagerSync, MCPServerConfig
+from ..config import get_config
 
 _cfg = get_config()
 _lazy_clients: Dict[str, MCPClientManagerSync] = {}
@@ -79,10 +79,10 @@ def get_mcp_clients_for_servers(server_names: List[str]) -> MCPClientManagerSync
     if not server_configs:
         raise RuntimeError(f"요청한 MCP 서버가 활성화되지 않았습니다: {server_names}")
 
-    print(f"🔌 {len(server_configs)}개 MCP 서버 초기화 중: {', '.join(server_names)}")
+    print(f"[✓] {len(server_configs)}개 MCP 서버 초기화 중: {', '.join(server_names)}")
     client = MCPClientManagerSync(server_configs)
     client.initialize()
-    print(f"✓ MCP 서버 초기화 완료")
+    print(f"[✓] MCP 서버 초기화 완료")
 
     return client
 
@@ -95,6 +95,6 @@ def reset_lazy_clients():
         try:
             client.close()
         except Exception as e:
-            print(f"⚠️  {server_name} 종료 실패: {e}")
+            print(f"[!]  {server_name} 종료 실패: {e}")
 
     _lazy_clients.clear()
