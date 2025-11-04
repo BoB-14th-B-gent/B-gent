@@ -1,21 +1,49 @@
-@import "tailwindcss";
-
-.rf-animated-dash {
-  animation: rf-dash 1.2s linear infinite;
-  stroke-linecap: round;
-}
-
-@keyframes rf-dash {
-  to { stroke-dashoffset: -100; }
-}
+@import 'tailwindcss';
 
 @font-face {
   font-family: 'Pretendard';
   src: url('/fonts/PretendardVariable.woff2') format('woff2-variations');
-  font-weight: 1 999;
+  font-weight: 100 900;
+  font-style: normal;
   font-display: swap;
 }
 
-body {
-  font-family: 'Pretendard', sans-serif;
+:root, body, #root, html {
+  font-family: 'Pretendard', ui-sans-serif, system-ui, -apple-system,
+    'Segoe UI', Roboto, 'Noto Sans KR', 'Noto Color Emoji', 'Apple Color Emoji',
+    sans-serif;
+}
+
+.react-flow__pane {
+  cursor: default !important;
+}
+.react-flow__pane.dragging,
+.react-flow__pane.selectable {
+  cursor: default !important;
+}
+.react-flow__node {
+  cursor: default !important;
+}
+.react-flow__node:hover {
+  cursor: pointer !important;
+}
+.react-flow__edge,
+.react-flow__handle {
+  cursor: default !important;
+}
+
+.panel-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,0,0,.28) transparent;
+}
+.panel-scroll::-webkit-scrollbar { width: 8px; }
+.panel-scroll::-webkit-scrollbar-track { background: transparent; }
+.panel-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,.28);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.panel-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,.4);
 }
