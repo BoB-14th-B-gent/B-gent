@@ -19,3 +19,25 @@
 body {
   font-family: 'Pretendard', sans-serif;
 }
+
+.react-flow__pane {
+  cursor: default !important;
+}
+
+.react-flow__pane.dragging,
+.react-flow__pane.selectable {
+  cursor: default !important;
+}
+
+.react-flow__node {
+  cursor: default !important;
+}
+
+.react-flow__node:hover {
+  cursor: pointer !important;
+}
+
+.react-flow__edge,
+.react-flow__handle {
+  cursor: default !important;
+}
