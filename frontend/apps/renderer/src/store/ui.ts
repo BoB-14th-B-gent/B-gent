@@ -1,17 +1,27 @@
-import { create } from 'zustand';
+import { create } from 'zustand'
 
-export type UIState = {
-  panelOpen: boolean;
-  selectedNodeId: string | null;
-  openPanel: () => void;
-  closePanel: () => void;
-  setSelectedNode: (id: string | null) => void;
-};
+interface UIState {
+  selectedNodeId: string | null
+  setSelectedNode: (id: string | null) => void
 
-export const useUIStore = create<UIState>((set) => ({
-  panelOpen: false,
+  promptOpen: boolean
+  togglePrompt: () => void
+  openPrompt: () => void
+  closePrompt: () => void
+
+  promptText: string
+  setPromptText: (t: string) => void
+}
+
+export const useUIStore = create<UIState>((set, get) => ({
   selectedNodeId: null,
-  openPanel: () => set({ panelOpen: true }),
-  closePanel: () => set({ panelOpen: false }),
-  setSelectedNode: (id) => set({ selectedNodeId: id }),
-}));
+  setSelectedNode: id => set({ selectedNodeId: id }),
+
+  promptOpen: false,
+  togglePrompt: () => set({ promptOpen: !get().promptOpen }),
+  openPrompt: () => set({ promptOpen: true }),
+  closePrompt: () => set({ promptOpen: false }),
+
+  promptText: '',
+  setPromptText: t => set({ promptText: t }),
+}))
