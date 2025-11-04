@@ -25,7 +25,7 @@ export default function MCPReportNode({ data }: NodeProps<MCPReportData>) {
           <img
             src={data.iconUrl}
             alt={data.label}
-            className="h-10 w-10 select-none"
+            className="h-12 w-12 select-none"
             draggable={false}
           />
         ) : (
