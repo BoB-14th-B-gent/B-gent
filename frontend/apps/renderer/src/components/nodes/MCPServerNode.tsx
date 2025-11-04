@@ -6,7 +6,7 @@ export type MCPServerData = {
   bg?: string;
   leftDot?: string;
   rightDot?: string;
-  iconUrl?: string;
+  icon?: string;
   onClick?: () => void;
 };
 
@@ -23,9 +23,9 @@ export default function MCPServerNode({ data }: NodeProps<MCPServerData>) {
           boxShadow: '0 6px 14px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(255,255,255,0.06)',
         }}
       >
-        {data.iconUrl ? (
+        {data.icon ? (
           <img
-            src={data.iconUrl}
+            src={data.icon}
             alt={data.label}
             className="h-13 w-13 select-none"
             draggable={false}
@@ -38,7 +38,7 @@ export default function MCPServerNode({ data }: NodeProps<MCPServerData>) {
         <Handle id="r" type="source" position={Position.Right} style={{ opacity: 0, width: 0, height: 0, border: 0 }} isConnectable={false}/>
       </button>
 
-      <div className="mt-2 text-xs font-medium text-slate-700 select-none">
+      <div className="mt-2 text-sm font-semibold text-slate-700 select-none font-pretendard">
         {data.label}
       </div>
     </div>

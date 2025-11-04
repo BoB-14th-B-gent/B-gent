@@ -5,7 +5,11 @@ export default {
     "./src/**/*.{ts,tsx}"
   ],
   theme: {
-    extend: {}
+    extend: {
+      fontFamily: {
+        pretendard: ['Pretendard', 'sans-serif'],
+      },
+    },
   },
   plugins: []
 }
