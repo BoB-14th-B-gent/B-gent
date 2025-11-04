@@ -1,6 +1,6 @@
 from typing import Literal, List
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 class MessageCreate(BaseModel):
     role: Literal["USER", "B-GENT"]

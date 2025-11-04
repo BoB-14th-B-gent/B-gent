@@ -1,0 +1,12 @@
+{
+  "scripts": {
+    "dev": "pnpm -C apps/renderer dev & RENDERER_URL=http://localhost:5173 pnpm -C apps/desktop dev",
+    "build:renderer": "pnpm -C apps/renderer build",
+    "build:desktop": "pnpm -C apps/desktop build",
+    "dist:mac": "pnpm -C apps/renderer build && pnpm -C apps/desktop dist"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2",
+    "prettier-plugin-tailwindcss": "^0.7.1"
+  }
+}

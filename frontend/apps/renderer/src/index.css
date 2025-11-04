@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+.rf-animated-dash {
+  animation: rf-dash 1.2s linear infinite;
+  stroke-linecap: round;
+}
+
+@keyframes rf-dash {
+  to { stroke-dashoffset: -100; }
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  src: url('/fonts/PretendardVariable.woff2') format('woff2-variations');
+  font-weight: 1 999;
+  font-display: swap;
+}
+
+body {
+  font-family: 'Pretendard', sans-serif;
+}

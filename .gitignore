@@ -27,6 +27,8 @@ wheels/
 .env
 .env.local
 .env.*.local
+frontend/apps/*/.env
+frontend/apps/*/.env.local
 
 # macOS
 .DS_Store
@@ -38,3 +40,20 @@ data/
 
 # RAG DB
 agent/data/chroma
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Node
+node_modules/
+dist/
+dist-electron/
+.vite/

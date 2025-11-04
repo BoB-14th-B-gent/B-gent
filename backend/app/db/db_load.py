@@ -20,25 +20,25 @@ MAX_EVIDENCES_PER_CALL = 100
 
 def load_prompt(prompt_id: ObjectId | str) -> Optional[Dict[str, Any]]:
     _id = ObjectId(prompt_id) if not isinstance(prompt_id, ObjectId) else prompt_id
-    c = get_client(); db = get_db(c)
+    db = get_db()
     return db[PROMPT_COLL].find_one({"_id": _id})
 
 def worker_load_trigger(trigger_id: ObjectId | str) -> Optional[Dict[str, Any]]:
     _tid = ObjectId(trigger_id) if not isinstance(trigger_id, ObjectId) else trigger_id
-    c = get_client(); db = get_db(c)
+    db = get_db()
     return db[TRIGGER_COLL].find_one({"_id": _tid})
 
 def get_latest_done_trigger() -> Optional[Dict[str, Any]]:
-    c = get_client(); db = get_db(c)
+    db = get_db()
     return db[TRIGGER_COLL].find_one({"status":"done"}, sort=[("finished_at",-1)])
 
 def agent_get_latest_report_by_batch(batch_id: str) -> Optional[Dict[str, Any]]:
-    c = get_client(); db = get_db(c)
+    db = get_db()
     return db[REPORTS_COLL].find_one({"batch_id": batch_id}, sort=[("created_at", -1)])
 
 def agent_load_report_by_id(report_id: str | ObjectId) -> Optional[Dict[str, Any]]:
     _id = ObjectId(report_id) if not isinstance(report_id, ObjectId) else report_id
-    c = get_client(); db = get_db(c)
+    db = get_db()
     return db[REPORTS_COLL].find_one({"_id": _id})
 
 def get_used_evidence_set(trigger_doc: Dict[str, Any]) -> Set[Tuple[str, ObjectId]]:
