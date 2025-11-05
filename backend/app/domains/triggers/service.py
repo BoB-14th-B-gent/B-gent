@@ -158,7 +158,7 @@ def add_evidences_to_trigger(trigger_id: str, evidences: List[Dict[str, Any]]) -
     new_evidences: List[Dict[str, Any]] = []
     for e in evidences or []:
         coll = e.get("collection")
-        if coll not in ("input_evidences", "mcp_evidences"):
+        if coll not in ("INPUT_EVIDENCES", "MCP_EVIDENCES"):
             raise ValueError("invalid evidence.collection")
         new_evidences.append({"collection": coll, "id": _oid(e.get("id"))})
 
