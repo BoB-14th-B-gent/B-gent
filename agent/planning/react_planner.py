@@ -128,6 +128,45 @@ Common Tool Usage Patterns:
    - Use sleuthkit.list_files
    - Params: {{"image_path": "/full/path", "fs_offset_sectors": "offset", "directory": "/path"}}
 
+4. **Ghidra Binary Analysis** (CRITICAL - MUST follow this exact workflow):
+   STEP 1: Import binary into Ghidra project
+   - Use ghidra.import_binary FIRST
+   - Params: {{"binary_path": "/full/path/to/binary.exe"}}
+   - This starts background analysis - you MUST wait for completion!
+
+   STEP 2: Wait for Ghidra analysis to complete (CRITICAL - DO NOT SKIP!)
+   - Use ghidra.list_project_binaries to check status
+   - Response: {{"programs": [{{"name": "binary.exe-abc123", "analysis_complete": false/true}}]}}
+   - If "analysis_complete": false → Analysis still running, check again in next iteration
+   - If "analysis_complete": true → Analysis done, proceed to STEP 3
+   - IMPORTANT: You may need to call list_project_binaries 2-5 times until analysis_complete becomes true
+   - DO NOT proceed to decompile/search functions until analysis_complete is true!
+
+   STEP 3: Get the actual binary name (IT WILL HAVE A RANDOM SUFFIX!)
+   - Once "analysis_complete": true, extract the "name" field from the response
+   - Example: "binary.exe-abc123" (NOT just "binary.exe")
+   - Remember this name for all subsequent operations
+
+   STEP 4: Use the exact name from STEP 3 in ALL subsequent ghidra calls
+   - For decompile_function: {{"binary_name": "binary.exe-abc123", "function_name": "main"}}
+   - For search_functions_by_name: {{"binary_name": "binary.exe-abc123", "pattern": ".*"}}
+   - For list_exports: {{"binary_name": "binary.exe-abc123"}}
+   - For list_imports: {{"binary_name": "binary.exe-abc123"}}
+   - NEVER use the original filename - ALWAYS use the name with the suffix!
+
+   Common Mistakes to AVOID:
+   - ❌ Calling decompile_function before analysis_complete is true
+   - ❌ Giving up after seeing analysis_complete: false (this is normal, keep checking!)
+   - ❌ Calling import_binary multiple times (only import once!)
+   - ❌ Using original binary name instead of the suffixed name
+
+   Example Workflow:
+   Iteration 1: ghidra.import_binary → "Importing in background"
+   Iteration 2: ghidra.list_project_binaries → {{"name": "file.exe-abc123", "analysis_complete": false}}
+   Iteration 3: ghidra.list_project_binaries → {{"name": "file.exe-abc123", "analysis_complete": false}}
+   Iteration 4: ghidra.list_project_binaries → {{"name": "file.exe-abc123", "analysis_complete": true}}
+   Iteration 5: ghidra.decompile_function with binary_name="file.exe-abc123" ✓
+
 Rules:
 - ONE action per response
 - ALWAYS include complete "params" with ALL required fields

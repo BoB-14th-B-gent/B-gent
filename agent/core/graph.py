@@ -506,7 +506,7 @@ def node_react_execute(state: Dict[str, Any]) -> Dict[str, Any]:
     react_context["current_execution_result"] = result.to_dict()
     react_context["current_execution_time"] = exec_time
 
-    success_marker = "[✓]" if result.success else "[✗]"
+    success_marker = "✓" if result.success else "✗"
     print(f"│ [{success_marker}] Execution time: {exec_time:.2f}s")
 
     return {
