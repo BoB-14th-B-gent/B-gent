@@ -35,13 +35,14 @@
     },
     {
       "name": "ghidra",
-      "command": "/Users/me0w2en/Documents/8-BoB/ghidra_11.3.2_PUBLIC/GhidraMCP-release-1-4/.venv/bin/python",
+      "command": "sh",
       "args": [
-        "/Users/me0w2en/Documents/8-BoB/ghidra_11.3.2_PUBLIC/GhidraMCP-release-1-4/bridge_mcp_ghidra.py",
-        "--ghidra-server",
-        "http://127.0.0.1:8080/"
+        "-c",
+        "cd $HOME && rm -rf pyghidra_mcp_projects && uvx pyghidra-mcp"
       ],
-      "env": {},
+      "env": {
+        "GHIDRA_INSTALL_DIR": "/Users/me0w2en/Documents/8-BoB/ghidra_11.3.2_PUBLIC"
+      },
       "enabled": true
     }
   ]

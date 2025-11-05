@@ -463,7 +463,7 @@ def generate_high_level_plan(
             )
             tasks.append(task)
 
-        tasks = _validate_and_fix_ghidra_tasks(tasks, user_prompt)
+        tasks = _validate_and_fix_ghidra_tasks(tasks, user_prompt, file_paths)
 
         return tasks
 
@@ -478,7 +478,7 @@ def generate_high_level_plan(
         return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
 
 
-def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str) -> List[HighLevelTask]:
+def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str, file_paths: List[str] = None) -> List[HighLevelTask]:
     """Ghidra Task 검증 및 자동 수정
 
     LLM이 Ghidra 분석을 1개 Task로 통합한 경우 자동으로 2개로 분리
@@ -486,6 +486,7 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str)
     Args:
         tasks: LLM이 생성한 Task 리스트
         user_prompt: 사용자 요청
+        file_paths: 분석 대상 파일 경로 리스트
 
     Returns:
         List[HighLevelTask]: 검증 및 수정된 Task 리스트
@@ -506,7 +507,7 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str)
             task_id="task_001",
             description="Ghidra로 바이너리 메타데이터 수집 (함수 목록, Import/Export, 세그먼트, 문자열)",
             task_type=TaskType.FILE_ANALYSIS,
-            target_files=[],
+            target_files=file_paths if file_paths else [],
             dependencies=[],
             metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "metadata"}
         )
@@ -515,7 +516,7 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str)
             task_id="task_002",
             description="Ghidra로 주요 함수 디컴파일 (entry, main, 핵심 로직)",
             task_type=TaskType.FILE_ANALYSIS,
-            target_files=[],
+            target_files=file_paths if file_paths else [],
             dependencies=["task_001"],
             metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
         )
@@ -543,7 +544,7 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str)
         task_id="task_001",
         description="Ghidra로 바이너리 메타데이터 수집 (함수 목록, Import/Export, 세그먼트, 문자열)",
         task_type=TaskType.FILE_ANALYSIS,
-        target_files=[],
+        target_files=file_paths if file_paths else [],
         dependencies=[],
         metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "metadata"}
     )
@@ -552,7 +553,7 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str)
         task_id="task_002",
         description="Ghidra로 주요 함수 디컴파일 (entry, main, 핵심 로직)",
         task_type=TaskType.FILE_ANALYSIS,
-        target_files=[],
+        target_files=file_paths if file_paths else [],
         dependencies=["task_001"],
         metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
     )
@@ -601,14 +602,13 @@ def _generate_default_high_level_plan(
     ghidra_keywords = ["ghidra", "바이너리", "리버스", "디컴파일", "reverse", "binary", "decompile"]
     if any(kw in prompt_lower for kw in ghidra_keywords):
         sys.stderr.write("[!] Ghidra 키워드 감지 → Ghidra 2-Task 구조 생성 (기본)\n")
-        sys.stderr.write(f"[!] 주의: LLM이 복잡도를 판단했다면 이 폴백은 실행되지 않았을 것입니다.\n")
         sys.stderr.flush()
         return [
             HighLevelTask(
                 task_id="task_001",
                 description="Ghidra로 바이너리 메타데이터 수집 (함수 목록, Import/Export, 세그먼트, 문자열)",
                 task_type=TaskType.FILE_ANALYSIS,
-                target_files=[],
+                target_files=pe_files if pe_files else [],
                 dependencies=[],
                 metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "metadata"}
             ),
@@ -616,7 +616,7 @@ def _generate_default_high_level_plan(
                 task_id="task_002",
                 description="Ghidra로 주요 함수 디컴파일 (entry, main, 핵심 로직)",
                 task_type=TaskType.FILE_ANALYSIS,
-                target_files=[],
+                target_files=pe_files if pe_files else [],
                 dependencies=["task_001"],
                 metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
             )
