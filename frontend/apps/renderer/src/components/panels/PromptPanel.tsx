@@ -1,5 +1,6 @@
 import { useUIStore, type ChatMsg } from '@/store/ui'
 import { useCallback, useMemo, useRef, useEffect } from 'react'
+import { dummyMessages } from '@/data/dummyMessages'
 
 export default function PromptPanel() {
   const {
@@ -9,10 +10,17 @@ export default function PromptPanel() {
     closePrompt,
     panelMessages,
     pushPanelMessage,
+    setPanelMessages,
   } = useUIStore()
 
   const scrollRef = useRef<HTMLDivElement>(null)
-  const inputRef  = useRef<HTMLTextAreaElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (!promptOpen) return
+    if (panelMessages.length > 0) return
+    setPanelMessages(dummyMessages)
+  }, [promptOpen, panelMessages.length, setPanelMessages])
 
   useEffect(() => {
     if (!scrollRef.current) return
@@ -25,7 +33,9 @@ export default function PromptPanel() {
     el.style.height = 'auto'
     el.style.height = `${Math.min(160, el.scrollHeight)}px`
   }
-  useEffect(() => { autoGrow() }, [promptText, promptOpen])
+  useEffect(() => {
+    autoGrow()
+  }, [promptText, promptOpen])
 
   const onSubmit = useCallback(() => {
     const text = promptText.trim()
@@ -66,10 +76,8 @@ export default function PromptPanel() {
         borderRadius: 14,
         boxShadow: '0 10px 30px rgba(2,8,23,0.18)',
         boxSizing: 'border-box',
-
         transform: `translateX(${promptOpen ? '0' : 'calc(100% + 12px)'})`,
         transition: 'transform 240ms ease',
-
         zIndex: 50,
         display: 'grid',
         gridTemplateRows: 'auto 1fr auto',
@@ -81,11 +89,10 @@ export default function PromptPanel() {
           display: 'flex',
           alignItems: 'center',
           gap: 8,
+          borderBottom: '1px solid rgba(15,23,42,0.06)',
         }}
       >
-        <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>
-          CONVERSATION
-        </span>
+        <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>USER PROMPT</span>
         <button
           onClick={closePrompt}
           title="Close"
@@ -119,7 +126,7 @@ export default function PromptPanel() {
           gap: 12,
         }}
       >
-        {panelMessages.map((m) => (
+        {panelMessages.map(m => (
           <MessageBubble key={m.id} role={m.role} text={m.text} />
         ))}
       </div>
@@ -146,7 +153,10 @@ export default function PromptPanel() {
           <textarea
             ref={inputRef}
             value={promptText}
-            onChange={(e) => { setPromptText(e.target.value); autoGrow() }}
+            onChange={e => {
+              setPromptText(e.target.value)
+              autoGrow()
+            }}
             onKeyDown={onKeyDown}
             placeholder="B-gent! Be your Agent:)"
             style={{
@@ -179,7 +189,7 @@ export default function PromptPanel() {
               fontSize: 17,
               fontWeight: 700,
               cursor: canSend ? 'pointer' : 'default',
-              margin: 3
+              margin: 3,
             }}
           >
             ↑
