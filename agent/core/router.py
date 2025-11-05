@@ -19,7 +19,10 @@ def run_job(
     file_paths: Optional[List[str]] = None,
     file_meta: Optional[Dict[str, Any]] = None,
     generate_report_flag: bool = False,
-    report_dir: str = "./data/reports"
+    report_dir: str = "./data/reports",
+    conversation_id: Optional[str] = None,
+    trigger_id: Optional[str] = None,
+    stage_id: Optional[int] = None
 ) -> Dict[str, Any]:
     """작업 실행 메인 진입점
 
@@ -95,11 +98,13 @@ def run_job(
 
     save_agent_state(
         agent_id=job_id,
-        stage_id=0,
+        stage_id=stage_id if stage_id is not None else 0,
         plan=[],
         status="running",
         mcp_tools=[],
-        additional_data=initial_state 
+        conversation_id=conversation_id,
+        trigger_id=trigger_id,
+        additional_data=initial_state
     )
 
     try:
