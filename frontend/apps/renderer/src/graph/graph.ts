@@ -3,7 +3,7 @@ export type NodeKey =
   | 'bgent'
   | 'velociraptor'
   | 'elastic'
-  | 'tsk'
+  | 'sleuthkit'
   | 'velo-report'
   | 'elastic-report'
   | 'tsk-report'
@@ -90,7 +90,7 @@ export const nodesData: UINode[] = [
   },
 
   {
-    id: 'tsk',
+    id: 'sleuthkit',
     kind: 'mcp',
     x: 565,
     y: 500,
@@ -147,7 +147,7 @@ export const edgesData: UIEdge[] = [
   {
     id: 'e-bgent-tsk',
     from: 'bgent',
-    to: 'tsk',
+    to: 'sleuthkit',
     type: 'dotted',
     colorFrom: PALETTE.bgent,
     colorTo: PALETTE.tsk,
@@ -171,7 +171,7 @@ export const edgesData: UIEdge[] = [
   },
   {
     id: 'e-tsk-report',
-    from: 'tsk',
+    from: 'sleuthkit',
     to: 'tsk-report',
     type: 'dotted',
     colorFrom: PALETTE.tsk,
