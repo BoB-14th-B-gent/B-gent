@@ -79,7 +79,7 @@ export default function McpPanel() {
           padding: 14,
           overflow: 'auto',
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
           gap: 14,
           alignContent: 'start',
         }}
@@ -95,9 +95,12 @@ export default function McpPanel() {
               boxShadow: '0 4px 10px rgba(2,8,23,0.06)',
               display: 'grid',
               gap: 6,
+              minHeight: 80,
+              overflow: 'hidden',
+              wordBreak: 'break-word',
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: 14, color: '#0f172a' }}>{t.name}</div>
+            <div style={{ fontWeight: 700, fontSize: 14, color: '#0f172a', wordBreak: 'break-word' }}>{t.name}</div>
             {t.desc && <div style={{ color: '#475569', fontSize: 12 }}>{t.desc}</div>}
           </article>
         ))}
