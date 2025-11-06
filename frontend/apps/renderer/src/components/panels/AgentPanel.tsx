@@ -22,7 +22,7 @@ export default function AgentPanel() {
     <aside
       aria-hidden={!agentOpen}
       style={{
-        width: '95%',
+        width: '93%',
         height: '100%',
         margin: 'auto',
         fontFamily:
