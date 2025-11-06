@@ -48,6 +48,11 @@ interface UIState {
 
   totalReportRaw: string
   setTotalReportRaw: (raw: string) => void
+
+  conversationId: string | null
+  setConversationId: (id: string | null) => void
+  currentTriggerId: string | null
+  setCurrentTriggerId: (id: string | null) => void
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
@@ -83,7 +88,7 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   totalreportOpen: false,
   activeTotalReportId: null,
-  setActiveTotalReport: id => set({ activeTotalReportId : id }),
+  setActiveTotalReport: id => set({ activeTotalReportId: id }),
   openTotalReport: (id = null) => set({ totalreportOpen: true, activeTotalReportId: id }),
   closeTotalReport: () => set({ totalreportOpen: false, activeTotalReportId: null }),
 
@@ -107,4 +112,9 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   totalReportRaw: '',
   setTotalReportRaw: (raw: string) => set({ totalReportRaw: raw }),
+
+  conversationId: null,
+  setConversationId: (id) => set({ conversationId: id }),
+  currentTriggerId: null,
+  setCurrentTriggerId: (id) => set({ currentTriggerId: id }),
 }))

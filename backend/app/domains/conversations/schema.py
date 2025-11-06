@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional
+from pydantic import ConfigDict
 from datetime import datetime
 
 class ConversationCreateInput(BaseModel):
@@ -13,9 +13,11 @@ class ConversationCreateInput(BaseModel):
         return v.strip()
 
 class ConversationCreatedOut(BaseModel):
-    _id: str
+    conversation_id: str = Field(alias="_id")
     title: str
     created_at: datetime
+
+    model_config = ConfigDict(populate_by_name=True)
 
 class ConversationDetailOut(BaseModel):
     _id: str
