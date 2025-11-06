@@ -10,6 +10,7 @@ import { useUIStore } from '@/store/ui'
 import PromptPanel from '@/components/panels/PromptPanel'
 import AgentPanel from '@/components/panels/AgentPanel'
 import MCPServerPanel from '@/components/panels/MCPServerPanel'
+import TotalReportPanel from '@/components/panels/TotalReportPanel'
 
 export default function Diagram() {
   const selectedNodeId = useUIStore(s => s.selectedNodeId)
@@ -33,6 +34,12 @@ export default function Diagram() {
   const setActiveAgent = useUIStore(s => s.setActiveAgent)
   const activeMCPServerId = useUIStore(s => s.activeMCPServerId)
   const setActiveMCPServer = useUIStore(s => s.setActiveMCPServer)
+  const activeTotalReportId = useUIStore(s => s.activeTotalReportId)
+  const setActiveTotalReport = useUIStore(s => s.setActiveTotalReport)
+
+  const totalReportOpen = useUIStore(s => s.totalreportOpen)
+  const openTotalReport = useUIStore(s => s.openTotalReport)
+  const closeTotalReport = useUIStore(s => s.closeTotalReport)
 
   const closeAllPanels = useUIStore(s => s.closeAllPanels)
 
@@ -49,7 +56,7 @@ export default function Diagram() {
     if (!inst) return
     const t = setTimeout(() => inst.fitView({ padding: 0.12, duration: 180 }), 0)
     return () => clearTimeout(t)
-  }, [promptOpen, agentOpen, mcpserverOpen])
+  }, [promptOpen, agentOpen, mcpserverOpen, totalReportOpen])
 
   useEffect(() => {
     if (!shellRef.current) return
@@ -70,7 +77,8 @@ export default function Diagram() {
         isActive:
           (n.type === 'prompt' && activePromptId === n.id) ||
           (n.type === 'agent' && activeAgentId === n.id) ||
-          (n.type === 'mcp' && activeMCPServerId === n.id),
+          (n.type === 'mcp' && activeMCPServerId === n.id) ||
+          (n.type === 'total' && activeTotalReportId === n.id),
 
         onClick: () => {
           setSelectedNode(n.id)
@@ -99,6 +107,14 @@ export default function Diagram() {
               setActiveMCPServer(n.id)
               openMCPServer()
             }
+          } else if (n.type === 'total') {
+            if (totalReportOpen && activeTotalReportId === n.id) {
+              closeTotalReport()
+              setActiveTotalReport(null)
+            } else {
+              setActiveTotalReport(n.id)
+              openTotalReport()
+            }
           } else {
             closeAllPanels()
           }
@@ -109,9 +125,11 @@ export default function Diagram() {
     activePromptId,
     activeAgentId,
     activeMCPServerId,
+    activeTotalReportId,
     promptOpen,
     agentOpen,
     mcpserverOpen,
+    totalReportOpen,
     setSelectedNode,
     openPrompt,
     closePrompt,
@@ -119,9 +137,12 @@ export default function Diagram() {
     closeAgent,
     openMCPServer,
     closeMCPServer,
+    openTotalReport,
+    closeTotalReport,
     setActivePrompt,
     setActiveAgent,
     setActiveMCPServer,
+    setActiveTotalReport,
     closeAllPanels,
   ])
 
@@ -257,6 +278,12 @@ export default function Diagram() {
                 return
               }
 
+              if (node.type === 'report') {
+                closeAllPanels()
+                openTotalReport(node.id)
+                return
+              }
+
               closeAllPanels()
             }}
           />
@@ -278,6 +305,10 @@ export default function Diagram() {
           <div style={{ gridArea: 'mcp', overflow: 'hidden' }}>
             <MCPServerPanel />
           </div>
+        )}
+
+        {totalReportOpen && (
+          <TotalReportPanel />
         )}
       </div>
     </div>
