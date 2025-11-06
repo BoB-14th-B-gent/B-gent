@@ -1,4 +1,3 @@
-// src/lib/api.ts
 const BASE = import.meta.env.VITE_BACKEND_URL;
 
 export type CreateConversationReq = { input: string };
