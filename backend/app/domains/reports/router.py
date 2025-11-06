@@ -4,7 +4,7 @@ from .service import get_report_detail, list_reports
 
 router = APIRouter()
 
-@router.get("/{report_id}", response_model=ReportDetailOut, summary="리포트 조회(report_id 기준)")
+@router.get("/{report_id}", response_model=ReportDetailOut, summary="report 조회(report_id 기준)")
 def get_report_by_id(report_id: str):
     d = get_report_detail(report_id)
     if not d:
@@ -12,7 +12,7 @@ def get_report_by_id(report_id: str):
     return d
 
 
-@router.get("", response_model=ReportListOut, summary="리포트 조회(conversation_id 기준)")
+@router.get("", response_model=ReportListOut, summary="report 조회(conversation_id 기준)")
 def get_report_by_conversation_id(
     conversation_id: str | None = None,
     stage_id: int | None = None,
