@@ -9,6 +9,7 @@ import { useUIStore } from '@/store/ui'
 
 import PromptPanel from '@/components/panels/PromptPanel'
 import AgentPanel from '@/components/panels/AgentPanel'
+import MCPServerPanel from '@/components/panels/MCPServerPanel'
 
 export default function Diagram() {
   const selectedNodeId = useUIStore(s => s.selectedNodeId)
@@ -22,10 +23,16 @@ export default function Diagram() {
   const openAgent = useUIStore(s => s.openAgent)
   const closeAgent = useUIStore(s => s.closeAgent)
 
+  const mcpserverOpen = useUIStore(s => s.mcpserverOpen)
+  const openMCPServer = useUIStore(s => s.openMCPServer)
+  const closeMCPServer = useUIStore(s => s.closeMCPServer)
+
   const activePromptId = useUIStore(s => s.activePromptId)
   const setActivePrompt = useUIStore(s => s.setActivePrompt)
   const activeAgentId = useUIStore(s => s.activeAgentId)
   const setActiveAgent = useUIStore(s => s.setActiveAgent)
+  const activeMCPServerId = useUIStore(s => s.activeMCPServerId)
+  const setActiveMCPServer = useUIStore(s => s.setActiveMCPServer)
 
   const closeAllPanels = useUIStore(s => s.closeAllPanels)
 
@@ -42,7 +49,7 @@ export default function Diagram() {
     if (!inst) return
     const t = setTimeout(() => inst.fitView({ padding: 0.12, duration: 180 }), 0)
     return () => clearTimeout(t)
-  }, [promptOpen, agentOpen])
+  }, [promptOpen, agentOpen, mcpserverOpen])
 
   useEffect(() => {
     if (!shellRef.current) return
@@ -62,7 +69,8 @@ export default function Diagram() {
         ...n.data,
         isActive:
           (n.type === 'prompt' && activePromptId === n.id) ||
-          (n.type === 'agent' && activeAgentId === n.id),
+          (n.type === 'agent' && activeAgentId === n.id) ||
+          (n.type === 'mcp' && activeMCPServerId === n.id),
 
         onClick: () => {
           setSelectedNode(n.id)
@@ -83,8 +91,15 @@ export default function Diagram() {
               setActiveAgent(n.id)
               openAgent()
             }
+          } else if (n.type === 'mcp') {
+            if (mcpserverOpen && activeMCPServerId === n.id) {
+              closeMCPServer()
+              setActiveMCPServer(null)
+            } else {
+              setActiveMCPServer(n.id)
+              openMCPServer()
+            }
           } else {
-            // 다른 타입 클릭 시 패널 모두 닫기
             closeAllPanels()
           }
         },
@@ -93,15 +108,20 @@ export default function Diagram() {
   }, [
     activePromptId,
     activeAgentId,
+    activeMCPServerId,
     promptOpen,
     agentOpen,
+    mcpserverOpen,
     setSelectedNode,
     openPrompt,
     closePrompt,
     openAgent,
     closeAgent,
+    openMCPServer,
+    closeMCPServer,
     setActivePrompt,
     setActiveAgent,
+    setActiveMCPServer,
     closeAllPanels,
   ])
 
@@ -112,24 +132,44 @@ export default function Diagram() {
     closeAllPanels()
   }, [setSelectedNode, closeAllPanels])
 
-  let columns = '1fr'
+  let cols = '1fr'
   let rows = '1fr'
   let areas = `"rf"`
-  if (promptOpen && agentOpen) {
-    columns = '2fr 1fr'
+  if (promptOpen && agentOpen && mcpserverOpen) {
+    cols = '1fr 1fr 1fr'
+    rows = '2fr 1fr'
+    areas = `"rf rf prompt"
+               "agent mcp prompt"`
+  } else if (promptOpen && agentOpen) {
+    cols = '2fr 1fr'
     rows = '2fr 1fr'
     areas = `"rf prompt"
                "agent prompt"`
+  } else if (promptOpen && mcpserverOpen) {
+    cols = '2fr 1fr'
+    rows = '2fr 1fr'
+    areas = `"rf prompt"
+               "mcp prompt"`
+  } else if (agentOpen && mcpserverOpen) {
+    cols = '2fr 1fr'
+    rows = '2fr 1fr'
+    areas = `"rf rf"
+               "agent mcp"`
   } else if (promptOpen) {
-    columns = '2fr 1fr'
+    cols = '2fr 1fr'
     rows = '1fr'
     areas = `"rf prompt"`
   } else if (agentOpen) {
-    columns = '1fr'
+    cols = '1fr'
     rows = '2fr 1fr'
     areas = `"rf"
                "agent"`
-  }
+  } else if (mcpserverOpen) {
+    cols = '1fr'
+    rows = '2fr 1fr'
+    areas = `"rf"
+               "mcp"`
+  } 
 
   return (
     <div
@@ -147,7 +187,7 @@ export default function Diagram() {
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: columns,
+          gridTemplateColumns: cols,
           gridTemplateRows: rows,
           gridTemplateAreas: areas,
           gap: 10,
@@ -206,6 +246,17 @@ export default function Diagram() {
                 return
               }
 
+              if (node.type === 'mcp') {
+                if (mcpserverOpen && activeMCPServerId === node.id) {
+                  closeMCPServer()
+                  setActiveMCPServer(null)
+                } else {
+                  setActiveMCPServer(node.id)
+                  openMCPServer()
+                }
+                return
+              }
+
               closeAllPanels()
             }}
           />
@@ -220,6 +271,12 @@ export default function Diagram() {
         {agentOpen && (
           <div style={{ gridArea: 'agent', overflow: 'hidden' }}>
             <AgentPanel />
+          </div>
+        )}
+
+        {mcpserverOpen && (
+          <div style={{ gridArea: 'mcp', overflow: 'hidden' }}>
+            <MCPServerPanel />
           </div>
         )}
       </div>

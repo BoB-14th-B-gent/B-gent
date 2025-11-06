@@ -14,17 +14,21 @@ interface UIState {
   promptOpen: boolean
   openPrompt: () => void
   closePrompt: () => void
-  togglePrompt: () => void
 
   agentOpen: boolean
   openAgent: () => void
   closeAgent: () => void
-  toggleAgent: () => void
+
+  mcpserverOpen: boolean
+  openMCPServer: () => void
+  closeMCPServer: () => void
 
   activePromptId: string | null
   setActivePrompt: (id: string | null) => void
   activeAgentId: string | null
   setActiveAgent: (id: string | null) => void
+  activeMCPServerId: string | null
+  setActiveMCPServer: (id: string | null) => void
 
   closeAllPanels: () => void
 
@@ -44,32 +48,41 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   promptOpen: false,
   agentOpen: false,
+  mcpserverOpen: false,
 
   activePromptId: null,
   setActivePrompt: id => set({ activePromptId: id }),
   activeAgentId: null,
   setActiveAgent: id => set({ activeAgentId: id }),
+  activeMCPServerId: null,
+  setActiveMCPServer: id => set({ activeMCPServerId: id }),
 
   openPrompt: () => {
     const sel = get().selectedNodeId
     set({ promptOpen: true, activePromptId: sel ?? get().activePromptId })
   },
   closePrompt: () => set({ promptOpen: false, activePromptId: null }),
-  togglePrompt: () => set(s => ({ promptOpen: !s.promptOpen })),
 
   openAgent: () => {
     const sel = get().selectedNodeId
     set({ agentOpen: true, activeAgentId: sel ?? get().activeAgentId })
   },
   closeAgent: () => set({ agentOpen: false, activeAgentId: null }),
-  toggleAgent: () => set(s => ({ agentOpen: !s.agentOpen })),
+
+  openMCPServer: () => {
+    const sel = get().selectedNodeId
+    set({ mcpserverOpen: true, activeMCPServerId: sel ?? get().activeMCPServerId })
+  },
+  closeMCPServer: () => set({ mcpserverOpen: false, activeMCPServerId: null }),
 
   closeAllPanels: () =>
     set({
       promptOpen: false,
       agentOpen: false,
+      mcpserverOpen: false,
       activePromptId: null,
       activeAgentId: null,
+      activeMCPServerId: null,
     }),
 
   promptText: '',
