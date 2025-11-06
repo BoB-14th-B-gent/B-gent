@@ -45,10 +45,10 @@ def get_mcp_client_for_server(server_name: str) -> MCPClientManagerSync:
     if not server_config:
         raise RuntimeError(f"MCP 서버 '{server_name}'이(가) 활성화되지 않았거나 존재하지 않습니다.")
 
-    print(f"  {server_name} MCP 서버만 초기화 중...")
+    # print(f"  {server_name} MCP 서버만 초기화 중...")
     client = MCPClientManagerSync([server_config])
     client.initialize()
-    print(f"  {server_name} MCP 서버 초기화 완료")
+    # print(f"  {server_name} MCP 서버 초기화 완료")
 
     _lazy_clients[server_name] = client
 
@@ -79,10 +79,10 @@ def get_mcp_clients_for_servers(server_names: List[str]) -> MCPClientManagerSync
     if not server_configs:
         raise RuntimeError(f"요청한 MCP 서버가 활성화되지 않았습니다: {server_names}")
 
-    print(f"[✓] {len(server_configs)}개 MCP 서버 초기화 중: {', '.join(server_names)}")
+    # print(f"[✓] {len(server_configs)}개 MCP 서버 초기화 중: {', '.join(server_names)}")
     client = MCPClientManagerSync(server_configs)
     client.initialize()
-    print(f"[✓] MCP 서버 초기화 완료")
+    # print(f"[✓] MCP 서버 초기화 완료")
 
     return client
 

@@ -4,7 +4,9 @@ from .job_storage import (
     update_agent_status,
     add_mcp_tool,
     update_stage,
-    get_agent_state
+    update_task_status,
+    get_agent_state,
+    set_state_update_callback
 )
 
 __all__ = [
@@ -12,6 +14,8 @@ __all__ = [
     "update_agent_status",
     "add_mcp_tool",
     "update_stage",
-    "get_agent_state"
+    "update_task_status",
+    "get_agent_state",
+    "set_state_update_callback"
 ]
 

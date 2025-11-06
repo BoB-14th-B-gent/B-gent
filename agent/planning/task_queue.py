@@ -108,7 +108,7 @@ class TaskQueue:
         """
         if task_id in self._tasks_by_id:
             task = self._tasks_by_id[task_id]
-            task.status = TaskStatus.COMPLETED
+            task.status = TaskStatus.DONE
             if results:
                 task.execution_results = results
 

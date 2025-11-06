@@ -129,7 +129,7 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
     from ..planning.task_queue import TaskQueue
     from ..storage.job_storage import save_agent_state, update_stage
 
-    print("\n[Phase 1] Planning")
+    # print("\n[Phase 1] Planning")
 
     user_prompt = state["user_prompt"]
     file_paths = state.get("file_paths", [])
@@ -138,7 +138,7 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
     start_time = time.time()
 
     try:
-        print(f"│ Requesting LLM analysis...")
+        # print(f"│ Requesting LLM analysis...")
         high_level_tasks = generate_high_level_plan(user_prompt, file_paths, file_meta)
 
         if not high_level_tasks:
@@ -164,16 +164,16 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
 
         high_level_planning_time = time.time() - start_time
 
-        print(f"[✓] Generated {len(high_level_tasks)} tasks")
+        # print(f"[✓] Generated {len(high_level_tasks)} tasks")
 
-        print(f"\n[Phase 2] Execution\n")
+        # print(f"\n[Phase 2] Execution\n")
 
         timing = state.get("timing", {"high_level_planning": 0.0, "tasks": {}})
         timing["high_level_planning"] = high_level_planning_time
 
         job_id = state.get("job_id")
         if job_id:
-            plan_list = [{"task_id": t.task_id, "description": t.description} for t in high_level_tasks]
+            plan_list = [{"task_id": t.task_id, "description": t.description, "status": "pending"} for t in high_level_tasks]
             save_agent_state(
                 agent_id=job_id,
                 stage_id=1,
@@ -196,7 +196,7 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
 
     except Exception as e:
         error_msg = f"High-level 계획 생성 실패: {str(e)}"
-        print(f"\n[✗] {error_msg}\n")
+        # print(f"\n[✗] {error_msg}\n")
         import traceback
         traceback.print_exc()
 
@@ -232,7 +232,7 @@ def node_get_next_task(state: Dict[str, Any]) -> Dict[str, Any]:
         task = HighLevelTask.from_dict(task_dict)
         if task.status == TaskStatus.PENDING:
             task_queue.add_task(task)
-        elif task.status == TaskStatus.COMPLETED:
+        elif task.status == TaskStatus.DONE:
             task_queue._completed_task_ids.add(task.task_id)
 
     next_task = task_queue.get_next_ready_task()
@@ -260,6 +260,9 @@ def node_get_next_task(state: Dict[str, Any]) -> Dict[str, Any]:
                 update_stage(job_id, stage_num + 1)
             except:
                 pass
+
+            from ..storage.job_storage import update_task_status
+            update_task_status(job_id, next_task.task_id, "in_progress")
 
         return {
             **state,
@@ -302,7 +305,7 @@ def node_react_init(state: Dict[str, Any]) -> Dict[str, Any]:
     task = HighLevelTask.from_dict(current_task_dict)
     completed_tasks = state.get("completed_tasks", [])
 
-    print(f"\nTask {len(completed_tasks) + 1}: {task.description}")
+    # print(f"\nTask {len(completed_tasks) + 1}: {task.description}")
 
     dependency_context = ""
     if task.dependencies:
@@ -329,12 +332,12 @@ Think step by step, observe results, and adapt your actions accordingly."""
     if os.getenv("MCP_DEBUG") == "1":
         if available_tools:
             tool_names = [f"{t['server']}.{t['tool_name']}" for t in available_tools[:3]]
-            print(f"│ Available tools: {len(available_tools)} (first 3: {', '.join(tool_names)})")
+            # print(f"│ Available tools: {len(available_tools)} (first 3: {', '.join(tool_names)})")
 
     tool_hint = task.metadata.get("tool_hint", "")
 
     if tool_hint == "velociraptor":
-        print(f"│ Using predefined Velociraptor artifact sequence (skipping ReAct loop)")
+        # print(f"│ Using predefined Velociraptor artifact sequence (skipping ReAct loop)")
         return {
             **state,
             "react_context": {
@@ -347,8 +350,8 @@ Think step by step, observe results, and adapt your actions accordingly."""
     if tool_hint == "sleuthkit":
         target_path = task.metadata.get("target_path")
         if target_path:
-            print(f"│ Using predefined SleuthKit extraction pipeline (skipping ReAct loop)")
-            print(f"│ Target file: {target_path}")
+            # print(f"│ Using predefined SleuthKit extraction pipeline (skipping ReAct loop)")
+            # print(f"│ Target file: {target_path}")
             return {
                 **state,
                 "react_context": {
@@ -374,8 +377,8 @@ Think step by step, observe results, and adapt your actions accordingly."""
         "use_velociraptor_sequence": False
     }
 
-    print(f"│ ReAct Loop initialized (max {react_context['max_iterations']} iterations)")
-    print(f"│ Available tools: {len(available_tools)}")
+    # print(f"│ ReAct Loop initialized (max {react_context['max_iterations']} iterations)")
+    # print(f"│ Available tools: {len(available_tools)}")
 
     return {
         **state,
@@ -411,8 +414,8 @@ def node_react_think(state: Dict[str, Any]) -> Dict[str, Any]:
     file_paths = react_context.get("file_paths", [])
     max_iterations = react_context.get("max_iterations", 30)
 
-    print(f"\n│ Iteration {iteration}/{max_iterations}")
-    print(f"│ [THINK] Analyzing situation...")
+    # print(f"\n│ Iteration {iteration}/{max_iterations}")
+    # print(f"│ [THINK] Analyzing situation...")
 
     start_time = time.time()
 
@@ -431,8 +434,8 @@ def node_react_think(state: Dict[str, Any]) -> Dict[str, Any]:
     action = thought_result.get("action")
     answer = thought_result.get("answer")
 
-    print(f"│ [THINK] {thought[:100]}..." if len(thought) > 100 else f"│ [THINK] {thought}")
-    print(f"│ Think time: {think_time:.2f}s")
+    # print(f"│ [THINK] {thought[:100]}..." if len(thought) > 100 else f"│ [THINK] {thought}")
+    # print(f"│ Think time: {think_time:.2f}s")
 
     react_context["current_thought"] = thought
     react_context["current_action"] = action
@@ -463,7 +466,7 @@ def node_react_execute(state: Dict[str, Any]) -> Dict[str, Any]:
     action_dict = react_context.get("current_action")
 
     if not action_dict:
-        print(f"│ [EXECUTE] No action to execute")
+        # print(f"│ [EXECUTE] No action to execute")
         react_context["finished"] = True
         react_context["answer"] = "No valid action provided - cannot execute"
         return {
@@ -478,7 +481,7 @@ def node_react_execute(state: Dict[str, Any]) -> Dict[str, Any]:
 
     invalid_tools = ["none", "null", "undefined", "", "n/a"]
     if tool_name.lower() in invalid_tools or not tool_name:
-        print(f"│ [EXECUTE] Invalid tool name: '{tool_name}' - forcing completion")
+        # print(f"│ [EXECUTE] Invalid tool name: '{tool_name}' - forcing completion")
         react_context["finished"] = True
         react_context["answer"] = f"Invalid tool name provided: '{tool_name}'. No tools available to execute."
         return {
@@ -495,7 +498,7 @@ def node_react_execute(state: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     action_name = f"{action.tool}.{action.operation}"
-    print(f"│ [EXECUTE] {action_name}")
+    # print(f"│ [EXECUTE] {action_name}")
 
     start_time = time.time()
 
@@ -507,7 +510,7 @@ def node_react_execute(state: Dict[str, Any]) -> Dict[str, Any]:
     react_context["current_execution_time"] = exec_time
 
     success_marker = "✓" if result.success else "✗"
-    print(f"│ [{success_marker}] Execution time: {exec_time:.2f}s")
+    # print(f"│ [{success_marker}] Execution time: {exec_time:.2f}s")
 
     return {
         **state,
@@ -555,7 +558,7 @@ def node_react_observe(state: Dict[str, Any]) -> Dict[str, Any]:
     react_context["observations"] = observations
 
     obs_preview = observation[:200] if len(observation) > 200 else observation
-    print(f"│ [OBSERVE] {obs_preview}...")
+    # print(f"│ [OBSERVE] {obs_preview}...")
 
     return {
         **state,
@@ -692,7 +695,7 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
     start_time = time.time()
     client_id = None
 
-    print(f"\n│ Collecting {len(VELOCIRAPTOR_SEQUENCE)} Velociraptor artifacts in predefined order...")
+    # print(f"\n│ Collecting {len(VELOCIRAPTOR_SEQUENCE)} Velociraptor artifacts in predefined order...")
 
     for idx, artifact in enumerate(VELOCIRAPTOR_SEQUENCE, 1):
         operation = artifact["operation"]
@@ -702,14 +705,19 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
         if artifact.get("requires_client_id") and client_id:
             params["client_id"] = client_id
 
-        print(f"│ Artifact {idx}/{len(VELOCIRAPTOR_SEQUENCE)}: {operation}")
-        print(f"│   → {description}")
+        # print(f"│ Artifact {idx}/{len(VELOCIRAPTOR_SEQUENCE)}: {operation}")
+        # print(f"│   → {description}")
         if params.get("client_id"):
-            print(f"│   → Using Client ID: {client_id}")
+            # print(f"│   → Using Client ID: {client_id}")
+            pass
 
         try:
             mcp_client = get_mcp_client()
             result = mcp_client.call_tool("velociraptor", operation, params, timeout=120)
+
+            if job_id:
+                from ..storage.job_storage import add_mcp_tool
+                add_mcp_tool(job_id, "velociraptor", operation)
 
             if artifact.get("is_client_info"):
                 if isinstance(result, dict):
@@ -723,9 +731,11 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
                             client_id = match.group(1)
 
                 if client_id:
-                    print(f"│   [✓] Extracted Client ID: {client_id}")
+                    # print(f"│   [✓] Extracted Client ID: {client_id}")
+                    pass
                 else:
-                    print(f"│   [!]  Warning: Could not extract Client ID")
+                    # print(f"│   [!]  Warning: Could not extract Client ID")
+                    pass
 
 
             success = result.get("success", False) if isinstance(result, dict) else True
@@ -755,11 +765,11 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
                 "observation": result_str
             })
 
-            print(f"│   [✓] Success ({len(result_str)} bytes)")
+            # print(f"│   [✓] Success ({len(result_str)} bytes)")
 
         except Exception as e:
             error_msg = f"Tool execution failed: {str(e)}"
-            print(f"│   [✗] Failed: {str(e)}")
+            # print(f"│   [✗] Failed: {str(e)}")
 
             log_mcp_execution(
                 mcp_name="velociraptor",
@@ -782,11 +792,11 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
             })
 
     execution_time = time.time() - start_time
-    print(f"\n│ [✓] Velociraptor collection: {len(observations)} artifacts, {execution_time:.2f}s")
+    # print(f"\n│ [✓] Velociraptor collection: {len(observations)} artifacts, {execution_time:.2f}s")
 
-    print(f"│ ")
-    print(f"│ Analyzing collected artifacts with LLM (this may take 1-2 minutes)...")
-    print(f"│ ")
+    # print(f"│ ")
+    # print(f"│ Analyzing collected artifacts with LLM (this may take 1-2 minutes)...")
+    # print(f"│ ")
 
     llm = LLMClient()
 
@@ -856,20 +866,20 @@ Analyze the collected Velociraptor artifacts and provide a comprehensive forensi
 Use ACTUAL data values from artifacts. Be specific with timestamps, file paths, process names."""
 
     try:
-        print(f"│ Requesting LLM analysis...")
+        # print(f"│ Requesting LLM analysis...")
         response = llm.chat(
             [{"role": "user", "content": analysis_prompt}],
             timeout=180
         )
         analysis = response["choices"][0]["message"]["content"]
-        print(f"│ ")
-        print(f"│ [✓] Analysis completed!")
-        print(f"│ ")
+        # print(f"│ ")
+        # print(f"│ [✓] Analysis completed!")
+        # print(f"│ ")
 
     except Exception as e:
-        print(f"│ ")
-        print(f"│ [✗] Analysis failed: {e}")
-        print(f"│ ")
+        # print(f"│ ")
+        # print(f"│ [✗] Analysis failed: {e}")
+        # print(f"│ ")
         analysis = f"""# Velociraptor Artifact Collection Summary
 
 {len(observations)} Windows forensic artifacts collected.
@@ -880,7 +890,7 @@ Use ACTUAL data values from artifacts. Be specific with timestamps, file paths, 
 Analysis generation failed: {str(e)}
 Please review raw artifact data."""
 
-    print(f"│ Returning analysis results to workflow...")
+    # print(f"│ Returning analysis results to workflow...")
 
     return {
         "observations": observations,
@@ -928,14 +938,18 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
         }
 
     image_path = file_paths[0]
-    print(f"\n│ Extracting file using SleuthKit 3-step pipeline...")
-    print(f"│ Image: {image_path}")
-    print(f"│ Target: {target_path}")
+    # print(f"\n│ Extracting file using SleuthKit 3-step pipeline...")
+    # print(f"│ Image: {image_path}")
+    # print(f"│ Target: {target_path}")
 
-    print(f"\n│ Step 1/3: Get disk partition info")
+    # print(f"\n│ Step 1/3: Get disk partition info")
     try:
         mcp_client = get_mcp_client()
         result = mcp_client.call_tool("sleuthkit", "disk_partition_info", {"image_path": image_path}, timeout=120)
+
+        if job_id:
+            from ..storage.job_storage import add_mcp_tool
+            add_mcp_tool(job_id, "sleuthkit", "disk_partition_info")
 
         result_str = str(result)
         observations.append({
@@ -968,13 +982,15 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
 
         if not fs_offset_sectors:
             fs_offset_sectors = "239616"
-            print(f"│   [!] Could not parse fs_offset_sectors, using default: {fs_offset_sectors}")
+            # print(f"│   [!] Could not parse fs_offset_sectors, using default: {fs_offset_sectors}")
+            pass
         else:
-            print(f"│   [✓] Found fs_offset_sectors: {fs_offset_sectors}")
+            # print(f"│   [✓] Found fs_offset_sectors: {fs_offset_sectors}")
+            pass
 
     except Exception as e:
         error_msg = f"disk_partition_info failed: {str(e)}"
-        print(f"│   [✗] {error_msg}")
+        # print(f"│   [✗] {error_msg}")
         observations.append({
             "iteration": 1,
             "thought": "Get partition info to find fs_offset_sectors",
@@ -989,13 +1005,13 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
             "success": False
         }
 
-    print(f"\n│ Step 2/3: Search inode by path")
+    # print(f"\n│ Step 2/3: Search inode by path")
     filepath_unix = target_path.replace("\\", "/")
     if filepath_unix.startswith("C:/") or filepath_unix.startswith("c:/"):
         filepath_unix = filepath_unix[2:]
     elif filepath_unix.startswith("C:\\") or filepath_unix.startswith("c:\\"):
         filepath_unix = filepath_unix[2:]
-    print(f"│   → Searching: {filepath_unix}")
+    # print(f"│   → Searching: {filepath_unix}")
 
     try:
         mcp_client = get_mcp_client()
@@ -1004,6 +1020,10 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
             "fs_offset_sectors": fs_offset_sectors,
             "path": filepath_unix
         }, timeout=120)
+
+        if job_id:
+            from ..storage.job_storage import add_mcp_tool
+            add_mcp_tool(job_id, "sleuthkit", "search_inode_by_path")
 
         result_str = str(result)
         observations.append({
@@ -1044,7 +1064,7 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
 
         if not inode:
             error_msg = f"Could not find inode for file: {target_path}"
-            print(f"│   [✗] {error_msg}")
+            # print(f"│   [✗] {error_msg}")
             return {
                 "observations": observations,
                 "iterations": 2,
@@ -1052,11 +1072,11 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
                 "success": False
             }
 
-        print(f"│   [✓] Found inode: {inode}")
+        # print(f"│   [✓] Found inode: {inode}")
 
     except Exception as e:
         error_msg = f"search_inode_by_path failed: {str(e)}"
-        print(f"│   [✗] {error_msg}")
+        # print(f"│   [✗] {error_msg}")
         observations.append({
             "iteration": 2,
             "thought": f"Search inode for file: {filepath_unix}",
@@ -1071,9 +1091,9 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
             "success": False
         }
 
-    print(f"\n│ Step 3/3: Extract file by inode")
+    # print(f"\n│ Step 3/3: Extract file by inode")
     out_dir = "./data/output"
-    print(f"│   → Output directory: {out_dir}")
+    # print(f"│   → Output directory: {out_dir}")
 
     try:
         mcp_client = get_mcp_client()
@@ -1083,6 +1103,10 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
             "inodes": [inode],
             "out_dir": out_dir
         }, timeout=120)
+
+        if job_id:
+            from ..storage.job_storage import add_mcp_tool
+            add_mcp_tool(job_id, "sleuthkit", "extract_files_by_inode")
 
         result_str = str(result)
         observations.append({
@@ -1110,15 +1134,15 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
                         break
 
         if success:
-            print(f"│   [✓] File extracted successfully")
+            # print(f"│   [✓] File extracted successfully")
             answer = f"Successfully extracted {target_path} (inode: {inode}) to {out_dir}"
         else:
-            print(f"│   [!] Extraction may have failed - check result")
+            # print(f"│   [!] Extraction may have failed - check result")
             answer = f"Extraction attempted for {target_path} (inode: {inode}), please check {out_dir}"
 
     except Exception as e:
         error_msg = f"extract_files_by_inode failed: {str(e)}"
-        print(f"│   [✗] {error_msg}")
+        # print(f"│   [✗] {error_msg}")
         observations.append({
             "iteration": 3,
             "thought": f"Extract file with inode: {inode}",
@@ -1134,7 +1158,7 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
         }
 
     execution_time = time.time() - start_time
-    print(f"\n│ [✓] SleuthKit extraction pipeline: 3 steps, {execution_time:.2f}s")
+    # print(f"\n│ [✓] SleuthKit extraction pipeline: 3 steps, {execution_time:.2f}s")
 
     return {
         "observations": observations,
@@ -1272,7 +1296,12 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
     completed_ids = set(task_queue_state.get("completed_ids", []))
     completed_ids.add(task_id)
 
-    print(f"│ [✓] Task completed: {len(current_task_dict['execution_results'])} actions, {current_task_dict['react_iterations']} iterations")
+    job_id = state.get("job_id")
+    if job_id:
+        from ..storage.job_storage import update_task_status
+        update_task_status(job_id, task_id, "done")
+
+    # print(f"│ [✓] Task completed: {len(current_task_dict['execution_results'])} actions, {current_task_dict['react_iterations']} iterations")
 
     return {
         **state,

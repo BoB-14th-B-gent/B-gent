@@ -7,23 +7,33 @@ import sys
 import os
 import atexit
 import logging
+import json
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+os.environ["LOGLEVEL"] = "CRITICAL"
+os.environ["LOG_LEVEL"] = "CRITICAL"
+os.environ["PYTHONWARNINGS"] = "ignore"
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 if os.getenv("MCP_DEBUG") == "1":
     logging.basicConfig(level=logging.DEBUG, format='%(message)s')
 else:
-    logging.basicConfig(level=logging.ERROR, format='%(message)s')
+    logging.basicConfig(level=logging.CRITICAL, format='%(message)s', force=True)
 
-logging.getLogger("urllib3").setLevel(logging.ERROR)
-logging.getLogger("pymongo").setLevel(logging.ERROR)
-logging.getLogger("httpx").setLevel(logging.ERROR)
-logging.getLogger("mcp").setLevel(logging.ERROR)
-logging.getLogger("transformers").setLevel(logging.ERROR)
-logging.getLogger("elastic_transport").setLevel(logging.ERROR)
-logging.getLogger("markdown_it").setLevel(logging.ERROR)
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.CRITICAL)
+root_logger.disabled = True
+
+for logger_name in ["urllib3", "pymongo", "httpx", "mcp", "transformers",
+                    "elastic_transport", "markdown_it", "src.server", "FastMCP",
+                    "pyghidra_mcp", "mcp.server.lowlevel.server", "mcp.server",
+                    "FastMCP.fastmcp.server.server", "root"]:
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(logging.CRITICAL)
+    logger.disabled = True
+    logger.propagate = False
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -43,6 +53,22 @@ console = Console()
 current_step = ""
 step_history = []
 phase_timings = {}
+
+def print_agent_state_update(state_doc: dict):
+    """AGENT_STATES 업데이트 내용을 JSON으로 출력
+
+    Args:
+        state_doc: MongoDB에 저장된 state 문서
+    """
+    display_doc = {k: v for k, v in state_doc.items() if k != '_id'}
+
+    if 'created_at' in display_doc:
+        display_doc['created_at'] = display_doc['created_at'].isoformat() if hasattr(display_doc['created_at'], 'isoformat') else str(display_doc['created_at'])
+    if 'updated_at' in display_doc:
+        display_doc['updated_at'] = display_doc['updated_at'].isoformat() if hasattr(display_doc['updated_at'], 'isoformat') else str(display_doc['updated_at'])
+
+    json_str = json.dumps(display_doc, indent=2, ensure_ascii=False)
+    print(json_str)
 
 class SuppressOutput:
     """표준 출력/에러 억제"""
@@ -101,40 +127,63 @@ def create_status_panel(prompt: str, elapsed: float = 0):
     )
 
 def run_with_progress(user_prompt: str, file_paths: list = None, generate_report: bool = False):
-    """진행 상황 표시와 함께 작업 실행"""
-    start_time = time.time()
+    """MongoDB 상태 업데이트만 JSON으로 출력 (나머지 모든 출력 억제)
 
-    table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_column(style="blue", justify="right")
-    table.add_column(style="white")
-    table.add_row("Task", user_prompt[:60] + "..." if len(user_prompt) > 60 else user_prompt)
-    table.add_row("Status", "Processing...")
+    Note: MongoDB AGENT_STATES 업데이트는 job_storage.py의 _print_state_json()에서 직접 출력되므로
+          별도의 callback 설정 불필요
+    """
+    original_log_levels = {}
 
-    console.print()
-    console.print(Panel(
-        table,
-        title="[bold blue]B-gent Execution[/bold blue]",
-        border_style="blue",
-        box=box.ROUNDED
-    ))
+    root_logger = logging.getLogger()
+    original_log_levels['root'] = root_logger.level
+    root_logger.setLevel(logging.CRITICAL)
+
+    for logger_name in list(logging.root.manager.loggerDict.keys()):
+        logger = logging.getLogger(logger_name)
+        original_log_levels[logger_name] = logger.level
+        logger.setLevel(logging.CRITICAL)
+
+    for logger_name in ['mcp', 'mcp.server', 'mcp.server.lowlevel.server', 'pyghidra_mcp',
+                        'src.server', 'FastMCP', 'root']:
+        logger = logging.getLogger(logger_name)
+        logger.disabled = True
+        logger.propagate = False
+
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    devnull = open(os.devnull, 'w')
 
     result = None
     try:
+        sys.stdout = devnull
+        sys.stderr = devnull
+
         result = run_job(
             user_prompt=user_prompt,
             file_paths=file_paths,
             generate_report_flag=generate_report
         )
     except Exception as e:
-        console.print(f"\n[red]Error during execution:[/red] {str(e)}")
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+
+        sys.__stdout__.write(f"\nError: {str(e)}\n")
         import traceback
         traceback.print_exc()
+
         result = {
             "job_id": "error",
             "summary": {"ok": False},
             "error": str(e),
             "traceback": traceback.format_exc()
         }
+    finally:
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+        devnull.close()
+
+        for logger_name, level in original_log_levels.items():
+            logging.getLogger(logger_name).setLevel(level)
 
     return result
 
@@ -471,7 +520,8 @@ def interactive_mode():
                     ))
                     continue
 
-                display_result(result)
+                # MongoDB JSON 출력만 사용 - Rich 형식 display 생략
+                # display_result(result)
 
             except EOFError:
                 console.print("\n[dim]Exiting interactive mode...[/dim]")
