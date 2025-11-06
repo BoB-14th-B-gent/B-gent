@@ -12,23 +12,28 @@ interface UIState {
   setSelectedNode: (id: string | null) => void
 
   promptOpen: boolean
+  activePromptId: string | null
+  setActivePrompt: (id: string | null) => void
   openPrompt: () => void
   closePrompt: () => void
 
   agentOpen: boolean
+  activeAgentId: string | null
+  setActiveAgent: (id: string | null) => void
   openAgent: () => void
   closeAgent: () => void
 
   mcpserverOpen: boolean
+  activeMCPServerId: string | null
+  setActiveMCPServer: (id: string | null) => void
   openMCPServer: () => void
   closeMCPServer: () => void
 
-  activePromptId: string | null
-  setActivePrompt: (id: string | null) => void
-  activeAgentId: string | null
-  setActiveAgent: (id: string | null) => void
-  activeMCPServerId: string | null
-  setActiveMCPServer: (id: string | null) => void
+  totalreportOpen: boolean
+  activeTotalReportId: string | null
+  setActiveTotalReport: (id: string | null) => void
+  openTotalReport: (id?: string | null) => void
+  closeTotalReport: () => void
 
   closeAllPanels: () => void
 
@@ -40,6 +45,9 @@ interface UIState {
   clearPanelMessages: () => void
 
   setPanelMessages: (msgs: ChatMsg[]) => void
+
+  totalReportRaw: string
+  setTotalReportRaw: (raw: string) => void
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
@@ -47,33 +55,37 @@ export const useUIStore = create<UIState>((set, get) => ({
   setSelectedNode: id => set({ selectedNodeId: id }),
 
   promptOpen: false,
-  agentOpen: false,
-  mcpserverOpen: false,
-
   activePromptId: null,
   setActivePrompt: id => set({ activePromptId: id }),
-  activeAgentId: null,
-  setActiveAgent: id => set({ activeAgentId: id }),
-  activeMCPServerId: null,
-  setActiveMCPServer: id => set({ activeMCPServerId: id }),
-
   openPrompt: () => {
     const sel = get().selectedNodeId
     set({ promptOpen: true, activePromptId: sel ?? get().activePromptId })
   },
   closePrompt: () => set({ promptOpen: false, activePromptId: null }),
 
+  agentOpen: false,
+  activeAgentId: null,
+  setActiveAgent: id => set({ activeAgentId: id }),
   openAgent: () => {
     const sel = get().selectedNodeId
     set({ agentOpen: true, activeAgentId: sel ?? get().activeAgentId })
   },
   closeAgent: () => set({ agentOpen: false, activeAgentId: null }),
 
+  mcpserverOpen: false,
+  activeMCPServerId: null,
+  setActiveMCPServer: id => set({ activeMCPServerId: id }),
   openMCPServer: () => {
     const sel = get().selectedNodeId
     set({ mcpserverOpen: true, activeMCPServerId: sel ?? get().activeMCPServerId })
   },
   closeMCPServer: () => set({ mcpserverOpen: false, activeMCPServerId: null }),
+
+  totalreportOpen: false,
+  activeTotalReportId: null,
+  setActiveTotalReport: id => set({ activeTotalReportId : id }),
+  openTotalReport: (id = null) => set({ totalreportOpen: true, activeTotalReportId: id }),
+  closeTotalReport: () => set({ totalreportOpen: false, activeTotalReportId: null }),
 
   closeAllPanels: () =>
     set({
@@ -92,4 +104,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   pushPanelMessage: m => set({ panelMessages: [...get().panelMessages, m] }),
   clearPanelMessages: () => set({ panelMessages: [] }),
   setPanelMessages: (msgs: ChatMsg[]) => set({ panelMessages: msgs }),
+
+  totalReportRaw: '',
+  setTotalReportRaw: (raw: string) => set({ totalReportRaw: raw }),
 }))
