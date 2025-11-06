@@ -65,3 +65,52 @@ export const api = {
       body: JSON.stringify(body),
     }),
 };
+
+async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    ...init,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status} ${res.statusText} — ${text}`);
+  }
+  const ct = res.headers.get('content-type') || '';
+  return ct.includes('application/json') ? (await res.json()) as T : ({} as T);
+}
+
+export async function createSllmReport(triggerId: string): Promise<{ ok: boolean; report_id: string }> {
+  return req('/sllm/reports', {
+    method: 'POST',
+    body: JSON.stringify({ trigger_id: triggerId }),
+  });
+}
+
+export async function getReport(reportId: string): Promise<{
+  report: string;
+  conversation_id: string;
+  stage_id: number;
+  trigger_id: string;
+  created_at: string;
+}> {
+  return req(`/reports/${encodeURIComponent(reportId)}`, { method: 'GET' });
+}
+
+export async function patchTriggerReport(triggerId: string, reportId: string): Promise<unknown> {
+  return req(`/triggers/${encodeURIComponent(triggerId)}/report`, {
+    method: 'PATCH',
+    body: JSON.stringify({ report_id: reportId }),
+  });
+}
+
+export async function postMessage(
+  conversationId: string,
+  content: string,
+  role: 'USER' | 'B-GENT' = 'B-GENT',
+  stageId = 0
+): Promise<unknown> {
+  return req(`/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ role, stage_id: stageId, content }),
+  });
+}
