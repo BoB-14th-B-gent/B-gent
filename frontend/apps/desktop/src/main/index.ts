@@ -29,7 +29,7 @@ function getPreloadPath() {
 }
 
 function getRendererUrl() {
-  return process.env.RENDERER_URL || 'http://localhost:5173';
+  return process.env.RENDERER_URL;
 }
 
 let win: BrowserWindow | null = null;
@@ -70,6 +70,44 @@ function createMainWindow() {
     return { action: 'deny' };
   });
 
+  return w;
+}
+
+function createReportWindow(payload: { reportId?: string } = {}) {
+  const w = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 900,
+    backgroundColor: '#111827',
+    title: 'B-GENT Report',
+    webPreferences: {
+      preload: getPreloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  const search = new URLSearchParams();
+  if (payload.reportId) search.set('reportId', payload.reportId);
+
+  if (app.isPackaged) {
+    const html = getAssetPath('renderer', 'index.html');
+    const base = pathToFileURL(html).toString();
+    const target = `${base}#/report-window?${search.toString()}`;
+    void w.loadURL(target);
+  } else {
+    const base = getRendererUrl();
+    const target = `${base}#/report-window?${search.toString()}`;
+    console.log('[main] loading report window:', target);
+    void w.loadURL(target);
+  }
+
+  w.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  w.once('ready-to-show', () => w.show());
   return w;
 }
 
@@ -131,10 +169,15 @@ ipcMain.handle('fs:openDialog', async () => {
 });
 
 ipcMain.handle('backend:request', async (_e, init: RequestInit & { path: string }) => {
-  const base = process.env.BACKEND_URL ?? 'http://localhost:8080';
+  const base = process.env.BACKEND_URL;
   const res = await fetch(base + init.path, init);
   const json = await res.json().catch(() => ({}));
   return { status: res.status, json };
+});
+
+ipcMain.handle('report:open', (_e, payload: { reportId?: string }) => {
+  createReportWindow(payload);
+  return { ok: true };
 });
 
 const gotLock = app.requestSingleInstanceLock();
