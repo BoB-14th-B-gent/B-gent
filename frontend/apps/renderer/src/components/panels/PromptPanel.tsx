@@ -1,5 +1,20 @@
 import { useUIStore, type ChatMsg } from '@/store/ui'
-import { useCallback, useMemo, useRef, useEffect } from 'react'
+import { useCallback, useMemo, useRef, useEffect, useState } from 'react'
+import { dummyMessages } from '@/data/dummyMessages'
+
+const BASE = import.meta.env.VITE_BACKEND_URL
+
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const resp = await fetch(`${BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+    ...init,
+  })
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '')
+    throw new Error(`[${resp.status}] ${resp.statusText} – ${text}`)
+  }
+  return resp.json() as Promise<T>
+}
 
 export default function PromptPanel() {
   const {
@@ -9,10 +24,20 @@ export default function PromptPanel() {
     closePrompt,
     panelMessages,
     pushPanelMessage,
+    setPanelMessages,
   } = useUIStore()
 
+  const [conversationId, setConversationId] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
+
   const scrollRef = useRef<HTMLDivElement>(null)
-  const inputRef  = useRef<HTMLTextAreaElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (!promptOpen) return
+    if (panelMessages.length > 0) return
+    setPanelMessages(dummyMessages)
+  }, [promptOpen, panelMessages.length, setPanelMessages])
 
   useEffect(() => {
     if (!scrollRef.current) return
@@ -25,15 +50,110 @@ export default function PromptPanel() {
     el.style.height = 'auto'
     el.style.height = `${Math.min(160, el.scrollHeight)}px`
   }
-  useEffect(() => { autoGrow() }, [promptText, promptOpen])
+  useEffect(() => {
+    autoGrow()
+  }, [promptText, promptOpen])
 
-  const onSubmit = useCallback(() => {
+  const runReportFlow = useCallback(
+    async (userText: string) => {
+      let convId = conversationId
+      if (!convId) {
+        const conv = await api<{ _id: string; title: string; created_at: string }>(
+          `/conversations`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ input: userText.slice(0, 60) || 'conversation' }),
+          }
+        )
+        convId = conv._id
+        setConversationId(convId)
+      }
+
+      await api(`/conversations/${convId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ role: 'USER', stage_id: 0, content: userText }),
+      })
+
+      const trig = await api<{ trigger_id: string; status: string; created_at: string }>(
+        `/triggers`,
+        { method: 'POST', body: JSON.stringify({ conversation_id: convId, stage_id: 0 }) }
+      )
+      const triggerId = trig.trigger_id
+
+      const evIn = await api<{ prompt_id: string; items: { evidence_id: string }[] }>(
+        `/evidences/input`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            conversation_id: convId,
+            mode: 'auto',
+            inline_threshold: 10 * 1024 * 1024,
+          }),
+        }
+      )
+      const promptId = evIn.prompt_id
+      const evRefs = evIn.items.map(x => ({ collection: 'INPUT_EVIDENCES', id: x.evidence_id }))
+
+      await api(`/triggers/${triggerId}/prompt`, {
+        method: 'PATCH',
+        body: JSON.stringify({ prompt_id: promptId }),
+      })
+
+      await api(`/triggers/${triggerId}/evidences`, {
+        method: 'PATCH',
+        body: JSON.stringify({ evidences: evRefs }),
+      })
+
+      const sllm = await api<{ ok: boolean; report_id: string }>(`/sllm/reports`, {
+        method: 'POST',
+        body: JSON.stringify({ trigger_id: triggerId }),
+      })
+      const reportId = sllm.report_id
+
+      await api(`/triggers/${triggerId}/report`, {
+        method: 'PATCH',
+        body: JSON.stringify({ report_id: reportId }),
+      })
+
+      const rep = await api<{ report: string; conversation_id: string }>(`/reports/${reportId}`, {
+        method: 'GET',
+      })
+
+      await api(`/conversations/${convId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ role: 'B-GENT', stage_id: 0, content: rep.report }),
+      })
+
+      return rep.report
+    },
+    [conversationId]
+  )
+
+  const onSubmit = useCallback(async () => {
     const text = promptText.trim()
-    if (!text) return
+    if (!text || sending) return
+
     const userMsg: ChatMsg = { id: crypto.randomUUID(), role: 'user', text }
     pushPanelMessage(userMsg)
     setPromptText('')
-  }, [promptText, pushPanelMessage, setPromptText])
+
+    setSending(true)
+    try {
+      const reportText = await runReportFlow(text)
+      const botMsg: ChatMsg = { id: crypto.randomUUID(), role: 'bgent', text: reportText }
+      pushPanelMessage(botMsg)
+    } catch (err: any) {
+      const botMsg: ChatMsg = {
+        id: crypto.randomUUID(),
+        role: 'bgent',
+        text: `보고서 생성 중 오류가 발생했습니다.\n${err?.message ?? String(err)}`,
+      }
+      pushPanelMessage(botMsg)
+      console.error('[report-flow]', err)
+    } finally {
+      setSending(false)
+    }
+  }, [promptText, sending, pushPanelMessage, setPromptText, runReportFlow])
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -46,7 +166,7 @@ export default function PromptPanel() {
     [onSubmit]
   )
 
-  const canSend = useMemo(() => promptText.trim().length > 0, [promptText])
+  const canSend = useMemo(() => !sending && promptText.trim().length > 0, [sending, promptText])
 
   return (
     <aside
@@ -66,10 +186,8 @@ export default function PromptPanel() {
         borderRadius: 14,
         boxShadow: '0 10px 30px rgba(2,8,23,0.18)',
         boxSizing: 'border-box',
-
         transform: `translateX(${promptOpen ? '0' : 'calc(100% + 12px)'})`,
         transition: 'transform 240ms ease',
-
         zIndex: 50,
         display: 'grid',
         gridTemplateRows: 'auto 1fr auto',
@@ -81,29 +199,11 @@ export default function PromptPanel() {
           display: 'flex',
           alignItems: 'center',
           gap: 8,
+          borderBottom: '1px solid rgba(15,23,42,0.06)',
         }}
       >
-        <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>
-          CONVERSATION
-        </span>
-        <button
-          onClick={closePrompt}
-          title="Close"
-          style={{
-            font: 'inherit',
-            marginLeft: 'auto',
-            width: 30,
-            height: 30,
-            borderRadius: 10,
-            border: '1px solid rgba(15,23,42,0.08)',
-            background: '#fff',
-            lineHeight: '15px',
-            textAlign: 'center',
-            fontWeight: 500,
-            color: '#0f172a',
-            cursor: 'pointer',
-          }}
-        >
+        <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>USER PROMPT</span>
+        <button onClick={closePrompt} title="Close" style={closeBtn}>
           x
         </button>
       </header>
@@ -111,25 +211,14 @@ export default function PromptPanel() {
       <div
         ref={scrollRef}
         className="panel-scroll"
-        style={{
-          padding: 14,
-          overflow: 'auto',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 12,
-        }}
+        style={{ padding: 14, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}
       >
-        {panelMessages.map((m) => (
+        {panelMessages.map(m => (
           <MessageBubble key={m.id} role={m.role} text={m.text} />
         ))}
       </div>
 
-      <div
-        style={{
-          padding: 12,
-          borderTop: '1px solid rgba(15,23,42,0.06)',
-        }}
-      >
+      <div style={{ padding: 12, borderTop: '1px solid rgba(15,23,42,0.06)' }}>
         <div
           style={{
             position: 'relative',
@@ -146,9 +235,13 @@ export default function PromptPanel() {
           <textarea
             ref={inputRef}
             value={promptText}
-            onChange={(e) => { setPromptText(e.target.value); autoGrow() }}
+            onChange={e => {
+              setPromptText(e.target.value)
+              autoGrow()
+            }}
             onKeyDown={onKeyDown}
-            placeholder="B-gent! Be your Agent:)"
+            placeholder={sending ? '보고서 생성 중…' : 'B-gent! Be your Agent:)'}
+            disabled={sending}
             style={{
               font: 'inherit',
               width: '100%',
@@ -163,6 +256,7 @@ export default function PromptPanel() {
               background: 'transparent',
               fontSize: 13,
               lineHeight: 1.5,
+              opacity: sending ? 0.6 : 1,
             }}
           />
           <button
@@ -170,19 +264,20 @@ export default function PromptPanel() {
             disabled={!canSend}
             style={{
               font: 'inherit',
-              width: 25,
-              height: 25,
+              width: 32,
+              height: 32,
               borderRadius: '50%',
               border: 'none',
               background: canSend ? '#034078' : '#9dbff8',
               color: '#fff',
-              fontSize: 17,
+              fontSize: 16,
               fontWeight: 700,
               cursor: canSend ? 'pointer' : 'default',
-              margin: 3
+              margin: 3,
             }}
+            title={sending ? '생성 중' : '보내기'}
           >
-            ↑
+            {sending ? '…' : '↑'}
           </button>
         </div>
       </div>
@@ -215,6 +310,8 @@ function MessageBubble({ role, text }: { role: 'user' | 'bgent'; text: string })
           boxShadow: '0 4px 10px rgba(2,8,23,0.06)',
           textAlign: 'left',
           whiteSpace: 'pre-wrap',
+          wordBreak: 'break-all',
+          overflowWrap: 'break-word',
           lineHeight: 1.55,
           fontSize: 13,
           fontWeight: 400,
@@ -224,4 +321,19 @@ function MessageBubble({ role, text }: { role: 'user' | 'bgent'; text: string })
       </div>
     </div>
   )
+}
+
+const closeBtn: React.CSSProperties = {
+  font: 'inherit',
+  marginLeft: 'auto',
+  width: 30,
+  height: 30,
+  borderRadius: 10,
+  border: '1px solid rgba(15,23,42,0.08)',
+  background: '#fff',
+  lineHeight: '15px',
+  textAlign: 'center',
+  fontWeight: 500,
+  color: '#0f172a',
+  cursor: 'pointer',
 }

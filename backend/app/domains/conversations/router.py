@@ -8,10 +8,11 @@ from app.domains.triggers.schema import TriggerListOut
 
 router = APIRouter()
 
-@router.post("", response_model=ConversationCreatedOut,summary="대화 생성")
+@router.post("", response_model=ConversationCreatedOut, response_model_by_alias=True, summary="대화 생성")
 def create_conversation(body: ConversationCreateInput):
     out = create_conversation_with_input(body.input)
-    return ConversationCreatedOut(**out)
+    model = ConversationCreatedOut.model_validate(out)
+    return model
 
 @router.get("/{conversation_id}", response_model=ConversationDetailOut, summary="대화 상세 조회")
 def get_conversation(conversation_id: str):

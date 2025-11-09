@@ -1,26 +1,36 @@
-import type { NodeProps } from 'reactflow';
-import { Handle, Position } from 'reactflow';
+import type { NodeProps } from 'reactflow'
+import { Handle, Position } from 'reactflow'
 
 export type MCPServerData = {
-  label: string;
-  bg?: string;
-  leftDot?: string;
-  rightDot?: string;
-  icon?: string;
-  onClick?: () => void;
-};
+  label: string
+  bg?: string
+  leftDot?: string
+  rightDot?: string
+  icon?: string
+  onClick?: () => void
+  isActive?: boolean
+}
 
 export default function MCPServerNode({ data }: NodeProps<MCPServerData>) {
-  const bg = data.bg ?? '#334155';
+  const isActive = !!data.isActive
+  const bg = isActive ? '#FFFFFF' : (data.bg ?? '#334155')
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-center select-none">
       <button
-        onClick={data.onClick}
-        className="relative flex items-center justify-center h-24 w-24 rounded-full shadow-lg ring-1 ring-black/5"
+        type="button"
+        aria-pressed={isActive}
+        onClick={e => {
+          e.stopPropagation()
+          data.onClick?.()
+        }}
+        onMouseDown={e => e.stopPropagation()}
+        className="relative flex h-24 w-24 items-center justify-center rounded-full transition-all duration-200 hover:cursor-pointer"
         style={{
           background: bg,
-          boxShadow: '0 6px 14px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(255,255,255,0.06)',
+          boxShadow: isActive
+            ? `0 0 0 5px ${data.bg}, 0 8px 24px rgba(0,0,0,.20)`
+            : '0 6px 14px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(255,255,255,0.06)',
         }}
       >
         {data.icon ? (
@@ -31,16 +41,33 @@ export default function MCPServerNode({ data }: NodeProps<MCPServerData>) {
             draggable={false}
           />
         ) : (
-          <span className="text-2xl">🔘</span>
+          <img
+            src="icons/logo.svg"
+            alt="mcp"
+            className="h-13 w-13 select-none"
+            draggable={false}
+          />
         )}
 
-        <Handle id="l" type="target" position={Position.Left}  style={{ opacity: 0, width: 0, height: 0, border: 0 }} isConnectable={false}/>
-        <Handle id="r" type="source" position={Position.Right} style={{ opacity: 0, width: 0, height: 0, border: 0 }} isConnectable={false}/>
+        <Handle
+          id="l"
+          type="target"
+          position={Position.Left}
+          style={{ opacity: 0, width: 0, height: 0, border: 0 }}
+          isConnectable={false}
+        />
+        <Handle
+          id="r"
+          type="source"
+          position={Position.Right}
+          style={{ opacity: 0, width: 0, height: 0, border: 0 }}
+          isConnectable={false}
+        />
       </button>
 
-      <div className="mt-2 text-sm font-semibold text-slate-700 select-none font-pretendard">
+      <div className="font-pretendard mt-2 text-sm font-semibold text-slate-700 select-none">
         {data.label}
       </div>
     </div>
-  );
+  )
 }

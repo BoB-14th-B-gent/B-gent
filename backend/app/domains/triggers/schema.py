@@ -9,7 +9,7 @@ class TriggerCreate(BaseModel):
     stage_id: int
 
 class EvidenceRef(BaseModel):
-    collection: Literal["input_evidences", "mcp_evidences"]
+    collection: Literal["INPUT_EVIDENCES", "MCP_EVIDENCES"]
     id: str
 
 class TriggerIdOut(BaseModel):

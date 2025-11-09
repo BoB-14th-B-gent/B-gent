@@ -6,19 +6,29 @@ export type TotalData = {
   icon?: string
   bg?: string
   onClick?: () => void
+  isActive?: boolean
 }
 
 export default function TotalReportNode({ data }: NodeProps<TotalData>) {
-  const bg = data.bg ?? '#F3F6FB'
+  const isActive = !!data.isActive
+  const bg = isActive ? '#9ef7ffff' : (data.bg ?? '#FFFFFF')
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-center select-none">
       <button
-        onClick={data.onClick}
-        className="relative flex h-35 w-35 items-center justify-center rounded-full shadow-xl ring-1 ring-black/5"
+        type="button"
+        aria-pressed={isActive}
+        onClick={e => {
+          e.stopPropagation()
+          data.onClick?.()
+        }}
+        onMouseDown={e => e.stopPropagation()}
+        className="relative flex h-35 w-35 items-center justify-center rounded-full transition-all duration-200 hover:cursor-pointer"
         style={{
           background: bg,
-          boxShadow: '0 6px 14px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(255,255,255,0.06)',
+          boxShadow: isActive
+            ? `0 0 0 5px ${data.bg}, 0 8px 24px rgba(0,0,0,.20)`
+            : '0 6px 14px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(255,255,255,0.06)',
         }}
       >
         {data.icon ? (
@@ -29,7 +39,12 @@ export default function TotalReportNode({ data }: NodeProps<TotalData>) {
             draggable={false}
           />
         ) : (
-          <span className="relative text-2xl">🧾</span>
+          <img
+            src="icons/total.svg"
+            alt="total"
+            className="h-25 w-25 select-none"
+            draggable={false}
+          />
         )}
 
         <Handle
