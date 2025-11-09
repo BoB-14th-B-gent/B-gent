@@ -3,14 +3,53 @@
 작업과 결과를 MongoDB에 저장하고 조회하는 기능 제공
 """
 from __future__ import annotations
-from typing import Dict, Any, Optional
+
+import json
+from typing import Dict, Any, Optional, Callable
 from datetime import datetime
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 from ..config import get_config
+
 _cfg = get_config()
 _client: Optional[MongoClient] = None
 _db = None
+
+_state_update_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+
+def set_state_update_callback(callback: Optional[Callable[[Dict[str, Any]], None]]):
+    """AGENT_STATES 업데이트 시 호출될 콜백 함수 설정
+
+    Args:
+        callback: 업데이트된 state_doc을 받는 함수
+    """
+    global _state_update_callback
+    _state_update_callback = callback
+
+def _print_state_json(state_doc: Dict[str, Any]):
+    """MongoDB AGENT_STATES 변경사항을 JSON으로 출력
+
+    sys.__stdout__을 사용하여 stdout 리다이렉트를 우회하고 원본 stdout에 직접 출력
+
+    Args:
+        state_doc: 출력할 state document
+    """
+    try:
+        import sys
+        output_doc = state_doc.copy()
+
+        output_doc.pop('_id', None)
+
+        if 'updated_at' in output_doc:
+            output_doc['updated_at'] = output_doc['updated_at'].isoformat()
+        if 'created_at' in output_doc:
+            output_doc['created_at'] = output_doc['created_at'].isoformat()
+
+        json_str = json.dumps(output_doc, ensure_ascii=False, indent=2)
+        sys.__stdout__.write(json_str + '\n')
+        sys.__stdout__.flush()
+    except Exception:
+        pass
 
 def _get_client():
     """MongoDB 클라이언트 가져오기 (지연 초기화)"""
@@ -42,23 +81,34 @@ def save_agent_state(
     status: str = "running",
     mcp_tools: Optional[list] = None,
     trigger_id: Optional[str] = None,
-    conversation_id: Optional[str] = None,
-    additional_data: Optional[Dict[str, Any]] = None
+    conversation_id: Optional[str] = None
 ) -> bool:
-    """에이전트 상태를 AGENT_STATES 컬렉션에 저장
+    """에이전트 상태를 AGENT_STATES 컬렉션에 저장 (간결한 구조)
 
     Args:
-        agent_id: 에이전트 ID (job_id와 동일)
-        stage_id: 현재 스테이지 ID
-        plan: 실행 계획 (high_level_tasks)
-        status: 상태 (running, completed, failed 등)
-        mcp_tools: 사용된 MCP 도구 목록
-        trigger_id: 트리거 ID (선택사항, 추후 구현)
-        conversation_id: 대화 ID (선택사항, 추후 구현)
-        additional_data: 추가 데이터 (선택사항)
+        agent_id: 에이전트 ID (job_id와 동일) - PK
+        stage_id: 현재 Task 번호 (0=초기화, 1=planning, 2~N=tasks)
+        plan: 실행 계획 [{"task_id": str, "description": str}, ...]
+        status: 상태 (running | completed | failed)
+        mcp_tools: 사용된 MCP 도구 ["server.tool", ...]
+        trigger_id: 트리거 ID (외부 시스템 연동용, optional)
+        conversation_id: 대화 ID (채팅/세션 그룹핑, optional)
 
     Returns:
         bool: 저장 성공 여부
+
+    Schema:
+        {
+            "agent_id": str (PK),
+            "trigger_id": str | null,
+            "conversation_id": str | null,
+            "stage_id": int,
+            "status": str,
+            "plan": [{"task_id": str, "description": str, "status": str}],
+            "mcp_tools": [str],
+            "created_at": datetime,
+            "updated_at": datetime
+        }
     """
     try:
         db = _get_client()
@@ -69,15 +119,12 @@ def save_agent_state(
             "agent_id": agent_id,
             "trigger_id": trigger_id,
             "conversation_id": conversation_id,
-            "stage_id": stage_id,
-            "plan": plan or [],
+            "stage_id": stage_id if stage_id is not None else 0,
             "status": status,
+            "plan": plan or [],
             "mcp_tools": mcp_tools or [],
             "updated_at": datetime.utcnow()
         }
-
-        if additional_data:
-            state_doc.update(additional_data)
 
         db.AGENT_STATES.update_one(
             {"agent_id": agent_id},
@@ -87,6 +134,14 @@ def save_agent_state(
             },
             upsert=True
         )
+
+        _print_state_json(state_doc)
+
+        if _state_update_callback:
+            try:
+                _state_update_callback(state_doc)
+            except Exception as cb_err:
+                pass
 
         return True
 
@@ -110,15 +165,26 @@ def update_agent_status(agent_id: str, status: str) -> bool:
         if db is None:
             return False
 
+        update_doc = {
+            "status": status,
+            "updated_at": datetime.utcnow()
+        }
+
         db.AGENT_STATES.update_one(
             {"agent_id": agent_id},
-            {
-                "$set": {
-                    "status": status,
-                    "updated_at": datetime.utcnow()
-                }
-            }
+            {"$set": update_doc}
         )
+
+        full_state = db.AGENT_STATES.find_one({"agent_id": agent_id})
+        if full_state:
+            _print_state_json(full_state)
+
+        if _state_update_callback:
+            try:
+                if full_state:
+                    _state_update_callback(full_state)
+            except Exception:
+                pass
 
         return True
 
@@ -153,6 +219,17 @@ def add_mcp_tool(agent_id: str, mcp_name: str, tool_name: str) -> bool:
             }
         )
 
+        full_state = db.AGENT_STATES.find_one({"agent_id": agent_id})
+        if full_state:
+            _print_state_json(full_state)
+
+        if _state_update_callback:
+            try:
+                if full_state:
+                    _state_update_callback(full_state)
+            except Exception:
+                pass
+
         return True
 
     except Exception as e:
@@ -185,10 +262,65 @@ def update_stage(agent_id: str, stage_id: int) -> bool:
             }
         )
 
+        full_state = db.AGENT_STATES.find_one({"agent_id": agent_id})
+        if full_state:
+            _print_state_json(full_state)
+
+        if _state_update_callback:
+            try:
+                if full_state:
+                    _state_update_callback(full_state)
+            except Exception:
+                pass
+
         return True
 
     except Exception as e:
         print(f"[X]  스테이지 업데이트 실패: {e}")
+        return False
+
+
+def update_task_status(agent_id: str, task_id: str, task_status: str) -> bool:
+    """plan 배열 내 특정 task의 상태 업데이트
+
+    Args:
+        agent_id: 에이전트 ID
+        task_id: 업데이트할 task의 ID
+        task_status: 새로운 task 상태 (pending | in_progress | done | failed)
+
+    Returns:
+        bool: 업데이트 성공 여부
+    """
+    try:
+        db = _get_client()
+        if db is None:
+            return False
+
+        db.AGENT_STATES.update_one(
+            {"agent_id": agent_id, "plan.task_id": task_id},
+            {
+                "$set": {
+                    "plan.$.status": task_status,
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+
+        full_state = db.AGENT_STATES.find_one({"agent_id": agent_id})
+        if full_state:
+            _print_state_json(full_state)
+
+        if _state_update_callback:
+            try:
+                if full_state:
+                    _state_update_callback(full_state)
+            except Exception:
+                pass
+
+        return True
+
+    except Exception as e:
+        print(f"[X]  Task 상태 업데이트 실패: {e}")
         return False
 
 

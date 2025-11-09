@@ -148,13 +148,14 @@ class MCPClientManager:
                 #     env_merged["LOGLEVEL"] = "ERROR"
                 #     env_merged["LOG_LEVEL"] = "ERROR"
                 #     env_merged["PYTHONWARNINGS"] = "ignore"
-                    
+
                 params = StdioServerParameters(
                     command=config.command,
                     args=config.args or [],
                     env=env_merged
                 )
-                client_context = stdio_client(params)
+                errlog = sys.stderr if verbose else open(os.devnull, 'w')
+                client_context = stdio_client(params, errlog=errlog)
                 read, write = await self._exit_stack.enter_async_context(client_context)
                 if verbose:
                     print(f"  [✓] stdio 스트림 연결 완료")
@@ -170,22 +171,26 @@ class MCPClientManager:
                 import time
                 start_time = time.time()
                 if verbose:
-                    print(f"  initialize() 호출 중... (서버: {config.name})")
+                    # print(f"  initialize() 호출 중... (서버: {config.name})")
+                    pass
                 result = await asyncio.wait_for(session.initialize(), timeout=init_timeout)
                 elapsed = time.time() - start_time
                 if verbose:
-                    print(f"  세션 초기화 완료 (소요 시간: {elapsed:.2f}초)")
+                    # print(f"  세션 초기화 완료 (소요 시간: {elapsed:.2f}초)")
+                    pass
                     print(f"  서버 정보: {result.serverInfo.name} v{result.serverInfo.version}")
                     if result.capabilities.tools:
                         print(f"  도구 기능 지원됨")
 
             except asyncio.TimeoutError:
                 elapsed = time.time() - start_time
-                print(f"  초기화 타임아웃 ({elapsed:.2f}/{init_timeout}초)")
+                # print(f"  초기화 타임아웃 ({elapsed:.2f}/{init_timeout}초)")
+                pass
                 raise
 
             except Exception as e:
-                print(f"  초기화 중 예외 발생: {type(e).__name__}: {e}")
+                # print(f"  초기화 중 예외 발생: {type(e).__name__}: {e}")
+                pass
                 raise
 
             return session

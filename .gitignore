@@ -40,6 +40,7 @@ data/
 
 # RAG DB
 agent/data/chroma
+agent/utils/chromaDB_data_example/
 
 # IDE
 .vscode/

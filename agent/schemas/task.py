@@ -12,7 +12,7 @@ class TaskStatus(Enum):
     """Task 상태"""
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
+    DONE = "done"
     FAILED = "failed"
 
 

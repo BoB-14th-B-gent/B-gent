@@ -429,19 +429,19 @@ def generate_high_level_plan(
     try:
         import time
         llm_start = time.time()
-        print(f" LLM 호출 중 (High-level Planning)...")
+        # print(f" LLM 호출 중 (High-level Planning)...")
 
         response = llm.chat(messages, response_format_json=True, timeout=60)
 
         llm_elapsed = time.time() - llm_start
-        print(f" LLM 응답 완료 ({llm_elapsed:.2f}초)")
+        # print(f" LLM 응답 완료 ({llm_elapsed:.2f}초)")
         content = response["choices"][0]["message"]["content"]
         data = json.loads(content)
 
         tasks_data = data.get("tasks", [])
 
         if not tasks_data:
-            print("LLM이 빈 계획을 생성했습니다. 기본 계획을 사용합니다.")
+            # print("LLM이 빈 계획을 생성했습니다. 기본 계획을 사용합니다.")
             return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
 
         tasks = []
@@ -450,7 +450,7 @@ def generate_high_level_plan(
             try:
                 task_type = TaskType(task_type_str)
             except ValueError:
-                print(f"알 수 없는 task_type: {task_type_str}, CUSTOM으로 설정")
+                # print(f"알 수 없는 task_type: {task_type_str}, CUSTOM으로 설정")
                 task_type = TaskType.CUSTOM
 
             task = HighLevelTask(
@@ -468,13 +468,13 @@ def generate_high_level_plan(
         return tasks
 
     except json.JSONDecodeError as e:
-        print(f"LLM 응답 파싱 실패: {e}")
+        # print(f"LLM 응답 파싱 실패: {e}")
         return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
 
     except Exception as e:
-        print(f"High-level 계획 생성 실패: {e}")
-        import traceback
-        traceback.print_exc()
+        # print(f"High-level 계획 생성 실패: {e}")
+        # import traceback
+        # traceback.print_exc()
         return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
 
 
@@ -499,9 +499,9 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str,
     ghidra_tasks = [t for t in tasks if t.metadata.get("tool_hint") == "ghidra"]
 
     if is_ghidra_request and not ghidra_tasks:
-        print("\n[!]  Ghidra 요청이지만 LLM이 잘못된 도구를 선택했습니다!")
-        print(f"   LLM 선택: {[t.metadata.get('tool_hint') for t in tasks]}")
-        print(f"   자동 수정: Ghidra 2단계 구조로 교체")
+        # print("\n[!]  Ghidra 요청이지만 LLM이 잘못된 도구를 선택했습니다!")
+        # print(f"   LLM 선택: {[t.metadata.get('tool_hint') for t in tasks]}")
+        # print(f"   자동 수정: Ghidra 2단계 구조로 교체")
 
         task_001 = HighLevelTask(
             task_id="task_001",
@@ -521,9 +521,9 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str,
             metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
         )
 
-        print(f"\n✓ Ghidra Task 자동 생성 완료:")
-        print(f"  1. {task_001.task_id}: {task_001.description}")
-        print(f"  2. {task_002.task_id}: {task_002.description} (의존: {task_002.dependencies})")
+        # print(f"\n✓ Ghidra Task 자동 생성 완료:")
+        # print(f"  1. {task_001.task_id}: {task_001.description}")
+        # print(f"  2. {task_002.task_id}: {task_002.description} (의존: {task_002.dependencies})")
 
         return [task_001, task_002]
 
@@ -532,12 +532,12 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str,
         has_decompile = any(t.metadata.get("analysis_phase") == "decompile" for t in ghidra_tasks)
 
         if has_metadata and has_decompile:
-            print("Ghidra Task 검증 통과 (2단계 구조 확인)")
+            # print("Ghidra Task 검증 통과 (2단계 구조 확인)")
             return tasks
 
-    print("\nGhidra Task 구조 오류 감지!")
-    print(f"   현재: {len(ghidra_tasks)}개 Ghidra Task")
-    print(f"   자동 수정: 2단계 구조로 분리")
+    # print("\nGhidra Task 구조 오류 감지!")
+    # print(f"   현재: {len(ghidra_tasks)}개 Ghidra Task")
+    # print(f"   자동 수정: 2단계 구조로 분리")
 
     non_ghidra_tasks = [t for t in tasks if t.metadata.get("tool_hint") != "ghidra"]
     task_001 = HighLevelTask(
@@ -568,9 +568,9 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str,
     else:
         result = [task_001, task_002]
 
-    print(f"\n✓ Ghidra Task 자동 수정 완료:")
-    print(f"  1. {task_001.task_id}: {task_001.description}")
-    print(f"  2. {task_002.task_id}: {task_002.description} (의존: {task_002.dependencies})")
+    # print(f"\n✓ Ghidra Task 자동 수정 완료:")
+    # print(f"  1. {task_001.task_id}: {task_001.description}")
+    # print(f"  2. {task_002.task_id}: {task_002.description} (의존: {task_002.dependencies})")
 
     return result
 
@@ -593,16 +593,16 @@ def _generate_default_high_level_plan(
         List[HighLevelTask]: 기본 Task 리스트
     """
     import sys
-    sys.stderr.write("\n[!] 기본 High-level 계획을 사용합니다 (LLM 폴백)\n")
-    sys.stderr.flush()
+    # sys.stderr.write("\n[!] 기본 High-level 계획을 사용합니다 (LLM 폴백)\n")
+    # sys.stderr.flush()
 
     tasks = []
     prompt_lower = user_prompt.lower()
 
     ghidra_keywords = ["ghidra", "바이너리", "리버스", "디컴파일", "reverse", "binary", "decompile"]
     if any(kw in prompt_lower for kw in ghidra_keywords):
-        sys.stderr.write("[!] Ghidra 키워드 감지 → Ghidra 2-Task 구조 생성 (기본)\n")
-        sys.stderr.flush()
+        # sys.stderr.write("[!] Ghidra 키워드 감지 → Ghidra 2-Task 구조 생성 (기본)\n")
+        # sys.stderr.flush()
         return [
             HighLevelTask(
                 task_id="task_001",
@@ -706,5 +706,5 @@ def _generate_default_high_level_plan(
             metadata={"tool_hint": "elastic", "priority": "medium"}
         ))
 
-    print(f"  기본 계획 생성 완료: {len(tasks)}개 Task")
+    # print(f"  기본 계획 생성 완료: {len(tasks)}개 Task")
     return tasks

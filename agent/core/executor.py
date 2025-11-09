@@ -62,8 +62,8 @@ def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult
     last_error = None
 
     if action.params.get("_skip_execution"):
-        print(f"[!]  건너뜀: {action.tool}.{action.operation}")
-        print(f"   이유: 이전 단계 실패로 인해 실행 불가")
+        # print(f"[!]  건너뜀: {action.tool}.{action.operation}")
+        # print(f"   이유: 이전 단계 실패로 인해 실행 불가")
         return ActionResult(
             action=action,
             success=False,
@@ -77,13 +77,14 @@ def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult
         try:
 
             if attempt > 0:
-                print(f"[!] 재시도 {attempt}/{max_retries}: {action.tool}.{action.operation}")
+                # print(f"[!] 재시도 {attempt}/{max_retries}: {action.tool}.{action.operation}")
                 sleep_time = min(2 ** (attempt - 1), 10)
                 time.sleep(sleep_time)
 
             else:
-                print(f"   실행 중: {action.tool}.{action.operation}")
-                print(f"   이유: {action.reason}")
+                # print(f"   실행 중: {action.tool}.{action.operation}")
+                # print(f"   이유: {action.reason}")
+                pass
             result = _call_mcp_tool_with_timeout(action, timeout)
             execution_time = time.time() - start_time
 
@@ -99,18 +100,24 @@ def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult
                     job_id=job_id
                 )
 
+                if job_id:
+                    from ..storage.job_storage import add_mcp_tool
+                    add_mcp_tool(job_id, action.tool, action.operation)
+
                 if result_data:
                     preview = str(result_data)
                     if len(preview) > PREVIEW_MAX_LENGTH:
                         preview = preview[:PREVIEW_MAX_LENGTH] + f"\n... (총 {len(preview)}자, 나머지 생략)"
 
-                    print(f"[✓] 완료 ({execution_time:.2f}초)")
-                    print(f"\n   결과:")
-                    print(SEPARATOR)
-                    print(preview)
-                    print(SEPARATOR)
+                    # print(f"[✓] 완료 ({execution_time:.2f}초)")
+                    # print(f"\n   결과:")
+                    # print(SEPARATOR)
+                    # print(preview)
+                    # print(SEPARATOR)
+                    pass
                 else:
-                    print(f"[✓] 완료 ({execution_time:.2f}초) - 결과 없음")
+                    # print(f"[✓] 완료 ({execution_time:.2f}초) - 결과 없음")
+                    pass
 
                 return ActionResult(
                     action=action,
@@ -133,11 +140,12 @@ def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult
                 )
 
                 if attempt < max_retries and _is_retryable_error(error_msg):
-                    print(f"[✗]  실패 (재시도 가능): {error_msg}")
+                    # print(f"[✗]  실패 (재시도 가능): {error_msg}")
                     continue
 
                 else:
-                    print(f"[✗] 실패: {error_msg}")
+                    # print(f"[✗] 실패: {error_msg}")
+                    pass
 
                     return ActionResult(
                         action=action,
@@ -152,11 +160,12 @@ def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult
             last_error = error_msg
 
             if attempt < max_retries:
-                print(f"[!]  {error_msg} - 재시도 중...")
+                # print(f"[!]  {error_msg} - 재시도 중...")
                 continue
 
             else:
-                print(f"[✗] {error_msg}")
+                # print(f"[✗] {error_msg}")
+                pass
 
                 return ActionResult(
                     action=action,
@@ -171,11 +180,11 @@ def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult
             last_error = error_msg
 
             if attempt < max_retries and _is_retryable_error(error_msg):
-                print(f"[✗]  예외 발생 (재시도 가능): {e}")
+                # print(f"[✗]  예외 발생 (재시도 가능): {e}")
                 continue
 
             else:
-                print(f"[✗] 예외 발생: {e}")
+                # print(f"[✗] 예외 발생: {e}")
                 # traceback 출력 (디버깅용)
                 import traceback
                 traceback.print_exc()

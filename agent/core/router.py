@@ -19,7 +19,10 @@ def run_job(
     file_paths: Optional[List[str]] = None,
     file_meta: Optional[Dict[str, Any]] = None,
     generate_report_flag: bool = False,
-    report_dir: str = "./data/reports"
+    report_dir: str = "./data/reports",
+    conversation_id: Optional[str] = None,
+    trigger_id: Optional[str] = None,
+    stage_id: Optional[int] = None
 ) -> Dict[str, Any]:
     """작업 실행 메인 진입점
 
@@ -95,11 +98,12 @@ def run_job(
 
     save_agent_state(
         agent_id=job_id,
-        stage_id=0,
+        stage_id=stage_id if stage_id is not None else 0,
         plan=[],
         status="running",
         mcp_tools=[],
-        additional_data=initial_state 
+        conversation_id=conversation_id,
+        trigger_id=trigger_id
     )
 
     try:
@@ -130,12 +134,7 @@ def run_job(
 
         save_agent_state(
             agent_id=job_id,
-            status="completed" if fail_count == 0 else "failed",
-            additional_data={
-                "result": final_state,
-                "summary": summary.to_dict(),
-                "execution_time_seconds": execution_time
-            }
+            status="done" if fail_count == 0 else "failed"
         )
 
         result = {
@@ -144,10 +143,11 @@ def run_job(
             "state": final_state
         }
 
-        print(f"\n[Summary]")
-        print(f"Total: {len(completed_tasks)} tasks, {total_steps} actions, {execution_time:.2f}s")
+        # print(f"\n[Summary]")
+        # print(f"Total: {len(completed_tasks)} tasks, {total_steps} actions, {execution_time:.2f}s")
         if fail_count > 0:
-            print(f"Status: {success_count} succeeded, {fail_count} failed")
+            # print(f"Status: {success_count} succeeded, {fail_count} failed")
+            pass
 
         return result
 
@@ -178,16 +178,11 @@ def run_job(
 
             save_agent_state(
                 agent_id=job_id,
-                status="completed",
-                additional_data={
-                    "summary": summary.to_dict(),
-                    "execution_time_seconds": execution_time,
-                    "note": "Stopped at iteration limit"
-                }
+                status="done"
             )
 
-            print(f"\n[Summary]")
-            print(f"Total: {len(completed_tasks)} tasks, {total_steps} actions, {execution_time:.2f}s")
+            # print(f"\n[Summary]")
+            # print(f"Total: {len(completed_tasks)} tasks, {total_steps} actions, {execution_time:.2f}s")
 
             return {
                 "job_id": job_id,
@@ -195,15 +190,11 @@ def run_job(
                 "state": initial_state
             }
 
-        print(f"\n[✗] Error: {error_msg}")
+        # print(f"\n[✗] Error: {error_msg}")
 
         save_agent_state(
             agent_id=job_id,
-            status="failed",
-            additional_data={
-                "error": error_msg,
-                "execution_time_seconds": execution_time
-            }
+            status="failed"
         )
 
         return {
