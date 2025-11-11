@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 
 class TriggerAnalyzeIn(BaseModel):
-    trigger_id: str = Field(..., description="TRIGGERS._id (hex string)")
+    trigger_id: str
 
 class TriggerAnalyzeOut(BaseModel):
     ok: bool = True
