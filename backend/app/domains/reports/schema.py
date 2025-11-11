@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 class ReportIdOut(BaseModel):
     _id: str
@@ -11,6 +11,7 @@ class ReportDetailOut(BaseModel):
     stage_id: Optional[int] = None
     trigger_id: Optional[str] = None
     created_at: str
+    structured: Optional[Dict[str, Any]] = None
 
 class ReportListOut(BaseModel):
     total: int
