@@ -62,28 +62,19 @@ export const useUIStore = create<UIState>((set, get) => ({
   promptOpen: false,
   activePromptId: null,
   setActivePrompt: id => set({ activePromptId: id }),
-  openPrompt: () => {
-    const sel = get().selectedNodeId
-    set({ promptOpen: true, activePromptId: sel ?? get().activePromptId })
-  },
+  openPrompt: () => set({ promptOpen: true }),
   closePrompt: () => set({ promptOpen: false, activePromptId: null }),
 
   agentOpen: false,
   activeAgentId: null,
   setActiveAgent: id => set({ activeAgentId: id }),
-  openAgent: () => {
-    const sel = get().selectedNodeId
-    set({ agentOpen: true, activeAgentId: sel ?? get().activeAgentId })
-  },
+  openAgent: () => set({ agentOpen: true }),
   closeAgent: () => set({ agentOpen: false, activeAgentId: null }),
 
   mcpserverOpen: false,
   activeMCPServerId: null,
   setActiveMCPServer: id => set({ activeMCPServerId: id }),
-  openMCPServer: () => {
-    const sel = get().selectedNodeId
-    set({ mcpserverOpen: true, activeMCPServerId: sel ?? get().activeMCPServerId })
-  },
+  openMCPServer: () => set({ mcpserverOpen: true }),
   closeMCPServer: () => set({ mcpserverOpen: false, activeMCPServerId: null }),
 
   totalreportOpen: false,
@@ -114,7 +105,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   setTotalReportRaw: (raw: string) => set({ totalReportRaw: raw }),
 
   conversationId: null,
-  setConversationId: (id) => set({ conversationId: id }),
+  setConversationId: id => set({ conversationId: id }),
   currentTriggerId: null,
-  setCurrentTriggerId: (id) => set({ currentTriggerId: id }),
+  setCurrentTriggerId: id => set({ currentTriggerId: id }),
 }))
