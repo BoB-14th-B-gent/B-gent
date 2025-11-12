@@ -18,10 +18,7 @@ export default function TotalReportNode({ data }: NodeProps<TotalData>) {
       <button
         type="button"
         aria-pressed={isActive}
-        onClick={e => {
-          e.stopPropagation()
-          data.onClick?.()
-        }}
+        onClick={data.onClick}
         onMouseDown={e => e.stopPropagation()}
         className="relative flex h-35 w-35 items-center justify-center rounded-full transition-all duration-200 hover:cursor-pointer"
         style={{
