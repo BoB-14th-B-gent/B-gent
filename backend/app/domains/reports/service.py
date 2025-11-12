@@ -1,12 +1,12 @@
 import os
 from typing import Any, Dict, Optional
-from datetime import datetime, timezone
+from datetime import datetime
 from bson import ObjectId
 from app.db.mongo import get_db
 
 from app.domains.reports.parser import parse_incident_report
 
-REPORTS_COLL = os.getenv("REPORTS_COLL", "REPORTS")
+REPORTS_COLL = os.getenv("REPORTS_COLL")
 
 def _fmt_date(v: Any) -> Optional[str]:
     if isinstance(v, datetime):
@@ -44,42 +44,20 @@ def get_report_detail(report_id: str) -> Optional[Dict[str, Any]]:
         "structured": doc.get("structured"),
     }
 
-def list_reports(
-    conversation_id: Optional[str] = None,
-    stage_id: Optional[int] = None,
-    limit: int = 50
-) -> Dict[str, Any]:
-    query: Dict[str, Any] = {}
-
-    if conversation_id is not None:
-        if not ObjectId.is_valid(conversation_id):
-            raise ValueError("invalid conversation_id")
-        query["conversation_id"] = ObjectId(conversation_id)
-
-    if stage_id is not None:
-        try:
-            query["stage_id"] = int(stage_id)
-        except Exception:
-            raise ValueError("stage_id must be int")
-
+def get_latest_report_detail() -> Optional[Dict[str, Any]]:
     db = get_db()
-    cursor = db[REPORTS_COLL].find(query).sort("created_at", -1).limit(int(limit))
-
-    items = []
-    for doc in cursor:
-        items.append({
-            "_id": str(doc["_id"]),
-            "report": doc.get("report", ""),
-            "conversation_id": _to_str_oid(doc.get("conversation_id")),
-            "stage_id": doc.get("stage_id"),
-            "trigger_id": _to_str_oid(doc.get("trigger_id")),
-            "created_at": _fmt_date(doc.get("created_at")),
-            "structured": doc.get("structured"),
-        })
+    doc = db[REPORTS_COLL].find_one({}, sort=[("created_at", -1), ("_id", -1)])
+    if not doc:
+        return None
 
     return {
-        "total": len(items),
-        "items": items,
+        "_id": str(doc["_id"]),
+        "report": doc.get("report", ""),
+        "conversation_id": _to_str_oid(doc.get("conversation_id")),
+        "stage_id": doc.get("stage_id"),
+        "trigger_id": _to_str_oid(doc.get("trigger_id")),
+        "created_at": _fmt_date(doc.get("created_at")),
+        "structured": doc.get("structured"),
     }
 
 def parse_and_save_structured(report_id: str, text_override: Optional[str] = None) -> Dict[str, Any]:
