@@ -6,6 +6,4 @@ import ReportWindow from '@/pages/ReportWindow'
 const route = window.location.hash
 const Page = route.startsWith('#/report-window') ? ReportWindow : App
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-    <Page />
-)
+ReactDOM.createRoot(document.getElementById('root')!).render(<Page />)
