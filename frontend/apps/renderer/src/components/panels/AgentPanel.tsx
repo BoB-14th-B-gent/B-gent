@@ -1,16 +1,157 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useMemo, useState } from 'react'
 import { useUIStore } from '@/store/ui'
-import { dummyAgentRun, type StepStatus } from '@/data/dummyAgentRuns'
+import {
+  startDummyAgentStream,
+  type TaskStatus as PlanTaskStatus,
+  type PlanTask,
+} from '@/data/dummyAgentStream'
+
+export type StepStatus = 'pending' | 'running' | 'done' | 'failed'
+interface AgentStep {
+  id: string
+  title: string
+  detail?: string
+  status: StepStatus
+  startedAt?: string
+  updatedAt?: string
+  finishedAt?: string
+}
+
+function mapPlanStatusToStepStatus(s: PlanTaskStatus): StepStatus {
+  if (s === 'in_progress') return 'running'
+  return s as StepStatus
+}
 
 export default function AgentPanel() {
   const { agentOpen, closeAgent } = useUIStore()
 
-  const { steps, logs } = dummyAgentRun
+  const [steps, setSteps] = useState<AgentStep[]>([])
+  const [logs, setLogs] = useState<string[]>([])
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null)
+  const [agentStatus, setAgentStatus] = useState<'running' | 'done' | 'failed'>('running')
 
-  const doneCount = steps.filter(s => s.status === 'done').length
-  const runningCount = steps.filter(s => s.status === 'running').length
-  const total = steps.length
+  const [toolSteps, setToolSteps] = useState<AgentStep[]>([])
+
+  const startedAtRef = useRef<Record<string, string>>({})
+  const finishedAtRef = useRef<Record<string, string>>({})
+  const updatedAtRef = useRef<Record<string, string>>({}) // ⬅️ 추가
+  const prevStatusRef = useRef<Record<string, PlanTaskStatus>>({})
+
+  useEffect(() => {
+    if (!agentOpen) return
+    startedAtRef.current = {}
+    finishedAtRef.current = {}
+    updatedAtRef.current = {}
+    prevStatusRef.current = {}
+  }, [agentOpen])
+
+  function toToolSteps(plan: PlanTask[], updatedAt?: string): AgentStep[] {
+    const out: AgentStep[] = []
+    for (const p of plan) {
+      const tools = p.mcp_tools ?? []
+      if (tools.length === 0) {
+        if (p.status === 'in_progress') {
+          out.push({
+            id: `${p.task_id}__waiting`,
+            title: `${p.mcp_server ?? 'MCP'}: 준비 중`,
+            status: 'running',
+            startedAt: updatedAt?.slice(11, 19),
+          })
+        }
+        continue
+      }
+      tools.forEach((tool, idx) => {
+        const isLast = idx === tools.length - 1
+        const status: StepStatus = p.status === 'done' ? 'done' : isLast ? 'running' : 'done'
+        out.push({
+          id: `${p.task_id}__${tool}`,
+          title: `${p.mcp_server ?? 'MCP'}: ${tool}`,
+          status,
+          startedAt: status === 'running' ? updatedAt?.slice(11, 19) : undefined,
+          finishedAt: status === 'done' ? updatedAt?.slice(11, 19) : undefined,
+        })
+      })
+    }
+    return out
+  }
+
+  useEffect(() => {
+    if (!agentOpen) return
+
+    setSteps([])
+    setLogs([])
+    setUpdatedAt(null)
+    setAgentStatus('running')
+
+    const stop = startDummyAgentStream({
+      stepMs: 500,
+      onEvent: ev => {
+        if (ev.type === 'state_update' && ev.data) {
+          const ts = ev.data.updated_at?.slice(11, 19) ?? ''
+
+          for (const p of ev.data.plan) {
+            const prev = prevStatusRef.current[p.task_id]
+
+            if (
+              prev !== 'in_progress' &&
+              p.status === 'in_progress' &&
+              !startedAtRef.current[p.task_id]
+            ) {
+              startedAtRef.current[p.task_id] = ts
+            }
+            if (p.status === 'in_progress') {
+              updatedAtRef.current[p.task_id] = ts
+            }
+            if (prev !== 'done' && p.status === 'done' && !finishedAtRef.current[p.task_id]) {
+              finishedAtRef.current[p.task_id] = ts
+            }
+
+            prevStatusRef.current[p.task_id] = p.status
+          }
+
+          const nextSteps: AgentStep[] = ev.data.plan.map(p => {
+            const tools = p.mcp_tools ?? []
+            const lastTool = tools.length ? tools[tools.length - 1] : '준비 중'
+
+            return {
+              id: p.task_id,
+              title: p.description,
+              detail: `${p.mcp_server} · ${lastTool}`,
+              status: mapPlanStatusToStepStatus(p.status),
+              startedAt: startedAtRef.current[p.task_id],
+              finishedAt: finishedAtRef.current[p.task_id],
+              updatedAt: updatedAtRef.current[p.task_id],
+            }
+          })
+
+          setSteps(nextSteps)
+          setToolSteps(toToolSteps(ev.data.plan ?? [], ev.data.updated_at))
+          setUpdatedAt(ev.data.updated_at)
+          setAgentStatus(
+            ev.data.status === 'done' || ev.data.status === 'completed' ? 'done' : 'running'
+          )
+        } else if (ev.type === 'log' && ev.text) {
+          setLogs(prev => [...prev, ev.text])
+        }
+      },
+    })
+
+    // ⬇️ 정리 함수 추가 (경고 제거 + 메모리 누수 방지)
+    return () => {
+      stop?.()
+    }
+  }, [agentOpen])
+
+  const doneCount = useMemo(() => steps.filter(s => s.status === 'done').length, [steps])
+  const runningCount = useMemo(() => steps.filter(s => s.status === 'running').length, [steps])
+  const total = useMemo(() => steps.length || 1, [steps])
   const progress = Math.round(((doneCount + runningCount * 0.5) / total) * 100)
+
+  const allDone = useMemo(
+    () => (steps.length > 0 && steps.every(s => s.status === 'done')) || agentStatus === 'done',
+    [steps, agentStatus]
+  )
+  const currentRunning = useMemo(() => steps.find(s => s.status === 'running'), [steps])
 
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -51,8 +192,16 @@ export default function AgentPanel() {
         }}
       >
         <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>AGENT</span>
+        <span style={{ fontSize: 12, color: '#475569', marginLeft: 8 }}>
+          {allDone ? 'DONE' : 'RUNNING'}
+        </span>
 
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          {updatedAt && (
+            <span style={{ fontSize: 11, color: '#64748b' }}>
+              갱신: {updatedAt.replace('T', ' ').slice(0, 19)}
+            </span>
+          )}
           <span
             title="진행률"
             style={{
@@ -65,7 +214,7 @@ export default function AgentPanel() {
               fontWeight: 600,
             }}
           >
-            {progress}% 진행
+            {allDone ? 100 : progress}% 진행
           </span>
 
           <button
@@ -92,17 +241,13 @@ export default function AgentPanel() {
 
       <div
         aria-hidden
-        style={{
-          height: 4,
-          background: 'rgba(15,23,42,0.06)',
-          position: 'relative',
-        }}
+        style={{ height: 4, background: 'rgba(15,23,42,0.06)', position: 'relative' }}
       >
         <div
           style={{
             position: 'absolute',
             inset: 0,
-            width: `${progress}%`,
+            width: `${allDone ? 100 : progress}%`,
             background: 'linear-gradient(90deg, #034078, rgba(59,130,246,0.85))',
             transition: 'width 240ms ease',
           }}
@@ -135,7 +280,7 @@ export default function AgentPanel() {
                 width: 8,
                 height: 8,
                 borderRadius: '50%',
-                background: '#22c55e',
+                background: currentRunning ? '#22c55e' : allDone ? '#034078' : '#cbd5e1',
               }}
             />
             <strong style={{ fontSize: 14, color: '#0f172a' }}>현재 단계</strong>
@@ -143,16 +288,25 @@ export default function AgentPanel() {
               실시간 업데이트
             </span>
           </div>
-          <div style={{ marginTop: 8 }}>
-            {steps.find(s => s.status === 'running') ? (
+          <div style={{ marginTop: 8, fontSize: 13, color: '#0f172a' }}>
+            {currentRunning ? (
+              <>
+                <b>{currentRunning.title}</b>
+                {currentRunning.detail && (
+                  <div style={{ marginTop: 4, color: '#475569' }}>{currentRunning.detail}</div>
+                )}
+              </>
+            ) : allDone ? (
               <div style={{ fontSize: 13, color: '#0f172a' }}>
-                <b>{steps.find(s => s.status === 'running')?.title ?? '—'}</b>
+                <b>모든 단계 완료</b>
                 <div style={{ marginTop: 4, color: '#475569' }}>
-                  {steps.find(s => s.status === 'running')?.detail}
+                  {updatedAt
+                    ? `완료 시각: ${updatedAt.replace('T', ' ').slice(0, 19)}`
+                    : '완료되었습니다.'}
                 </div>
               </div>
             ) : (
-              <div style={{ fontSize: 13, color: '#475569' }}>대기 중…</div>
+              <div style={{ fontSize: 13, color: '#475569' }}>MCP Server 로딩 중…</div>
             )}
           </div>
         </section>
@@ -181,7 +335,6 @@ export default function AgentPanel() {
                 }}
               >
                 <StatusDot status={step.status} />
-
                 <div style={{ minWidth: 0 }}>
                   <div
                     style={{
@@ -215,8 +368,8 @@ export default function AgentPanel() {
                 <div style={{ textAlign: 'right', color: '#64748b', fontSize: 12 }}>
                   {step.status === 'done' && step.finishedAt
                     ? step.finishedAt
-                    : step.status === 'running' && step.startedAt
-                      ? step.startedAt
+                    : step.status === 'running'
+                      ? step.updatedAt || step.startedAt || '—'
                       : '—'}
                 </div>
               </li>
@@ -244,9 +397,11 @@ export default function AgentPanel() {
               padding: 10,
               lineHeight: 1.5,
               whiteSpace: 'pre-wrap',
+              maxHeight: 220,
+              overflow: 'auto',
             }}
           >
-            {logs.join('\n')}
+            {logs.length ? logs.join('\n') : '—'}
           </div>
         </section>
       </div>

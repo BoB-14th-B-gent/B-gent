@@ -20,10 +20,7 @@ export default function AgentNode({ data }: NodeProps<AgentData>) {
       <button
         type="button"
         aria-pressed={isActive}
-        onClick={e => {
-          e.stopPropagation()
-          data.onClick?.()
-        }}
+        onClick={data.onClick}
         onMouseDown={e => e.stopPropagation()}
         className="relative flex h-30 w-30 items-center justify-center rounded-full transition-all duration-200 hover:cursor-pointer"
         style={{
