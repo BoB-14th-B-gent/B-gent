@@ -6,6 +6,12 @@ declare global {
       openFileDialog: () => Promise<string | null>
       request: (init: RequestInit & { path: string }) =>
         Promise<{ status: number; json: any }>
+      saveFile: (opts: {
+        data: string | Uint8Array
+        defaultPath?: string
+        filters?: { name: string; extensions: string[] }[]
+      }) => Promise<string | undefined> 
+      openReportWindow?: (payload: { reportId?: string }) => Promise<any>
     }
   }
 }
