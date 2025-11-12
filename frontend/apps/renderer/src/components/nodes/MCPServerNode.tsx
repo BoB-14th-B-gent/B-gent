@@ -20,10 +20,7 @@ export default function MCPServerNode({ data }: NodeProps<MCPServerData>) {
       <button
         type="button"
         aria-pressed={isActive}
-        onClick={e => {
-          e.stopPropagation()
-          data.onClick?.()
-        }}
+        onClick={data.onClick}
         onMouseDown={e => e.stopPropagation()}
         className="relative flex h-24 w-24 items-center justify-center rounded-full transition-all duration-200 hover:cursor-pointer"
         style={{
