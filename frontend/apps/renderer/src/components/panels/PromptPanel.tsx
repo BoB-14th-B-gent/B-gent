@@ -1,19 +1,11 @@
 import { useUIStore, type ChatMsg } from '@/store/ui'
 import { useCallback, useMemo, useRef, useEffect, useState } from 'react'
-import { dummyMessages } from '@/data/dummyMessages'
+import { graphEvents } from '@/graph/events'
+import { makeNode, makeEdge, PALETTE } from '@/graph/dynamicLayout'
+import { pipelineRun, getReport } from '@/utils/api'
 
-const BASE = import.meta.env.VITE_BACKEND_URL
-
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
-    ...init,
-  })
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '')
-    throw new Error(`[${resp.status}] ${resp.statusText} – ${text}`)
-  }
-  return resp.json() as Promise<T>
+function emitGraph(detail: unknown) {
+  graphEvents.dispatchEvent(new CustomEvent('graph', { detail }))
 }
 
 export default function PromptPanel() {
@@ -24,10 +16,10 @@ export default function PromptPanel() {
     closePrompt,
     panelMessages,
     pushPanelMessage,
-    setPanelMessages,
+    setConversationId: setConvIdInStore,
+    setCurrentTriggerId,
   } = useUIStore()
 
-  const [conversationId, setConversationId] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -35,9 +27,9 @@ export default function PromptPanel() {
 
   useEffect(() => {
     if (!promptOpen) return
-    if (panelMessages.length > 0) return
-    setPanelMessages(dummyMessages)
-  }, [promptOpen, panelMessages.length, setPanelMessages])
+    const t = setTimeout(() => inputRef.current?.focus(), 50)
+    return () => clearTimeout(t)
+  }, [promptOpen])
 
   useEffect(() => {
     if (!scrollRef.current) return
@@ -54,106 +46,78 @@ export default function PromptPanel() {
     autoGrow()
   }, [promptText, promptOpen])
 
-  const runReportFlow = useCallback(
-    async (userText: string) => {
-      let convId = conversationId
-      if (!convId) {
-        const conv = await api<{ _id: string; title: string; created_at: string }>(
-          `/conversations`,
-          {
-            method: 'POST',
-            body: JSON.stringify({ input: userText.slice(0, 60) || 'conversation' }),
-          }
-        )
-        convId = conv._id
-        setConversationId(convId)
-      }
-
-      await api(`/conversations/${convId}/messages`, {
-        method: 'POST',
-        body: JSON.stringify({ role: 'USER', stage_id: 0, content: userText }),
-      })
-
-      const trig = await api<{ trigger_id: string; status: string; created_at: string }>(
-        `/triggers`,
-        { method: 'POST', body: JSON.stringify({ conversation_id: convId, stage_id: 0 }) }
-      )
-      const triggerId = trig.trigger_id
-
-      const evIn = await api<{ prompt_id: string; items: { evidence_id: string }[] }>(
-        `/evidences/input`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            conversation_id: convId,
-            mode: 'auto',
-            inline_threshold: 10 * 1024 * 1024,
-          }),
-        }
-      )
-      const promptId = evIn.prompt_id
-      const evRefs = evIn.items.map(x => ({ collection: 'INPUT_EVIDENCES', id: x.evidence_id }))
-
-      await api(`/triggers/${triggerId}/prompt`, {
-        method: 'PATCH',
-        body: JSON.stringify({ prompt_id: promptId }),
-      })
-
-      await api(`/triggers/${triggerId}/evidences`, {
-        method: 'PATCH',
-        body: JSON.stringify({ evidences: evRefs }),
-      })
-
-      const sllm = await api<{ ok: boolean; report_id: string }>(`/sllm/reports`, {
-        method: 'POST',
-        body: JSON.stringify({ trigger_id: triggerId }),
-      })
-      const reportId = sllm.report_id
-
-      await api(`/triggers/${triggerId}/report`, {
-        method: 'PATCH',
-        body: JSON.stringify({ report_id: reportId }),
-      })
-
-      const rep = await api<{ report: string; conversation_id: string }>(`/reports/${reportId}`, {
-        method: 'GET',
-      })
-
-      await api(`/conversations/${convId}/messages`, {
-        method: 'POST',
-        body: JSON.stringify({ role: 'B-GENT', stage_id: 0, content: rep.report }),
-      })
-
-      return rep.report
-    },
-    [conversationId]
-  )
-
   const onSubmit = useCallback(async () => {
     const text = promptText.trim()
     if (!text || sending) return
 
+    emitGraph({ type: 'reset' })
+
+    emitGraph({
+      type: 'add-node',
+      node: makeNode('prompt'),
+    })
+
+    emitGraph({
+      type: 'add-node',
+      node: makeNode('bgent'),
+    })
+
+    emitGraph({
+      type: 'add-edge',
+      edge: makeEdge('e-prompt-bgent', 'prompt', 'bgent', PALETTE.prompt, PALETTE.bgent),
+    })
+
+    emitGraph({ type: 'fit' })
+
     const userMsg: ChatMsg = { id: crypto.randomUUID(), role: 'user', text }
     pushPanelMessage(userMsg)
     setPromptText('')
-
     setSending(true)
+
     try {
-      const reportText = await runReportFlow(text)
-      const botMsg: ChatMsg = { id: crypto.randomUUID(), role: 'bgent', text: reportText }
-      pushPanelMessage(botMsg)
-    } catch (err: any) {
+      const res = await pipelineRun({ input: text })
+      setConvIdInStore?.(res.conversation_id)
+      setCurrentTriggerId?.(res.trigger_id)
+
+      const reportDoc = await getReport(res.report_id)
+
+      let summary = ''
+      const s = (reportDoc as any)?.structured?.sections
+      if (s) {
+        const execArr = s['executive summary'] ?? []
+        const addArr = s['additional evidence required'] ?? []
+
+        const execPart = Array.isArray(execArr)
+          ? execArr.map((x: any) => `- ${x.bullet || x}`).join('\n')
+          : '- (none)'
+        const addPart = Array.isArray(addArr)
+          ? addArr.map((x: any) => `- ${x.what || x}`).join('\n')
+          : '- (none)'
+
+        summary = `[Executive Summary]\n${execPart}\n\n[Additional Evidence Required]\n${addPart}`
+      }
+
+      if (summary.trim()) {
+        const summaryMsg: ChatMsg = {
+          id: crypto.randomUUID(),
+          role: 'bgent',
+          text: summary,
+        }
+        pushPanelMessage(summaryMsg)
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
       const botMsg: ChatMsg = {
         id: crypto.randomUUID(),
         role: 'bgent',
-        text: `보고서 생성 중 오류가 발생했습니다.\n${err?.message ?? String(err)}`,
+        text: `보고서 생성 중 오류가 발생했습니다.\n${msg}`,
       }
       pushPanelMessage(botMsg)
-      console.error('[report-flow]', err)
+      console.error('[pipeline-run]', err)
     } finally {
       setSending(false)
     }
-  }, [promptText, sending, pushPanelMessage, setPromptText, runReportFlow])
+  }, [promptText, sending, pushPanelMessage, setPromptText, setConvIdInStore, setCurrentTriggerId])
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -168,10 +132,25 @@ export default function PromptPanel() {
 
   const canSend = useMemo(() => !sending && promptText.trim().length > 0, [sending, promptText])
 
-  return (
-    <aside
-      aria-hidden={!promptOpen}
-      style={{
+  const isIntro = panelMessages.length === 0
+  const shellStyle: React.CSSProperties = isIntro
+    ? {
+        position: 'fixed',
+        inset: 10,
+        fontFamily:
+          "Pretendard, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans KR', sans-serif",
+        background: 'rgba(255,255,255,0.78)',
+        backdropFilter: 'saturate(120%) blur(10px)',
+        border: '1px solid rgba(15,23,42,0.08)',
+        borderRadius: 14,
+        boxShadow: '0 10px 30px rgba(2,8,23,0.18)',
+        boxSizing: 'border-box',
+        zIndex: 60,
+        display: 'grid',
+        gridTemplateRows: 'auto 1fr auto',
+        transition: 'all 300ms ease',
+      }
+    : {
         position: 'fixed',
         top: 10,
         right: 10,
@@ -187,12 +166,14 @@ export default function PromptPanel() {
         boxShadow: '0 10px 30px rgba(2,8,23,0.18)',
         boxSizing: 'border-box',
         transform: `translateX(${promptOpen ? '0' : 'calc(100% + 12px)'})`,
-        transition: 'transform 240ms ease',
+        transition: 'transform 240ms ease, width 300ms ease',
         zIndex: 50,
         display: 'grid',
         gridTemplateRows: 'auto 1fr auto',
-      }}
-    >
+      }
+
+  return (
+    <aside aria-hidden={!promptOpen} style={shellStyle}>
       <header
         style={{
           padding: '12px 16px',
@@ -211,8 +192,45 @@ export default function PromptPanel() {
       <div
         ref={scrollRef}
         className="panel-scroll"
-        style={{ padding: 14, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}
+        style={{
+          position: 'relative',
+          padding: 14,
+          overflow: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+        }}
       >
+        {isIntro && (
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'grid',
+              placeItems: 'center',
+              pointerEvents: 'none',
+              userSelect: 'none',
+              opacity: 0.18,
+            }}
+          >
+            <div
+              style={{
+                fontWeight: 900,
+                letterSpacing: 2,
+                fontSize: 'clamp(48px, 12vw, 144px)',
+                background: 'linear-gradient(135deg, rgba(3,64,120,0.9), rgba(59,130,246,0.85))',
+                WebkitBackgroundClip: 'text',
+                backgroundClip: 'text',
+                color: 'transparent',
+                textShadow: '0 6px 18px rgba(2,8,23,0.18)',
+              }}
+            >
+              B-GENT
+            </div>
+          </div>
+        )}
+
         {panelMessages.map(m => (
           <MessageBubble key={m.id} role={m.role} text={m.text} />
         ))}
@@ -240,7 +258,13 @@ export default function PromptPanel() {
               autoGrow()
             }}
             onKeyDown={onKeyDown}
-            placeholder={sending ? '보고서 생성 중…' : 'B-gent! Be your Agent:)'}
+            placeholder={
+              sending
+                ? '보고서 생성 중…'
+                : isIntro
+                  ? '분석할 사건 설명과 증거파일명을 작성해주세요.'
+                  : 'B-gent! Be your Agent:)'
+            }
             disabled={sending}
             style={{
               font: 'inherit',
@@ -252,7 +276,6 @@ export default function PromptPanel() {
               border: 'none',
               outline: 'none',
               padding: '10px 12px',
-              borderRadius: 999,
               background: 'transparent',
               fontSize: 13,
               lineHeight: 1.5,
@@ -310,8 +333,8 @@ function MessageBubble({ role, text }: { role: 'user' | 'bgent'; text: string })
           boxShadow: '0 4px 10px rgba(2,8,23,0.06)',
           textAlign: 'left',
           whiteSpace: 'pre-wrap',
-          wordBreak: 'break-all',
-          overflowWrap: 'break-word',
+          wordBreak: 'break-word',
+          overflowWrap: 'anywhere',
           lineHeight: 1.55,
           fontSize: 13,
           fontWeight: 400,
