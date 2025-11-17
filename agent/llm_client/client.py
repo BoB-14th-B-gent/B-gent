@@ -22,7 +22,10 @@ class LLMClient:
         h = {"Content-Type": "application/json"}
 
         if self.api_key:
-            h["Authorization"] = f"Bearer {self.api_key}"
+            if self.kind == "remote":
+                h["x-api-key"] = self.api_key
+            else:
+                h["Authorization"] = f"Bearer {self.api_key}"
 
         return h
 
@@ -84,6 +87,52 @@ class LLMClient:
 
         return {"choices":[{"message":{"content":content}}]}
 
+    def _try_remote_api(self, messages: List[Dict[str, str]], response_format_json: bool, timeout: int) -> Dict[str, Any]:
+        """원격 커스텀 API 호출 ({"prompt": "..."} 형식)
+
+        응답 형식: {"ok": true, "output": "...", "adapter": "..."}
+        """
+        prompt_parts = []
+        for m in messages:
+            role = m.get('role', '')
+            content = m.get('content', '')
+            if isinstance(content, str):
+                prompt_parts.append(f"{role}: {content}")
+            else:
+                prompt_parts.append(f"{role}: {str(content)}")
+
+        prompt = "\n".join(prompt_parts)
+
+        if response_format_json:
+            prompt += "\n\nIMPORTANT: Respond with ONLY valid JSON. No explanations, no markdown code blocks, just raw JSON."
+
+        if not isinstance(prompt, str):
+            prompt = str(prompt)
+
+        payload = {"prompt": prompt}
+
+        # DEBUG: 요청 데이터 로깅
+        import sys
+        sys.stderr.write(f"\n[DEBUG] Remote API 요청:\n")
+        sys.stderr.write(f"  URL: {self.base}\n")
+        sys.stderr.write(f"  Payload type: {type(payload['prompt'])}\n")
+        sys.stderr.write(f"  Payload length: {len(payload['prompt'])}\n")
+        sys.stderr.write(f"  Payload preview: {payload['prompt'][:200]}...\n")
+        sys.stderr.flush()
+
+        r = requests.post(self.base, json=payload, headers=self._headers(), timeout=timeout, verify=self.verify)
+
+        if r.status_code == 404:
+            raise FileNotFoundError("remote_api_404")
+        r.raise_for_status()
+
+        resp_data = r.json()
+        if not resp_data.get("ok"):
+            raise RuntimeError(f"Remote API returned ok=false: {resp_data}")
+
+        content = resp_data.get("output", "")
+        return {"choices": [{"message": {"content": content}}]}
+
     def chat(self, messages: List[Dict[str, str]], response_format_json: bool = True, timeout: Optional[int] = None) -> Dict[str, Any]:
         """LLM API 호출 (자동 폴백 지원)
 
@@ -113,6 +162,11 @@ class LLMClient:
                 (self._try_ollama_chat, True),
                 (self._try_openai_chat, True),
                 (self._try_openai_completions, False)
+            ]
+
+        elif self.kind == "remote":
+            try_order = [
+                (self._try_remote_api, True)
             ]
 
         else:

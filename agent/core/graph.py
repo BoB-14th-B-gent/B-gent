@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Dict, Any, Literal
 from langgraph.graph import StateGraph, END
 from ..schemas.common import AgentState
+from ..utils.prompt_loader import format_prompt
 
 def create_workflow(mode: Literal["two_stage"] = "two_stage") -> StateGraph:
     """하이브리드 워크플로우 생성 (모드 고정)
@@ -173,13 +174,21 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
 
         job_id = state.get("job_id")
         if job_id:
-            plan_list = [{"task_id": t.task_id, "description": t.description, "status": "pending"} for t in high_level_tasks]
+            plan_list = [
+                {
+                    "task_id": t.task_id,
+                    "description": t.description,
+                    "mcp_server": "",
+                    "mcp_tools": [],
+                    "status": "pending"
+                }
+                for t in high_level_tasks
+            ]
             save_agent_state(
                 agent_id=job_id,
                 stage_id=1,
                 plan=plan_list,
-                status="running",
-                mcp_tools=[]
+                status="running"
             )
 
         return {
@@ -319,7 +328,17 @@ def node_react_init(state: Dict[str, Any]) -> Dict[str, Any]:
                     dependency_context += f"\n- {dep_id}: {dep_desc} ({success_count}/{len(dep_results)} successful)\n"
                     break
 
-    task_prompt = f"""{task.description}{dependency_context}
+    # 프롬프트 파일에서 로드
+    try:
+        task_prompt = format_prompt(
+            "react_task_template.txt",
+            task_description=task.description,
+            dependency_context=dependency_context
+        )
+    except FileNotFoundError:
+        import sys
+        sys.stderr.write("[WARNING] Prompt file not found, using inline fallback\n")
+        task_prompt = f"""{task.description}{dependency_context}
 
 **Your Goal:** Complete the task described above using available MCP tools.
 Think step by step, observe results, and adapt your actions accordingly."""
@@ -475,6 +494,8 @@ def node_react_execute(state: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     job_id = state.get("job_id")
+    current_task_dict = state.get("current_task", {})
+    task_id = current_task_dict.get("task_id") if current_task_dict else None
 
     tool_name = action_dict.get("tool", "").strip()
     operation_name = action_dict.get("operation", "").strip()
@@ -502,7 +523,7 @@ def node_react_execute(state: Dict[str, Any]) -> Dict[str, Any]:
 
     start_time = time.time()
 
-    result = execute_action(action, job_id=job_id)
+    result = execute_action(action, job_id=job_id, task_id=task_id)
 
     exec_time = time.time() - start_time
 
@@ -588,7 +609,7 @@ def should_continue_react(state: Dict[str, Any]) -> str:
         return "act"
 
 
-def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, job_id: str = None) -> Dict[str, Any]:
+def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, job_id: str = None, task_id: str = None) -> Dict[str, Any]:
     """Velociraptor 아티팩트를 정해진 순서대로 수집
 
     Velociraptor는 미리 정의된 순서대로 Windows 아티팩트를 수집합니다.
@@ -598,6 +619,7 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
         user_prompt: 사용자 요청
         file_paths: 디스크 이미지 경로 리스트
         job_id: 작업 ID
+        task_id: Task ID (task별 mcp_tools 추적용)
 
     Returns:
         Dict: ReAct 결과 형식과 동일
@@ -717,7 +739,7 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
 
             if job_id:
                 from ..storage.job_storage import add_mcp_tool
-                add_mcp_tool(job_id, "velociraptor", operation)
+                add_mcp_tool(job_id, "velociraptor", operation, task_id)
 
             if artifact.get("is_client_info"):
                 if isinstance(result, dict):
@@ -811,7 +833,16 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
         data_summary += f"### {obs['iteration']}. {action_name}\n"
         data_summary += f"Result: {result_preview}\n\n"
 
-    analysis_prompt = f"""You are a senior DFIR analyst specializing in Windows forensics.
+    # 프롬프트 파일에서 로드
+    try:
+        analysis_prompt = format_prompt(
+            "velociraptor_analysis.txt",
+            data_summary=data_summary
+        )
+    except FileNotFoundError:
+        import sys
+        sys.stderr.write("[WARNING] Prompt file not found, using inline fallback\n")
+        analysis_prompt = f"""You are a senior DFIR analyst specializing in Windows forensics.
 
 Analyze the collected Velociraptor artifacts and provide a comprehensive forensic report.
 
@@ -900,7 +931,7 @@ Please review raw artifact data."""
     }
 
 
-def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_id: str = None) -> Dict[str, Any]:
+def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_id: str = None, task_id: str = None) -> Dict[str, Any]:
     """SleuthKit 파일 추출 3단계 파이프라인
 
     ReAct Agent가 시행착오를 거치는 대신, 정해진 순서로 파일 추출 수행:
@@ -912,6 +943,7 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
         target_path: 추출할 파일 경로 (예: "C:/Users/winbg/AppData/Roaming/WindowsUpdate.py")
         file_paths: 디스크 이미지 경로 리스트
         job_id: 작업 ID
+        task_id: Task ID (task별 mcp_tools 추적용)
 
     Returns:
         Dict: ReAct 결과 형식과 동일
@@ -949,7 +981,7 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
 
         if job_id:
             from ..storage.job_storage import add_mcp_tool
-            add_mcp_tool(job_id, "sleuthkit", "disk_partition_info")
+            add_mcp_tool(job_id, "sleuthkit", "disk_partition_info", task_id)
 
         result_str = str(result)
         observations.append({
@@ -1023,7 +1055,7 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
 
         if job_id:
             from ..storage.job_storage import add_mcp_tool
-            add_mcp_tool(job_id, "sleuthkit", "search_inode_by_path")
+            add_mcp_tool(job_id, "sleuthkit", "search_inode_by_path", task_id)
 
         result_str = str(result)
         observations.append({
@@ -1106,7 +1138,7 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
 
         if job_id:
             from ..storage.job_storage import add_mcp_tool
-            add_mcp_tool(job_id, "sleuthkit", "extract_files_by_inode")
+            add_mcp_tool(job_id, "sleuthkit", "extract_files_by_inode", task_id)
 
         result_str = str(result)
         observations.append({
@@ -1160,10 +1192,98 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
     execution_time = time.time() - start_time
     # print(f"\n│ [✓] SleuthKit extraction pipeline: 3 steps, {execution_time:.2f}s")
 
+    # LLM 분석 단계 추가 (Velociraptor와 동일한 메커니즘)
+    # print(f"│ ")
+    # print(f"│ Analyzing extraction results with LLM...")
+    # print(f"│ ")
+
+    from ..llm_client.client import LLMClient
+    llm = LLMClient()
+
+    # 추출 과정 요약 생성
+    extraction_summary = f"**File Extraction Process:**\n\n"
+    for obs in observations:
+        action = obs['action']
+        action_name = f"{action['tool']}.{action['operation']}"
+        result_preview = obs['observation'][:500]
+        extraction_summary += f"### Step {obs['iteration']}: {action_name}\n"
+        extraction_summary += f"Result: {result_preview}\n\n"
+
+    # 상태 판단
+    status = "Success" if success else "Partial/Failed"
+
+    # 우선순위 점수 계산 (경로 기반 휴리스틱)
+    priority_score = 3  # 기본값
+    suspicious_paths = ['appdata', 'temp', 'startup', 'programdata', 'windows\\system32']
+    suspicious_extensions = ['.exe', '.dll', '.sys', '.bat', '.ps1', '.vbs', '.scr']
+
+    target_lower = target_path.lower()
+    if any(path in target_lower for path in suspicious_paths):
+        priority_score += 1
+    if any(ext in target_lower for ext in suspicious_extensions):
+        priority_score += 1
+    priority_score = min(priority_score, 5)
+
+    # 프롬프트 파일에서 로드 및 포맷팅
+    try:
+        analysis_prompt = format_prompt(
+            "sleuthkit_extraction_analysis.txt",
+            extraction_summary=extraction_summary,
+            target_path=target_path,
+            inode=inode,
+            status=status,
+            out_dir=out_dir,
+            priority_score=priority_score
+        )
+    except FileNotFoundError:
+        import sys
+        sys.stderr.write("[WARNING] Prompt file not found, using inline fallback\n")
+        analysis_prompt = f"""You are a senior DFIR analyst. Analyze this file extraction:
+
+{extraction_summary}
+
+Target: {target_path}
+Inode: {inode}
+Status: {status}
+Output: {out_dir}
+
+Provide forensic analysis of this extracted file, including risk assessment and recommended next steps."""
+
+    try:
+        # print(f"│ Requesting LLM analysis...")
+        response = llm.chat(
+            [{"role": "user", "content": analysis_prompt}],
+            timeout=60
+        )
+        analysis = response["choices"][0]["message"]["content"]
+        # print(f"│ ")
+        # print(f"│ [✓] Analysis completed!")
+        # print(f"│ ")
+
+    except Exception as e:
+        # print(f"│ ")
+        # print(f"│ [✗] Analysis failed: {e}")
+        # print(f"│ ")
+        analysis = f"""# SleuthKit File Extraction Summary
+
+## Extraction Result
+- **File**: {target_path}
+- **Inode**: {inode}
+- **Status**: {status}
+- **Output**: {out_dir}
+
+## Steps Performed
+{chr(10).join([f"{i+1}. {obs['action']['operation']}" for i, obs in enumerate(observations)])}
+
+Analysis generation failed: {str(e)}
+Please review the extracted file manually at {out_dir}"""
+
+    # print(f"│ Returning analysis results to workflow...")
+
     return {
         "observations": observations,
         "iterations": 3,
-        "answer": answer,
+        "answer": analysis,  # LLM이 생성한 분석 보고서 (Velociraptor와 동일)
         "success": success
     }
 
@@ -1192,10 +1312,11 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
 
     if react_context.get("use_velociraptor_sequence"):
         job_id = state.get("job_id")
+        task_id = current_task_dict.get("task_id")
         task_prompt = react_context.get("task_prompt", "")
         file_paths = react_context.get("file_paths", [])
 
-        react_result = _execute_velociraptor_sequence(task_prompt, file_paths, job_id)
+        react_result = _execute_velociraptor_sequence(task_prompt, file_paths, job_id, task_id)
 
         observations = react_result.get("observations", [])
         execution_results = []
@@ -1221,10 +1342,11 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
 
     elif react_context.get("use_sleuthkit_sequence"):
         job_id = state.get("job_id")
+        task_id = current_task_dict.get("task_id")
         target_path = react_context.get("target_path", "")
         file_paths = react_context.get("file_paths", [])
 
-        react_result = _execute_sleuthkit_sequence(target_path, file_paths, job_id)
+        react_result = _execute_sleuthkit_sequence(target_path, file_paths, job_id, task_id)
 
         observations = react_result.get("observations", [])
         execution_results = []

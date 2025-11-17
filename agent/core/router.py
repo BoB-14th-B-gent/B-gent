@@ -1,213 +1,200 @@
-"""메인 라우터 (오케스트레이터) 모듈
+"""LLM 클라이언트 모듈
 
-하이브리드 워크플로우 실행:
-- High-level Planning: LLM이 추상적 Task 생성
-- ReAct Execution: 각 Task를 ReAct Agent가 동적으로 실행
+OpenAI/Ollama 호환 LLM API 호출 제공
 """
 from __future__ import annotations
-import time
-import uuid
-from typing import Dict, Any, Optional, List, Literal
-from .graph import create_workflow
-from ..storage.job_storage import save_agent_state, update_agent_status
-from ..schemas.results import JobSummary
+import requests, json
+from typing import List, Dict, Any, Optional
+from ..config import get_config
+_cfg = get_config()
 
-WORKFLOW_MODE: Literal["two_stage"] = "two_stage"
+class LLMClient:
 
-def run_job(
-    user_prompt: str,
-    file_paths: Optional[List[str]] = None,
-    file_meta: Optional[Dict[str, Any]] = None,
-    generate_report_flag: bool = False,
-    report_dir: str = "./data/reports",
-    conversation_id: Optional[str] = None,
-    trigger_id: Optional[str] = None,
-    stage_id: Optional[int] = None
-) -> Dict[str, Any]:
-    """작업 실행 메인 진입점
+    def __init__(self):
+        self.base = _cfg.llm.base_url
+        self.verify = _cfg.llm.verify_ssl
+        self.model = _cfg.llm.model
+        self.api_key = _cfg.llm.api_key
+        self.kind = (_cfg.llm.api_kind or "openai").lower()
+        self._resolved_kind: Optional[str] = None
 
-    사용자 요청을 받아 LangGraph 워크플로우를 실행하고 결과 반환
+    def _headers(self):
+        h = {"Content-Type": "application/json"}
 
-    로직:
-        1. Job ID 생성 (uuid)
-        2. 초기 상태 생성 및 MongoDB 저장
-        3. LangGraph 워크플로우 실행 (plan → execute → finish)
-        4. 실행 시간 및 요약 생성
-        5. MongoDB에 결과 저장
-        6. 리포트 생성 (옵션)
-        7. 결과 반환
+        if self.api_key:
+            if self.kind == "remote":
+                h["x-api-key"] = self.api_key
+            else:
+                h["Authorization"] = f"Bearer {self.api_key}"
 
-    Args:
-        user_prompt: 사용자 요청 (예: "지난 24시간 IIS에서 cmd.exe 스폰 탐지")
-        file_paths: 파일 경로 배열 (디스크 이미지 등, 선택)
-        file_meta: 파일 ��타데이터 (선택)
-        generate_report_flag: 리포트 생성 여부 (기본값: False)
-        report_dir: 리포트 저장 디렉터리 (기본값: ./data/reports)
+        return h
 
-    Returns:
-        Dict[str, Any]: 작업 결과
-            - job_id: 작업 ID
-            - summary: 작업 요약 (성공/실패, 실행 시간 등)
-            - state: 최신 상태 (계획, 결과 등)
-            - report: 리포트 데이터 (generate_report_flag=True 경우)
+    def _try_openai_chat(self, messages: List[Dict[str, str]], response_format_json: bool, timeout: int) -> Dict[str, Any]:
+        url = f"{self.base}/v1/chat/completions"
+        payload = {"model": self.model, "messages": messages, "temperature": 0.1}
 
-    Example:
-        >>> result = run_job(
-        ...     user_prompt="인덱스 목록 조회",
-        ...     generate_report_flag=True
-        ... )
-        >>> print(result["summary"]["ok"])
-        True
-    """
-    job_id = uuid.uuid4().hex[:24]
-    start_time = time.time()
-    file_paths = file_paths or []
-        
-    if WORKFLOW_MODE == "two_stage":
-        initial_state = {
-            "job_id": job_id,
-            "user_prompt": user_prompt,
-            "file_paths": file_paths,
-            "file_meta": file_meta or {},
-            "high_level_tasks": [],
-            "task_queue_state": {},
-            "current_task": None,
-            "completed_tasks": [],
-            "plan": [],
-            "results": [],
-            "current_step": 0,
-            "timing": {
-                "high_level_planning": 0.0,
-                "tasks": {}
-            },
-            "completed": False,
-            "error": None
-        }
-    else:
-        initial_state = {
-            "job_id": job_id,
-            "user_prompt": user_prompt,
-            "file_paths": file_paths,
-            "file_meta": file_meta or {},
-            "plan": [],
-            "results": [],
-            "current_step": 0,
-            "completed": False,
-            "error": None
-        }
+        if response_format_json:
+            payload["response_format"] = {"type": "json_object"}
+        r = requests.post(url, json=payload, headers=self._headers(), timeout=timeout, verify=self.verify)
 
-    save_agent_state(
-        agent_id=job_id,
-        stage_id=stage_id if stage_id is not None else 0,
-        plan=[],
-        status="running",
-        mcp_tools=[],
-        conversation_id=conversation_id,
-        trigger_id=trigger_id
-    )
+        if r.status_code == 404:
+            raise FileNotFoundError("openai_chat_404")
+        r.raise_for_status()
 
-    try:
-        workflow = create_workflow(mode=WORKFLOW_MODE)
-        final_state = workflow.invoke(initial_state, config={"recursion_limit": 50})
-        execution_time = time.time() - start_time
+        return r.json()
 
-        completed_tasks = final_state.get("completed_tasks", [])
-        all_results = []
-        for task in completed_tasks:
-            task_results = task.get("execution_results", [])
-            all_results.extend(task_results)
+    def _try_openai_completions(self, messages: List[Dict[str, str]], timeout: int) -> Dict[str, Any]:
+        url = f"{self.base}/v1/completions"
+        prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
+        payload = {"model": self.model, "prompt": prompt, "temperature": 0.1}
+        r = requests.post(url, json=payload, headers=self._headers(), timeout=timeout, verify=self.verify)
 
-        results = all_results
+        if r.status_code == 404:
+            raise FileNotFoundError("openai_completions_404")
+        r.raise_for_status()
+        text = r.json().get("choices", [{}])[0].get("text", "")
 
-        total_steps = len(results)
-        success_count = sum(1 for r in results if r.get("success"))
-        fail_count = total_steps - success_count
-        summary = JobSummary(
-            job_id=job_id,
-            user_prompt=user_prompt,
-            ok=fail_count == 0,
-            total_steps=total_steps,
-            success_count=success_count,
-            fail_count=fail_count,
-            execution_time_seconds=execution_time
-        )
+        return {"choices":[{"message":{"content":text}}]}
 
-        save_agent_state(
-            agent_id=job_id,
-            status="done" if fail_count == 0 else "failed"
-        )
+    def _try_ollama_chat(self, messages: List[Dict[str, str]], response_format_json: bool, timeout: int) -> Dict[str, Any]:
+        url = f"{self.base}/api/chat"
 
-        result = {
-            "job_id": job_id,
-            "summary": summary.to_dict(),
-            "state": final_state
-        }
+        if response_format_json:
+            messages = messages.copy()
+            if messages:
+                last_msg = messages[-1]
 
-        # print(f"\n[Summary]")
-        # print(f"Total: {len(completed_tasks)} tasks, {total_steps} actions, {execution_time:.2f}s")
-        if fail_count > 0:
-            # print(f"Status: {success_count} succeeded, {fail_count} failed")
-            pass
-
-        return result
-
-    except Exception as e:
-        execution_time = time.time() - start_time
-        error_msg = str(e)
-
-        if "recursion limit" in error_msg.lower() or "GRAPH_RECURSION_LIMIT" in error_msg:
-            completed_tasks = initial_state.get("completed_tasks", [])
-            all_results = []
-            for task in completed_tasks:
-                task_results = task.get("execution_results", [])
-                all_results.extend(task_results)
-
-            total_steps = len(all_results)
-            success_count = sum(1 for r in all_results if r.get("success"))
-            fail_count = total_steps - success_count
-
-            summary = JobSummary(
-                job_id=job_id,
-                user_prompt=user_prompt,
-                ok=True,
-                total_steps=total_steps,
-                success_count=success_count,
-                fail_count=fail_count,
-                execution_time_seconds=execution_time
-            )
-
-            save_agent_state(
-                agent_id=job_id,
-                status="done"
-            )
-
-            # print(f"\n[Summary]")
-            # print(f"Total: {len(completed_tasks)} tasks, {total_steps} actions, {execution_time:.2f}s")
-
-            return {
-                "job_id": job_id,
-                "summary": summary.to_dict(),
-                "state": initial_state
+                if last_msg.get("role") == "user":
+                    messages[-1] = {
+                        "role": "user",
+                        "content": f"{last_msg['content']}\n\nIMPORTANT: Respond with ONLY valid JSON. No explanations, no markdown code blocks, just raw JSON."
+                    }
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "format": "json" if response_format_json else None,
+            "options": {
+                "num_ctx": _cfg.llm.context_size
             }
-
-        # print(f"\n[✗] Error: {error_msg}")
-
-        save_agent_state(
-            agent_id=job_id,
-            status="failed"
-        )
-
-        return {
-            "job_id": job_id,
-            "summary": {
-                "job_id": job_id,
-                "user_prompt": user_prompt,
-                "ok": False,
-                "total_steps": 0,
-                "success_count": 0,
-                "fail_count": 1,
-                "execution_time_seconds": execution_time
-            },
-            "error": error_msg
         }
+        r = requests.post(url, json=payload, headers=self._headers(), timeout=timeout, verify=self.verify)
+
+        if r.status_code == 404:
+            raise FileNotFoundError("ollama_chat_404")
+        r.raise_for_status()
+        content = r.json().get("message", {}).get("content", "")
+
+        return {"choices":[{"message":{"content":content}}]}
+
+    def _try_remote_api(self, messages: List[Dict[str, str]], response_format_json: bool, timeout: int) -> Dict[str, Any]:
+        """원격 커스텀 API 호출 ({"prompt": "..."} 형식)
+
+        응답 형식: {"ok": true, "output": "...", "adapter": "..."}
+        """
+        prompt_parts = []
+        for m in messages:
+            role = m.get('role', '')
+            content = m.get('content', '')
+            if isinstance(content, str):
+                prompt_parts.append(f"{role}: {content}")
+            else:
+                prompt_parts.append(f"{role}: {str(content)}")
+
+        prompt = "\n".join(prompt_parts)
+
+        if response_format_json:
+            prompt += "\n\nIMPORTANT: Respond with ONLY valid JSON. No explanations, no markdown code blocks, just raw JSON."
+
+        if not isinstance(prompt, str):
+            prompt = str(prompt)
+
+        payload = {"prompt": prompt}
+
+        # DEBUG: 요청 데이터 로깅
+        import sys
+        sys.stderr.write(f"\n[DEBUG] Remote API 요청:\n")
+        sys.stderr.write(f"  URL: {self.base}\n")
+        sys.stderr.write(f"  Payload type: {type(payload['prompt'])}\n")
+        sys.stderr.write(f"  Payload length: {len(payload['prompt'])}\n")
+        sys.stderr.write(f"  Payload preview: {payload['prompt'][:200]}...\n")
+        sys.stderr.flush()
+
+        r = requests.post(self.base, json=payload, headers=self._headers(), timeout=timeout, verify=self.verify)
+
+        if r.status_code == 404:
+            raise FileNotFoundError("remote_api_404")
+        r.raise_for_status()
+
+        resp_data = r.json()
+        if not resp_data.get("ok"):
+            raise RuntimeError(f"Remote API returned ok=false: {resp_data}")
+
+        content = resp_data.get("output", "")
+        return {"choices": [{"message": {"content": content}}]}
+
+    def chat(self, messages: List[Dict[str, str]], response_format_json: bool = True, timeout: Optional[int] = None) -> Dict[str, Any]:
+        """LLM API 호출 (자동 폴백 지원)
+
+        Args:
+            messages: 메시지 리스트 [{"role": "user", "content": "..."}, ...]
+            response_format_json: JSON 응답 형식 요청 여부 (기본값: True)
+            timeout: 타임아웃 (초, 기본값: None - 무제한)
+
+        Returns:
+            Dict[str, Any]: LLM 응답
+                {"choices": [{"message": {"content": "..."}}]}
+
+        Raises:
+            RuntimeError: 모든 폴백 시도 실패 시
+        """
+        try_order = []
+
+        if self.kind == "openai":
+            try_order = [
+                (self._try_openai_chat, True),
+                (self._try_openai_completions, False),
+                (self._try_ollama_chat, True)
+            ]
+
+        elif self.kind == "ollama":
+            try_order = [
+                (self._try_ollama_chat, True),
+                (self._try_openai_chat, True),
+                (self._try_openai_completions, False)
+            ]
+
+        elif self.kind == "remote":
+            try_order = [
+                (self._try_remote_api, True)
+            ]
+
+        else:
+            try_order = [
+                (self._try_openai_chat, True),
+                (self._try_ollama_chat, True),
+                (self._try_openai_completions, False)
+            ]
+        last_err = None
+
+        for fn, supports_json in try_order:
+
+            try:
+
+                if supports_json:
+
+                    return fn(messages, response_format_json, timeout)
+
+                else:
+
+                    return fn(messages, timeout)
+
+            except FileNotFoundError:
+                last_err = "404"
+                continue
+
+            except Exception as e:
+                last_err = str(e)
+                continue
+        raise RuntimeError(f"LLM chat failed across attempts: {last_err}")
 
