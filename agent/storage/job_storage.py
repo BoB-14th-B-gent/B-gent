@@ -45,7 +45,7 @@ def _print_state_json(state_doc: Dict[str, Any]):
         if 'created_at' in output_doc:
             output_doc['created_at'] = output_doc['created_at'].isoformat()
 
-        json_str = json.dumps(output_doc, ensure_ascii=False, indent=2)
+        json_str = json.dumps(output_doc, ensure_ascii=False)
         sys.__stdout__.write(json_str + '\n')
         sys.__stdout__.flush()
     except Exception:
@@ -88,9 +88,9 @@ def save_agent_state(
     Args:
         agent_id: 에이전트 ID (job_id와 동일) - PK
         stage_id: 현재 Task 번호 (0=초기화, 1=planning, 2~N=tasks)
-        plan: 실행 계획 [{"task_id": str, "description": str}, ...]
+        plan: 실행 계획 [{"task_id": str, "description": str, "mcp_server": str, "mcp_tools": [str], "status": str}, ...]
         status: 상태 (running | completed | failed)
-        mcp_tools: 사용된 MCP 도구 ["server.tool", ...]
+        mcp_tools: (Deprecated - ignored) 하위 호환성 유지용 파라미터
         trigger_id: 트리거 ID (외부 시스템 연동용, optional)
         conversation_id: 대화 ID (채팅/세션 그룹핑, optional)
 
@@ -104,16 +104,26 @@ def save_agent_state(
             "conversation_id": str | null,
             "stage_id": int,
             "status": str,
-            "plan": [{"task_id": str, "description": str, "status": str}],
-            "mcp_tools": [str],
+            "plan": [{"task_id": str, "description": str, "mcp_server": str, "mcp_tools": [str], "status": str}],
             "created_at": datetime,
             "updated_at": datetime
         }
+
+    Note: mcp_tools는 이제 plan 내부의 각 task에만 저장됩니다. 최상위 레벨의 mcp_tools 필드는 제거되었습니다.
     """
     try:
         db = _get_client()
         if db is None:
             return False
+
+        # 기존 문서를 조회하여 trigger_id와 conversation_id 보존
+        existing_doc = db.AGENT_STATES.find_one({"agent_id": agent_id})
+
+        # trigger_id와 conversation_id가 None이면 기존 값 유지
+        if trigger_id is None and existing_doc:
+            trigger_id = existing_doc.get("trigger_id")
+        if conversation_id is None and existing_doc:
+            conversation_id = existing_doc.get("conversation_id")
 
         state_doc = {
             "agent_id": agent_id,
@@ -122,7 +132,6 @@ def save_agent_state(
             "stage_id": stage_id if stage_id is not None else 0,
             "status": status,
             "plan": plan or [],
-            "mcp_tools": mcp_tools or [],
             "updated_at": datetime.utcnow()
         }
 
@@ -193,13 +202,14 @@ def update_agent_status(agent_id: str, status: str) -> bool:
         return False
 
 
-def add_mcp_tool(agent_id: str, mcp_name: str, tool_name: str) -> bool:
-    """사용된 MCP 도구를 추가 (중복 제거)
+def add_mcp_tool(agent_id: str, mcp_name: str, tool_name: str, task_id: Optional[str] = None) -> bool:
+    """사용된 MCP 도구를 해당 task에 추가
 
     Args:
         agent_id: 에이전트 ID
         mcp_name: MCP 서버 이름
         tool_name: 도구 이름
+        task_id: Task ID (필수는 아니지만, 없으면 기록되지 않음)
 
     Returns:
         bool: 추가 성공 여부
@@ -209,15 +219,48 @@ def add_mcp_tool(agent_id: str, mcp_name: str, tool_name: str) -> bool:
         if db is None:
             return False
 
-        tool_identifier = f"{mcp_name}.{tool_name}"
+        if not task_id:
+            # task_id가 없으면 기록하지 않음 (경고만 출력)
+            # print(f"[!] Warning: add_mcp_tool called without task_id for {mcp_name}.{tool_name}")
+            return True
 
-        db.AGENT_STATES.update_one(
-            {"agent_id": agent_id},
-            {
-                "$addToSet": {"mcp_tools": tool_identifier},
-                "$set": {"updated_at": datetime.utcnow()}
-            }
-        )
+        tool_identifier = f"{tool_name}"
+
+        # task별 mcp_tools 업데이트
+        # plan 배열에서 해당 task_id를 찾아 mcp_tools와 mcp_server 업데이트
+        state = db.AGENT_STATES.find_one({"agent_id": agent_id})
+        if not state:
+            return False
+
+        plan = state.get("plan", [])
+        updated = False
+
+        for task in plan:
+            if task.get("task_id") == task_id:
+                # mcp_server 설정 (아직 없으면)
+                if "mcp_server" not in task or not task["mcp_server"]:
+                    task["mcp_server"] = mcp_name
+
+                # mcp_tools 배열에 추가 (중복 제거)
+                if "mcp_tools" not in task:
+                    task["mcp_tools"] = []
+                if tool_identifier not in task["mcp_tools"]:
+                    task["mcp_tools"].append(tool_identifier)
+
+                updated = True
+                break
+
+        if updated:
+            db.AGENT_STATES.update_one(
+                {"agent_id": agent_id},
+                {
+                    "$set": {
+                        "plan": plan,
+                        "updated_at": datetime.utcnow()
+                    },
+                    "$unset": {"mcp_tools": ""}  # 기존 전역 mcp_tools 필드 제거
+                }
+            )
 
         full_state = db.AGENT_STATES.find_one({"agent_id": agent_id})
         if full_state:

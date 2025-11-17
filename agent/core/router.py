@@ -96,12 +96,13 @@ def run_job(
             "error": None
         }
 
+    # 초기 상태 저장 (plan 수립 전)
     save_agent_state(
         agent_id=job_id,
         stage_id=stage_id if stage_id is not None else 0,
         plan=[],
         status="running",
-        mcp_tools=[],
+        mcp_tools=[],  # 초기에는 비워둠
         conversation_id=conversation_id,
         trigger_id=trigger_id
     )
@@ -132,7 +133,7 @@ def run_job(
             execution_time_seconds=execution_time
         )
 
-        save_agent_state(
+        update_agent_status(
             agent_id=job_id,
             status="done" if fail_count == 0 else "failed"
         )
@@ -176,7 +177,7 @@ def run_job(
                 execution_time_seconds=execution_time
             )
 
-            save_agent_state(
+            update_agent_status(
                 agent_id=job_id,
                 status="done"
             )

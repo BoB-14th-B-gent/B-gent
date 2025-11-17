@@ -7,6 +7,7 @@ import json
 from typing import Dict, Any, List, Optional
 from ..llm_client.client import LLMClient
 from ..llm_client.rag import query_mcp_candidates
+from ..utils.prompt_loader import load_prompt
 
 
 def generate_react_thought(
@@ -49,34 +50,61 @@ def generate_react_thought(
         messages[0]["content"] = f"{system_prompt}\n\n{messages[0]['content']}"
 
     try:
+        import sys
+        # 순환 참조 방지: 타임아웃을 15초로 제한
         response = llm.chat(
             messages,
             response_format_json=True,
-            timeout=60
+            timeout=15
         )
 
         content = response["choices"][0]["message"]["content"]
 
         return _parse_llm_response(content, current_iteration, max_iterations)
 
+    except TimeoutError as e:
+        import sys
+        sys.stderr.write(f"│ [✗] ReAct Think 타임아웃 (순환 참조 가능성) → 작업 종료\n")
+        sys.stderr.flush()
+        return {
+            "finished": True,
+            "thought": f"LLM timeout - possible circular dependency",
+            "action": None,
+            "answer": f"Analysis terminated due to LLM timeout (possible circular API reference). Please check LLM configuration."
+        }
+
     except Exception as e:
-        print(f"│ [✗] ReAct Think 실패: {e}")
+        import sys
+        error_str = str(e).lower()
+        if "timeout" in error_str or "recursion" in error_str or "connection" in error_str:
+            sys.stderr.write(f"│ [✗] ReAct Think 연결 실패 (순환 참조/타임아웃): {e}\n")
+        else:
+            sys.stderr.write(f"│ [✗] ReAct Think 실패: {e}\n")
+        sys.stderr.flush()
         return {
             "finished": True,
             "thought": f"Error during thinking: {str(e)}",
             "action": None,
-            "answer": f"Analysis failed: {str(e)}"
+            "answer": f"Analysis failed due to LLM error: {str(e)}"
         }
 
 
 def _build_system_prompt(available_tools: List[Dict[str, Any]]) -> str:
     """시스템 프롬프트 생성"""
+    # 도구 설명 생성
     tools_desc_list = []
     for tool in available_tools[:15]:
         server = tool['server']
         tool_name = tool['tool_name']
         desc = tool.get('description', 'No description')
         schema = tool.get('input_schema', {})
+
+        # Elasticsearch 쓰기 작업 필터링 (보안 상 읽기 전용만 허용)
+        if server == 'elastic':
+            tool_lower = tool_name.lower()
+            forbidden_operations = ['create', 'delete', 'update', 'insert', 'remove', 'put', 'post', 'modify', 'write']
+            if any(op in tool_lower for op in forbidden_operations):
+                continue  # 이 도구는 목록에서 제외
 
         required_params = schema.get('required', []) if isinstance(schema, dict) else []
         properties = schema.get('properties', {}) if isinstance(schema, dict) else {}
@@ -94,7 +122,15 @@ def _build_system_prompt(available_tools: List[Dict[str, Any]]) -> str:
 
     tools_desc = "\n".join(tools_desc_list) if tools_desc_list else "No tools available"
 
-    return f"""DFIR analyst agent. Use ReAct pattern: Think → Act → Observe.
+    # 프롬프트 파일에서 로드 및 포맷팅
+    try:
+        from ..utils.prompt_loader import format_prompt
+        return format_prompt("react_think_system.txt", tools_description=tools_desc)
+    except FileNotFoundError:
+        import sys
+        sys.stderr.write("[WARNING] Prompt file not found, using inline fallback\n")
+        # 폴백: 인라인 프롬프트 사용
+        return f"""DFIR analyst agent. Use ReAct pattern: Think → Act → Observe.
 
 Available Tools:
 {tools_desc}
@@ -173,6 +209,14 @@ Rules:
 - Use exact server and operation names from the tools list above
 - For file extraction, prefer extract_files_by_path over extract_files_by_inode
 - First get disk partition info to find fs_offset_sectors before file operations
+
+CRITICAL SECURITY RESTRICTIONS:
+- **Elasticsearch (elastic) - READ-ONLY MODE**:
+  - ✓ ALLOWED: search, query, get, list, count operations (read-only)
+  - ✗ FORBIDDEN: create, delete, update, insert, modify, write operations
+  - You MUST NOT modify, create, or delete any Elasticsearch data
+  - If you attempt a forbidden operation, it will be blocked
+  - Elasticsearch is for forensic analysis only - treat it as read-only evidence
 
 Respond ONLY with JSON."""
 

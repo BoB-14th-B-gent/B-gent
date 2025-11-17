@@ -8,6 +8,7 @@ import json
 import os
 from ..schemas.task import HighLevelTask, TaskType
 from ..llm_client.client import LLMClient
+from ..utils.prompt_loader import load_prompt
 
 
 def _classify_file_type(file_path: str) -> str:
@@ -130,7 +131,13 @@ def generate_high_level_plan(
 
     llm = LLMClient()
 
-    system_prompt = """당신은 DFIR(Digital Forensics and Incident Response) 분석 전문가입니다.
+    # 프롬프트 파일에서 로드
+    try:
+        system_prompt = load_prompt("high_level_planning_system.txt")
+    except FileNotFoundError:
+        import sys
+        sys.stderr.write("[WARNING] Prompt file not found, using inline fallback\n")
+        system_prompt = """당신은 DFIR(Digital Forensics and Incident Response) 분석 전문가입니다.
 사용자의 요청과 파일 목록을 분석하여 *High-level 작업 계획*을 생성하세요.
 
 *중요: 도구 선택 우선순위*:
@@ -198,6 +205,7 @@ def generate_high_level_plan(
 - 디스크 이미지: .e01, .dd, .raw, .img만 지원 (SleuthKit 사용)
 - PE 파일: .exe, .dll, .sys만 지원
 - 로그 파일: 전처리기가 처리하므로 무시
+- **Elasticsearch (elastic): READ-ONLY MODE** - create, delete, update, insert, modify 등 쓰기 작업 금지. 오직 search, query, get, list, count 등 읽기 작업만 허용
 
 *예시 1* (구체적인 파일 경로 포함):
 입력: "디스크 이미지에서 C:\\Users\\hacker\\Downloads\\Report_2025.pdf.exe 파일을 추출해줘"
@@ -428,20 +436,26 @@ def generate_high_level_plan(
 
     try:
         import time
+        import sys
         llm_start = time.time()
-        # print(f" LLM 호출 중 (High-level Planning)...")
+        sys.stderr.write(f"[Plan] LLM 호출 중 (High-level Planning)...\n")
+        sys.stderr.flush()
 
-        response = llm.chat(messages, response_format_json=True, timeout=60)
+        # 순환 참조 방지: 타임아웃을 10초로 제한
+        response = llm.chat(messages, response_format_json=True, timeout=10)
 
         llm_elapsed = time.time() - llm_start
-        # print(f" LLM 응답 완료 ({llm_elapsed:.2f}초)")
+        sys.stderr.write(f"[Plan] LLM 응답 완료 ({llm_elapsed:.2f}초)\n")
+        sys.stderr.flush()
+
         content = response["choices"][0]["message"]["content"]
         data = json.loads(content)
 
         tasks_data = data.get("tasks", [])
 
         if not tasks_data:
-            # print("LLM이 빈 계획을 생성했습니다. 기본 계획을 사용합니다.")
+            sys.stderr.write("[Plan] LLM이 빈 계획을 생성 → 폴백 사용\n")
+            sys.stderr.flush()
             return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
 
         tasks = []
@@ -450,7 +464,6 @@ def generate_high_level_plan(
             try:
                 task_type = TaskType(task_type_str)
             except ValueError:
-                # print(f"알 수 없는 task_type: {task_type_str}, CUSTOM으로 설정")
                 task_type = TaskType.CUSTOM
 
             task = HighLevelTask(
@@ -468,13 +481,24 @@ def generate_high_level_plan(
         return tasks
 
     except json.JSONDecodeError as e:
-        # print(f"LLM 응답 파싱 실패: {e}")
+        sys.stderr.write(f"[Plan] LLM 응답 파싱 실패: {e} → 폴백 사용\n")
+        sys.stderr.flush()
+        return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
+
+    except TimeoutError as e:
+        sys.stderr.write(f"[Plan] LLM 타임아웃 (순환 참조 가능성) → 폴백 사용\n")
+        sys.stderr.flush()
         return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
 
     except Exception as e:
-        # print(f"High-level 계획 생성 실패: {e}")
-        # import traceback
-        # traceback.print_exc()
+        error_str = str(e).lower()
+        if "timeout" in error_str or "recursion" in error_str or "connection" in error_str:
+            sys.stderr.write(f"[Plan] LLM 연결 실패 (순환 참조/타임아웃): {e} → 폴백 사용\n")
+        else:
+            sys.stderr.write(f"[Plan] High-level 계획 생성 실패: {e} → 폴백 사용\n")
+        sys.stderr.flush()
+        import traceback
+        traceback.print_exc()
         return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
 
 
@@ -527,6 +551,7 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str,
 
         return [task_001, task_002]
 
+    # Ghidra task가 이미 존재하는 경우, 2개 이상이고 analysis_phase가 올바르면 통과
     if len(ghidra_tasks) >= 2:
         has_metadata = any(t.metadata.get("analysis_phase") == "metadata" for t in ghidra_tasks)
         has_decompile = any(t.metadata.get("analysis_phase") == "decompile" for t in ghidra_tasks)
@@ -535,44 +560,50 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str,
             # print("Ghidra Task 검증 통과 (2단계 구조 확인)")
             return tasks
 
-    # print("\nGhidra Task 구조 오류 감지!")
-    # print(f"   현재: {len(ghidra_tasks)}개 Ghidra Task")
-    # print(f"   자동 수정: 2단계 구조로 분리")
+    # Ghidra task가 1개만 있거나, analysis_phase가 불완전한 경우에만 수정
+    # (Ghidra task가 없는 경우 자동 생성하지 않음)
+    if len(ghidra_tasks) > 0:
+        # print("\nGhidra Task 구조 오류 감지!")
+        # print(f"   현재: {len(ghidra_tasks)}개 Ghidra Task")
+        # print(f"   자동 수정: 2단계 구조로 분리")
 
-    non_ghidra_tasks = [t for t in tasks if t.metadata.get("tool_hint") != "ghidra"]
-    task_001 = HighLevelTask(
-        task_id="task_001",
-        description="Ghidra로 바이너리 메타데이터 수집 (함수 목록, Import/Export, 세그먼트, 문자열)",
-        task_type=TaskType.FILE_ANALYSIS,
-        target_files=file_paths if file_paths else [],
-        dependencies=[],
-        metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "metadata"}
-    )
+        non_ghidra_tasks = [t for t in tasks if t.metadata.get("tool_hint") != "ghidra"]
+        task_001 = HighLevelTask(
+            task_id="task_001",
+            description="Ghidra로 바이너리 메타데이터 수집 (함수 목록, Import/Export, 세그먼트, 문자열)",
+            task_type=TaskType.FILE_ANALYSIS,
+            target_files=file_paths if file_paths else [],
+            dependencies=[],
+            metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "metadata"}
+        )
 
-    task_002 = HighLevelTask(
-        task_id="task_002",
-        description="Ghidra로 주요 함수 디컴파일 (entry, main, 핵심 로직)",
-        task_type=TaskType.FILE_ANALYSIS,
-        target_files=file_paths if file_paths else [],
-        dependencies=["task_001"],
-        metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
-    )
+        task_002 = HighLevelTask(
+            task_id="task_002",
+            description="Ghidra로 주요 함수 디컴파일 (entry, main, 핵심 로직)",
+            task_type=TaskType.FILE_ANALYSIS,
+            target_files=file_paths if file_paths else [],
+            dependencies=["task_001"],
+            metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
+        )
 
-    if non_ghidra_tasks:
-        max_id = max([int(t.task_id.split("_")[1]) for t in non_ghidra_tasks])
-        task_001.task_id = f"task_{max_id + 1:03d}"
-        task_002.task_id = f"task_{max_id + 2:03d}"
-        task_002.dependencies = [task_001.task_id]
+        if non_ghidra_tasks:
+            max_id = max([int(t.task_id.split("_")[1]) for t in non_ghidra_tasks])
+            task_001.task_id = f"task_{max_id + 1:03d}"
+            task_002.task_id = f"task_{max_id + 2:03d}"
+            task_002.dependencies = [task_001.task_id]
 
-        result = non_ghidra_tasks + [task_001, task_002]
-    else:
-        result = [task_001, task_002]
+            result = non_ghidra_tasks + [task_001, task_002]
+        else:
+            result = [task_001, task_002]
 
-    # print(f"\n✓ Ghidra Task 자동 수정 완료:")
-    # print(f"  1. {task_001.task_id}: {task_001.description}")
-    # print(f"  2. {task_002.task_id}: {task_002.description} (의존: {task_002.dependencies})")
+        # print(f"\n✓ Ghidra Task 자동 수정 완료:")
+        # print(f"  1. {task_001.task_id}: {task_001.description}")
+        # print(f"  2. {task_002.task_id}: {task_002.description} (의존: {task_002.dependencies})")
 
-    return result
+        return result
+
+    # Ghidra task가 없으면 그대로 반환 (자동 생성 금지)
+    return tasks
 
 
 def _generate_default_high_level_plan(
@@ -670,8 +701,8 @@ def _generate_default_high_level_plan(
                 metadata={"tool_hint": "velociraptor", "priority": "high"}
             ))
 
-    if any(kw in prompt_lower for kw in ["로그", "log", "이벤트", "event", "검색", "search", "elastic"]):
-        dependencies = ["task_001"] if tasks else []
+    if any(kw in prompt_lower for kw in ["로그", "log", "이벤트", "event", "검색", "search", "elastic", "siem"]):
+        dependencies = []
         task_id = f"task_{len(tasks)+1:03d}"
 
         tasks.append(HighLevelTask(
@@ -680,7 +711,7 @@ def _generate_default_high_level_plan(
             task_type=TaskType.LOG_COLLECTION,
             target_files=[],
             dependencies=dependencies,
-            metadata={"tool_hint": "elastic", "priority": "medium"}
+            metadata={"tool_hint": "elastic", "priority": "high"}
         ))
 
     if any(kw in prompt_lower for kw in ["아티팩트", "artifact", "수집", "collect", "velociraptor", "prefetch", "프로세스"]):

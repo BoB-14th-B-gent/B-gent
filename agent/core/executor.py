@@ -19,7 +19,7 @@ from ..constants import (
     SEPARATOR
 )
 
-def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult:
+def execute_action(action: Action, job_id: Optional[str] = None, task_id: Optional[str] = None) -> ActionResult:
     """액션 실행 (재시도 및 타임아웃 지원)
 
     MCP 도구 호출 및 액션 실행, 실패 시 자동 재시도
@@ -38,6 +38,7 @@ def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult
     Args:
         action: 실행할 액션 (도구 이름, 파라미터 등 포함)
         job_id: 작업 ID (MCP 로깅용)
+        task_id: Task ID (task별 mcp_tools 추적용)
 
     Returns:
         ActionResult: 실행 결과 (성공/실패, 결과 데이터, 실행 시간 등)
@@ -60,6 +61,18 @@ def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult
     max_retries = action.retry_count
     timeout = action.timeout_seconds
     last_error = None
+
+    # Elasticsearch 쓰기 작업 차단 (보안)
+    if action.tool == 'elastic':
+        operation_lower = action.operation.lower()
+        forbidden_operations = ['create', 'delete', 'update', 'insert', 'remove', 'put', 'post', 'modify', 'write']
+        if any(op in operation_lower for op in forbidden_operations):
+            return ActionResult(
+                action=action,
+                success=False,
+                error=f"SECURITY BLOCK: Elasticsearch operation '{action.operation}' is forbidden. Only read-only operations are allowed (search, query, get, list, count). Elasticsearch is for forensic analysis only - treat it as read-only evidence.",
+                execution_time_seconds=0.0
+            )
 
     if action.params.get("_skip_execution"):
         # print(f"[!]  건너뜀: {action.tool}.{action.operation}")
@@ -102,7 +115,7 @@ def execute_action(action: Action, job_id: Optional[str] = None) -> ActionResult
 
                 if job_id:
                     from ..storage.job_storage import add_mcp_tool
-                    add_mcp_tool(job_id, action.tool, action.operation)
+                    add_mcp_tool(job_id, action.tool, action.operation, task_id)
 
                 if result_data:
                     preview = str(result_data)
