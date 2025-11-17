@@ -1,0 +1,4 @@
+{task_description}{dependency_context}
+
+**Your Goal:** Complete the task described above using available MCP tools.
+Think step by step, observe results, and adapt your actions accordingly.
