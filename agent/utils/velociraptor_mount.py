@@ -13,8 +13,8 @@ from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-BGENT_ROOT = Path("/Users/me0w2en/Documents/8-BoB/B-gent")
-VELOCIRAPTOR_ROOT = Path("/Users/me0w2en/Documents/8-BoB/velociraptor")
+BGENT_ROOT = Path("/mnt/c/Users/user/Desktop/B-gent")
+VELOCIRAPTOR_ROOT = Path("/mnt/c/Users/user/Desktop/velociraptor")
 
 DATA_DIR = BGENT_ROOT / "data"
 VELOCIRAPTOR_BIN = VELOCIRAPTOR_ROOT / "velociraptor"
