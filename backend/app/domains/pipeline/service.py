@@ -7,7 +7,7 @@ BACKEND_INTERNAL_URL = os.getenv("BACKEND_INTERNAL_URL")
 if not BACKEND_INTERNAL_URL:
     raise RuntimeError("BACKEND_INTERNAL_URL is not set")
 
-TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
+TIMEOUT = httpx.Timeout(connect=10.0, read=1800.0, write=30.0, pool=10.0)
 
 async def _http_json(client: httpx.AsyncClient, method: str, path: str, **kwargs) -> Dict[str, Any]:
     r = await client.request(method, path, **kwargs)
@@ -47,64 +47,119 @@ def _build_bgent_message_from_structured(structured: Dict[str, Any]) -> str:
 
     return "\n".join(lines).strip()
 
-async def run_pipeline_service(
-    *,
-    input_text: str,
-    stage_id: int = 0,
-    inline_threshold: int = 10 * 1024 * 1024,
-    mode: str = "auto",
-) -> Dict[str, Any]:
+async def run_pipeline_service(*, input_text: str, stage_id: int = 0, inline_threshold: int = 10 * 1024 * 1024, mode: str = "auto", conversation_id: Optional[str] = None) -> Dict[str, Any]:
     async with httpx.AsyncClient(base_url=BACKEND_INTERNAL_URL, timeout=TIMEOUT) as client:
+        existing_conv = conversation_id is not None
 
-        conv_res = await _http_json(client, "POST", "/conversations", json={"input": input_text})
-        conversation_id = conv_res.get("_id") or conv_res.get("id") or conv_res.get("conversation_id")
         if not conversation_id:
-            raise HTTPException(500, detail={"error": "conversation_id missing", "response": conv_res})
+            conv_res = await _http_json(
+                client, "POST", "/conversations", json={"input": input_text}
+            )
+            conversation_id = (
+                conv_res.get("_id")
+                or conv_res.get("id")
+                or conv_res.get("conversation_id")
+            )
+            if not conversation_id:
+                raise HTTPException(
+                    500,
+                    detail={"error": "conversation_id missing", "response": conv_res},
+                )
+
+        if existing_conv:
+            await _http_json(
+                client,
+                "POST",
+                f"/conversations/{conversation_id}/messages",
+                json={
+                    "role": "USER",
+                    "stage_id": stage_id,
+                    "content": input_text,
+                },
+            )
 
         trg_res = await _http_json(
-            client, "POST", "/triggers",
+            client,
+            "POST",
+            "/triggers",
             json={"conversation_id": conversation_id, "stage_id": stage_id},
         )
         trigger_id = trg_res.get("trigger_id")
         if not trigger_id:
-            raise HTTPException(500, detail={"error": "trigger_id missing", "response": trg_res})
+            raise HTTPException(
+                500, detail={"error": "trigger_id missing", "response": trg_res}
+            )
 
-        ev_res = await _http_json(client, "POST", "/evidences/input", json={
-            "conversation_id": conversation_id,
-            "mode": mode,
-            "inline_threshold": inline_threshold,
-        })
+        ev_res = await _http_json(
+            client,
+            "POST",
+            "/evidences/input",
+            json={
+                "conversation_id": conversation_id,
+                "mode": mode,
+                "inline_threshold": inline_threshold,
+            },
+        )
         prompt_id: Optional[str] = ev_res.get("prompt_id")
         items: List[Dict[str, Any]] = ev_res.get("items") or []
 
         if prompt_id:
-            await _http_json(client, "PATCH", f"/triggers/{trigger_id}/prompt", json={"prompt_id": prompt_id})
+            await _http_json(
+                client,
+                "PATCH",
+                f"/triggers/{trigger_id}/prompt",
+                json={"prompt_id": prompt_id},
+            )
 
         evidence_refs = [
             {"collection": "INPUT_EVIDENCES", "id": it["evidence_id"]}
-            for it in items if it.get("evidence_id")
+            for it in items
+            if it.get("evidence_id")
         ]
         if evidence_refs:
-            await _http_json(client, "PATCH", f"/triggers/{trigger_id}/evidences", json={"evidences": evidence_refs})
+            await _http_json(
+                client,
+                "PATCH",
+                f"/triggers/{trigger_id}/evidences",
+                json={"evidences": evidence_refs},
+            )
 
-        sllm = await _http_json(client, "POST", "/sllm/reports", json={"trigger_id": trigger_id})
+        sllm = await _http_json(
+            client, "POST", "/sllm/reports", json={"trigger_id": trigger_id}
+        )
         report_id = sllm.get("report_id")
         if not report_id:
-            raise HTTPException(500, detail={"error": "report_id missing from sLLM", "response": sllm})
+            raise HTTPException(
+                500,
+                detail={"error": "report_id missing from sLLM", "response": sllm},
+            )
 
         rep_doc = await _http_json(client, "GET", f"/reports/{report_id}")
         report_text: str = rep_doc.get("report") or ""
 
-        patched = await _http_json(client, "PATCH", f"/reports/{report_id}/structured", json={})
+        patched = await _http_json(
+            client, "PATCH", f"/reports/{report_id}/structured", json={}
+        )
         structured: Dict[str, Any] = patched.get("structured") or {}
 
-        await _http_json(client, "PATCH", f"/triggers/{trigger_id}/report", json={"report_id": report_id})
+        await _http_json(
+            client,
+            "PATCH",
+            f"/triggers/{trigger_id}/report",
+            json={"report_id": report_id},
+        )
 
         bgent_msg = _build_bgent_message_from_structured(structured)
         if bgent_msg:
             await _http_json(
-                client, "POST", f"/conversations/{conversation_id}/messages",
-                json={"role": "B-GENT", "stage_id": stage_id, "content": bgent_msg},
+                client,
+                "POST",
+                f"/conversations/{conversation_id}/messages",
+                json={
+                    "role": "B-GENT",
+                    "stage_id": stage_id,
+                    "content": bgent_msg,
+                },
             )
 
     return {
