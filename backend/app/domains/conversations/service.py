@@ -1,11 +1,12 @@
 import os, re
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 from bson import ObjectId
 from app.db.mongo import get_db
 from app.domains.messages.service import create_message
 
 CONV_COLL = os.getenv("CONVERSATIONS_COLL")
+REPORTS_COLL = os.getenv("REPORTS_COLL")
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -65,4 +66,54 @@ def get_conversation_detail(conversation_id: str) -> Optional[Dict[str, Any]]:
         "last_stage_id": d.get("last_stage_id"),
         "created_at": d.get("created_at"),
         "updated_at": d.get("updated_at"),
+    }
+
+def list_conversations() -> List[Dict[str, Any]]:
+    db = get_db()
+    cursor = db[CONV_COLL].find().sort("created_at", 1)
+
+    items: List[Dict[str, Any]] = []
+    for d in cursor:
+        items.append(
+            {
+                "_id": str(d["_id"]),
+                "title": d.get("title", ""),
+                "last_stage_id": d.get("last_stage_id", 1),
+                "created_at": d.get("created_at"),
+                "updated_at": d.get("updated_at"),
+            }
+        )
+    return items
+
+def get_conversation_reports(conversation_id: str) -> Optional[Dict[str, Any]]:
+    if not ObjectId.is_valid(conversation_id):
+        raise ValueError("invalid conversation_id")
+
+    db = get_db()
+    cid = ObjectId(conversation_id)
+
+    cursor = (
+        db[REPORTS_COLL]
+        .find({"conversation_id": cid})
+        .sort([("stage_id", 1), ("created_at", 1)])
+    )
+
+    docs = list(cursor)
+    if not docs:
+        return None
+
+    items: List[Dict[str, Any]] = []
+    for d in docs:
+        items.append(
+            {
+                "_id": str(d["_id"]),
+                "stage_id": int(d.get("stage_id", 1)),
+                "report": d.get("report", ""),
+                "created_at": d.get("created_at"),
+            }
+        )
+
+    return {
+        "conversation_id": conversation_id,
+        "items": items,
     }

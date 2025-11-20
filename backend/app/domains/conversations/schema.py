@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, field_validator
 from pydantic import ConfigDict
 from datetime import datetime
+from typing import List
 
 class ConversationCreateInput(BaseModel):
     input: str = Field(...)
@@ -20,8 +21,23 @@ class ConversationCreatedOut(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 class ConversationDetailOut(BaseModel):
-    _id: str
+    id: str = Field(..., alias="_id", serialization_alias="_id")
     title: str
     last_stage_id: int
     created_at: datetime
     updated_at: datetime
+
+class ConversationListOut(BaseModel):
+    items: List[ConversationDetailOut]
+
+class ReportItemOut(BaseModel):
+    report_id: str = Field(alias="_id")
+    stage_id: int
+    report: str
+    created_at: datetime
+
+    model_config = ConfigDict(populate_by_name=True)
+
+class ConversationReportsOut(BaseModel):
+    conversation_id: str
+    items: List[ReportItemOut]
