@@ -9,6 +9,7 @@ from app.domains.agent.router import router as agent_router
 from app.domains.reports.router import router as reports_router
 from app.domains.sllm.router import router as sllm_router
 from app.domains.pipeline.router import router as pipeline_router
+from app.domains.ui.router import router as ui_router
 
 app = FastAPI(title="B-gent API", version="1.0.0", description="B-gent Backend API",)
 
@@ -32,3 +33,4 @@ app.include_router(agent_router, prefix="/agent", tags=["Agent"])
 app.include_router(reports_router, prefix="/reports", tags=["Reports"])
 app.include_router(sllm_router, prefix="/sllm", tags=["sLLM"])
 app.include_router(pipeline_router, prefix="/pipeline", tags=["Pipeline"])
+app.include_router(ui_router, prefix="/conversations", tags=["UI"])
