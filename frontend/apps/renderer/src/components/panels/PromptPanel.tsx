@@ -2,7 +2,7 @@ import { useUIStore, type ChatMsg } from '@/store/ui'
 import { useCallback, useMemo, useRef, useEffect, useState } from 'react'
 import { graphEvents } from '@/graph/events'
 import { makeNode, makeEdge, PALETTE } from '@/graph/dynamicLayout'
-import { pipelineRun, getReport } from '@/utils/api'
+import { pipelineRun, getReport, type PipelineRunReq } from '@/utils/api'
 
 function emitGraph(detail: unknown) {
   graphEvents.dispatchEvent(new CustomEvent('graph', { detail }))
@@ -18,6 +18,9 @@ export default function PromptPanel() {
     pushPanelMessage,
     setConversationId: setConvIdInStore,
     setCurrentTriggerId,
+    conversationId,
+    currentStageId,
+    setCurrentStageId,
   } = useUIStore()
 
   const [sending, setSending] = useState(false)
@@ -46,26 +49,57 @@ export default function PromptPanel() {
     autoGrow()
   }, [promptText, promptOpen])
 
+  const H_GAP = 1105
+
   const onSubmit = useCallback(async () => {
     const text = promptText.trim()
     if (!text || sending) return
 
-    emitGraph({ type: 'reset' })
+    const stageToUse = currentStageId ?? 1
 
-    emitGraph({
-      type: 'add-node',
-      node: makeNode('prompt'),
-    })
+    const basePrompt = makeNode('prompt')
+    const promptNodeId = `prompt-${stageToUse}`
+    const promptNode = {
+      ...basePrompt,
+      id: promptNodeId,
+      position: {
+        ...basePrompt.position,
+        x: basePrompt.position.x + (stageToUse - 1) * H_GAP,
+      },
+    }
 
-    emitGraph({
-      type: 'add-node',
-      node: makeNode('bgent'),
-    })
+    const baseAgent = makeNode('bgent')
+    const agentNodeId = `bgent-${stageToUse}`
+    const agentNode = {
+      ...baseAgent,
+      id: agentNodeId,
+      position: {
+        ...baseAgent.position,
+        x: baseAgent.position.x + (stageToUse - 1) * H_GAP,
+      },
+    }
 
+    emitGraph({ type: 'add-node', node: promptNode })
+    emitGraph({ type: 'add-node', node: agentNode })
     emitGraph({
       type: 'add-edge',
-      edge: makeEdge('e-prompt-bgent', 'prompt', 'bgent', PALETTE.prompt, PALETTE.bgent),
+      edge: makeEdge(
+        `e-${promptNodeId}-${agentNodeId}`,
+        promptNodeId,
+        agentNodeId,
+        PALETTE.prompt,
+        PALETTE.bgent
+      ),
     })
+
+    if (stageToUse > 1) {
+      const prevTotalId = `total-report-${stageToUse - 1}`
+      const edgeId = `e-${prevTotalId}-${promptNodeId}`
+      emitGraph({
+        type: 'add-edge',
+        edge: makeEdge(edgeId, prevTotalId, promptNodeId, PALETTE.total, PALETTE.prompt),
+      })
+    }
 
     emitGraph({ type: 'fit' })
 
@@ -75,9 +109,22 @@ export default function PromptPanel() {
     setSending(true)
 
     try {
-      const res = await pipelineRun({ input: text })
-      setConvIdInStore?.(res.conversation_id)
+      const payload: PipelineRunReq = {
+        input: text,
+        stage_id: stageToUse,
+      }
+      if (conversationId) {
+        payload.conversation_id = conversationId
+      }
+
+      const res = await pipelineRun(payload)
+
+      if (!conversationId) {
+        setConvIdInStore?.(res.conversation_id)
+      }
       setCurrentTriggerId?.(res.trigger_id)
+
+      setCurrentStageId?.(stageToUse + 1)
 
       const reportDoc = await getReport(res.report_id)
 
@@ -117,7 +164,17 @@ export default function PromptPanel() {
     } finally {
       setSending(false)
     }
-  }, [promptText, sending, pushPanelMessage, setPromptText, setConvIdInStore, setCurrentTriggerId])
+  }, [
+    promptText,
+    sending,
+    pushPanelMessage,
+    setPromptText,
+    setConvIdInStore,
+    setCurrentTriggerId,
+    currentStageId,
+    setCurrentStageId,
+    conversationId,
+  ])
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -133,44 +190,27 @@ export default function PromptPanel() {
   const canSend = useMemo(() => !sending && promptText.trim().length > 0, [sending, promptText])
 
   const isIntro = panelMessages.length === 0
-  const shellStyle: React.CSSProperties = isIntro
-    ? {
-        position: 'fixed',
-        inset: 10,
-        fontFamily:
-          "Pretendard, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans KR', sans-serif",
-        background: 'rgba(255,255,255,0.78)',
-        backdropFilter: 'saturate(120%) blur(10px)',
-        border: '1px solid rgba(15,23,42,0.08)',
-        borderRadius: 14,
-        boxShadow: '0 10px 30px rgba(2,8,23,0.18)',
-        boxSizing: 'border-box',
-        zIndex: 60,
-        display: 'grid',
-        gridTemplateRows: 'auto 1fr auto',
-        transition: 'all 300ms ease',
-      }
-    : {
-        position: 'fixed',
-        top: 10,
-        right: 10,
-        bottom: 10,
-        width: 'min(33.333vw, 620px)',
-        minWidth: 360,
-        fontFamily:
-          "Pretendard, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans KR', sans-serif",
-        background: 'rgba(255,255,255,0.78)',
-        backdropFilter: 'saturate(120%) blur(10px)',
-        border: '1px solid rgba(15,23,42,0.08)',
-        borderRadius: 14,
-        boxShadow: '0 10px 30px rgba(2,8,23,0.18)',
-        boxSizing: 'border-box',
-        transform: `translateX(${promptOpen ? '0' : 'calc(100% + 12px)'})`,
-        transition: 'transform 240ms ease, width 300ms ease',
-        zIndex: 50,
-        display: 'grid',
-        gridTemplateRows: 'auto 1fr auto',
-      }
+  const shellStyle: React.CSSProperties = {
+    position: 'fixed',
+    top: 10,
+    right: 10,
+    bottom: 10,
+    width: isIntro ? 'min(50vw, 820px)' : 'min(33.333vw, 620px)',
+    minWidth: 360,
+    fontFamily:
+      "Pretendard, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans KR', sans-serif",
+    background: 'rgba(255,255,255,0.78)',
+    backdropFilter: 'saturate(120%) blur(10px)',
+    border: '1px solid rgba(15,23,42,0.08)',
+    borderRadius: 14,
+    boxShadow: '0 10px 30px rgba(2,8,23,0.18)',
+    boxSizing: 'border-box',
+    transform: `translateX(${promptOpen ? '0' : 'calc(100% + 12px)'})`,
+    transition: 'transform 240ms ease, width 300ms ease',
+    zIndex: 50,
+    display: 'grid',
+    gridTemplateRows: 'auto 1fr auto',
+  }
 
   return (
     <aside aria-hidden={!promptOpen} style={shellStyle}>
@@ -185,7 +225,7 @@ export default function PromptPanel() {
       >
         <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>USER PROMPT</span>
         <button onClick={closePrompt} title="Close" style={closeBtn}>
-          x
+          ×
         </button>
       </header>
 
@@ -203,30 +243,29 @@ export default function PromptPanel() {
       >
         {isIntro && (
           <div
-            aria-hidden
             style={{
-              position: 'absolute',
-              inset: 0,
+              flexGrow: 1,
               display: 'grid',
               placeItems: 'center',
-              pointerEvents: 'none',
-              userSelect: 'none',
-              opacity: 0.18,
+              textAlign: 'center',
+              paddingBottom: 80,
             }}
           >
-            <div
-              style={{
-                fontWeight: 900,
-                letterSpacing: 2,
-                fontSize: 'clamp(48px, 12vw, 144px)',
-                background: 'linear-gradient(135deg, rgba(3,64,120,0.9), rgba(59,130,246,0.85))',
-                WebkitBackgroundClip: 'text',
-                backgroundClip: 'text',
-                color: 'transparent',
-                textShadow: '0 6px 18px rgba(2,8,23,0.18)',
-              }}
-            >
-              B-GENT
+            <div style={{ opacity: 0.25, userSelect: 'none', pointerEvents: 'none' }}>
+              <span
+                style={{
+                  fontSize: 80,
+                  fontWeight: 900,
+                  color: '#034078',
+                  letterSpacing: '2px',
+                  lineHeight: 1.1,
+                }}
+              >
+                B-GENT
+              </span>
+              <p style={{ marginTop: 10, fontSize: 16, color: '#475569', fontWeight: 600 }}>
+                분석을 시작하려면 아래에 사건 정보를 입력하세요.
+              </p>
             </div>
           </div>
         )}
@@ -262,7 +301,7 @@ export default function PromptPanel() {
               sending
                 ? '보고서 생성 중…'
                 : isIntro
-                  ? '분석할 사건 설명과 증거파일명을 작성해주세요.'
+                  ? '분석할 사건에 대한 설명과 증거파일명을 작성해주세요.'
                   : 'B-gent! Be your Agent:)'
             }
             disabled={sending}

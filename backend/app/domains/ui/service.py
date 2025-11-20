@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 from bson import ObjectId
 
 from app.db.mongo import get_db
-from .schema import UILayoutUpsertIn
+from app.domains.ui.schema import UILayoutUpsertIn
 
 UI_COLL = os.getenv("UI_COLL")
 
