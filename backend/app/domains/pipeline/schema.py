@@ -8,6 +8,7 @@ class RunPipelineReq(BaseModel):
     stage_id: int = 0
     inline_threshold: int = DEFAULT_INLINE_THRESHOLD
     mode: str = "auto"
+    conversation_id: Optional[str] = None
 
 class PipelineResult(BaseModel):
     conversation_id: str

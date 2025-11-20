@@ -1,10 +1,9 @@
 from fastapi import APIRouter, HTTPException, Query
-from app.domains.conversations.schema import ConversationCreateInput, ConversationCreatedOut, ConversationDetailOut
-from app.domains.conversations.service import create_conversation_with_input, get_conversation_detail
+from app.domains.conversations.schema import ConversationCreateInput, ConversationCreatedOut, ConversationDetailOut, ConversationListOut, ConversationReportsOut
+from app.domains.conversations.service import create_conversation_with_input, get_conversation_detail, list_conversations, get_conversation_reports
 
 from app.domains.triggers.service import get_triggers_by_conversation_id
 from app.domains.triggers.schema import TriggerListOut
-
 
 router = APIRouter()
 
@@ -22,13 +21,7 @@ def get_conversation(conversation_id: str):
     return d
 
 @router.get("/{conversation_id}/triggers", response_model=TriggerListOut, summary="대화별 트리거 전체 조회")
-def get_triggers_with_conversation(
-    conversation_id: str,
-    stage_id: int = Query(None),
-    status: str = Query(None, pattern="^(initial|collecting|ready|processing|done)$"),
-    include_evidences: bool = Query(False),
-    limit: int = Query(100, ge=1, le=200)
-):
+def get_triggers_with_conversation(conversation_id: str, stage_id: int = Query(None), status: str = Query(None, pattern="^(initial|collecting|ready|processing|done)$"), include_evidences: bool = Query(False), limit: int = Query(100, ge=1, le=200)):
     try:
         return get_triggers_by_conversation_id(
             conversation_id=conversation_id,
@@ -39,3 +32,20 @@ def get_triggers_with_conversation(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    
+@router.get("", response_model=ConversationListOut, summary="대화 전체 조회")
+def list_all_conversations():
+    items = list_conversations()
+    return {"items": items}
+
+@router.get("/{conversation_id}/reports", response_model=ConversationReportsOut, summary="대화별 통합 보고서 조회")
+def get_reports_for_conversation(conversation_id: str):
+    try:
+        data = get_conversation_reports(conversation_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not data:
+        raise HTTPException(status_code=404, detail="reports not found")
+
+    return data
