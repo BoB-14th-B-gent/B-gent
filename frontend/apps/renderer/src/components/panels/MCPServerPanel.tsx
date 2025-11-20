@@ -68,7 +68,7 @@ export default function McpPanel() {
             cursor: 'pointer',
           }}
         >
-          x
+          ×
         </button>
       </header>
 

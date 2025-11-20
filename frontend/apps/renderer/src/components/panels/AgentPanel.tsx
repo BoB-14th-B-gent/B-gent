@@ -1,10 +1,11 @@
 import { useRef, useEffect, useMemo, useState } from 'react'
 import { useUIStore } from '@/store/ui'
 import {
-  startDummyAgentStream,
+  startDummyAgentStream1,
   type TaskStatus as PlanTaskStatus,
   type PlanTask,
 } from '@/data/dummyAgentStream'
+import { startDummyAgentStream2 } from '@/data/dummyAgentStream2'
 
 export type StepStatus = 'pending' | 'running' | 'done' | 'failed'
 interface AgentStep {
@@ -23,7 +24,9 @@ function mapPlanStatusToStepStatus(s: PlanTaskStatus): StepStatus {
 }
 
 export default function AgentPanel() {
-  const { agentOpen, closeAgent } = useUIStore()
+  const agentOpen = useUIStore(s => s.agentOpen);
+  const closeAgent = useUIStore(s => s.closeAgent);
+  const currentStageId = useUIStore(s => s.currentStageId);
 
   const [steps, setSteps] = useState<AgentStep[]>([])
   const [logs, setLogs] = useState<string[]>([])
@@ -34,7 +37,7 @@ export default function AgentPanel() {
 
   const startedAtRef = useRef<Record<string, string>>({})
   const finishedAtRef = useRef<Record<string, string>>({})
-  const updatedAtRef = useRef<Record<string, string>>({}) // ⬅️ 추가
+  const updatedAtRef = useRef<Record<string, string>>({})
   const prevStatusRef = useRef<Record<string, PlanTaskStatus>>({})
 
   useEffect(() => {
@@ -83,7 +86,11 @@ export default function AgentPanel() {
     setUpdatedAt(null)
     setAgentStatus('running')
 
-    const stop = startDummyAgentStream({
+    const streamFunc = currentStageId === 2 
+      ? startDummyAgentStream2
+      : startDummyAgentStream1
+
+    const stop = streamFunc({
       stepMs: 500,
       onEvent: ev => {
         if (ev.type === 'state_update' && ev.data) {
@@ -136,11 +143,10 @@ export default function AgentPanel() {
       },
     })
 
-    // ⬇️ 정리 함수 추가 (경고 제거 + 메모리 누수 방지)
     return () => {
       stop?.()
     }
-  }, [agentOpen])
+  }, [agentOpen, currentStageId])
 
   const doneCount = useMemo(() => steps.filter(s => s.status === 'done').length, [steps])
   const runningCount = useMemo(() => steps.filter(s => s.status === 'running').length, [steps])
@@ -234,7 +240,7 @@ export default function AgentPanel() {
               cursor: 'pointer',
             }}
           >
-            x
+            ×
           </button>
         </div>
       </header>

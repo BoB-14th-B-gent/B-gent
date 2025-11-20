@@ -51,8 +51,23 @@ interface UIState {
 
   conversationId: string | null
   setConversationId: (id: string | null) => void
+
+  stageId: number
+  setStageId: (stageId: number) => void
+
   currentTriggerId: string | null
   setCurrentTriggerId: (id: string | null) => void
+
+  currentStageId: number | null
+  setCurrentStageId: (n: number | null) => void
+
+  loadedConversationTitle: string | null
+  setLoadedConversationTitle: (title: string | null) => void
+
+  resetForConversation: (conversationId: string, stageId?: number) => void
+
+  sidebarOpen: boolean
+  toggleSidebar: () => void
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
@@ -106,6 +121,37 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   conversationId: null,
   setConversationId: id => set({ conversationId: id }),
+
+  stageId: 0,
+  setStageId: stageId => set({ stageId }),
+
   currentTriggerId: null,
   setCurrentTriggerId: id => set({ currentTriggerId: id }),
+
+  currentStageId: 1,
+  setCurrentStageId: n => set({ currentStageId: n }),
+
+  loadedConversationTitle: null,
+  setLoadedConversationTitle: title => set({ loadedConversationTitle: title }),
+
+  resetForConversation: (conversationId, stageId = 0) =>
+    set({
+      conversationId,
+      stageId,
+      selectedNodeId: null,
+      promptOpen: false,
+      agentOpen: false,
+      mcpserverOpen: false,
+      totalreportOpen: false,
+      activePromptId: null,
+      activeAgentId: null,
+      activeMCPServerId: null,
+      activeTotalReportId: null,
+      panelMessages: [],
+      totalReportRaw: '',
+      currentTriggerId: null,
+    }),
+
+  sidebarOpen: false,
+  toggleSidebar: () => set({ sidebarOpen: !get().sidebarOpen }),
 }))
