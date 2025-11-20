@@ -210,11 +210,12 @@ Output:
 }
 ```
 
-*Example 5* (Ghidra binary analysis – **at least 2 steps, 3 or more for complex cases**):
+*Example 5* (Ghidra binary analysis – **recommended: 3 steps for thorough analysis**):
 
-**Simple analysis request (2 tasks)**:
+**Recommended analysis workflow (3 tasks - metadata, initial analysis, detailed analysis)**:
 Input: "Ghidra로 바이너리를 분석해줘"
 Input: "실행 파일 디컴파일"
+Input: "Analyze the given binary"
 
 Output:
 
@@ -223,7 +224,7 @@ Output:
   "tasks": [
     {
       "task_id": "task_001",
-      "description": "Collect binary metadata (function list, imports/exports, segments, strings) using Ghidra",
+      "description": "Collect binary metadata (strings, imports/exports, program info) using Ghidra",
       "task_type": "file_analysis",
       "target_files": [],
       "dependencies": [],
@@ -231,11 +232,19 @@ Output:
     },
     {
       "task_id": "task_002",
-      "description": "Decompile key functions (entry, main, core logic) using Ghidra",
+      "description": "Identify and decompile key functions using Ghidra",
       "task_type": "file_analysis",
       "target_files": [],
       "dependencies": ["task_001"],
-      "metadata": {"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
+      "metadata": {"tool_hint": "ghidra", "priority": "high", "analysis_phase": "initial_decompile"}
+    },
+    {
+      "task_id": "task_003",
+      "description": "Decompile key functions and analyze validation/encryption logic using Ghidra",
+      "task_type": "file_analysis",
+      "target_files": [],
+      "dependencies": ["task_002"],
+      "metadata": {"tool_hint": "ghidra", "priority": "high", "analysis_phase": "detailed_analysis"}
     }
   ]
 }
@@ -252,7 +261,7 @@ Output:
   "tasks": [
     {
       "task_id": "task_001",
-      "description": "Collect binary metadata (function list, imports/exports, segments, strings) using Ghidra",
+      "description": "Collect binary metadata (strings, imports/exports, program info) using Ghidra",
       "task_type": "file_analysis",
       "target_files": [],
       "dependencies": [],
@@ -281,6 +290,14 @@ Output:
 *Ghidra task creation rules*:
 
 1. **The first task must always be "metadata" collection**: function list, strings, imports/exports, etc.
+   * **CRITICAL - FORBIDDEN WORDS**: NEVER use "세그먼트" or "segments" in Korean or English task descriptions!
+   * Ghidra tools DO NOT support segment listing - this will cause infinite loops!
+   * **ALLOWED**: strings (문자열), imports (Import), exports (Export), program info, functions (함수)
+   * **FORBIDDEN**: segments (세그먼트), program structure
+   * CORRECT: "Ghidra로 바이너리 메타데이터 수집 (함수 목록, Import/Export, 문자열)"
+   * WRONG: "Ghidra로 바이너리 메타데이터 수집 (함수 목록, Import/Export, 세그먼트, 문자열)"
+   * If you write "세그먼트" in a task description, the agent will fail!
+
 2. **Decide the number of tasks based on analysis complexity**:
 
    * *Simple*: "analyze the binary", "decompile the file" → 2 tasks (metadata + decompile)

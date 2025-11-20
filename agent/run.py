@@ -520,8 +520,7 @@ def interactive_mode():
                     ))
                     continue
 
-                # MongoDB JSON 출력만 사용 - Rich 형식 display 생략
-                # display_result(result)
+                display_result(result)
 
             except EOFError:
                 console.print("\n[dim]Exiting interactive mode...[/dim]")

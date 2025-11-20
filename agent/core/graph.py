@@ -328,7 +328,6 @@ def node_react_init(state: Dict[str, Any]) -> Dict[str, Any]:
                     dependency_context += f"\n- {dep_id}: {dep_desc} ({success_count}/{len(dep_results)} successful)\n"
                     break
 
-    # 프롬프트 파일에서 로드
     try:
         task_prompt = format_prompt(
             "react_task_template.txt",
@@ -580,6 +579,17 @@ def node_react_observe(state: Dict[str, Any]) -> Dict[str, Any]:
 
     obs_preview = observation[:200] if len(observation) > 200 else observation
     # print(f"│ [OBSERVE] {obs_preview}...")
+
+    # DEBUG: observation 내용 확인 (에러 메시지 전달 확인용)
+    import sys
+    import os
+    if os.getenv("MCP_DEBUG") == "1" or not success:
+        sys.__stdout__.write(f"\n[DEBUG] Observation (iteration {iteration}, success={success}):\n")
+        sys.__stdout__.write(f"{obs_preview}\n")
+        if len(observation) > 200:
+            sys.__stdout__.write(f"... (total {len(observation)} chars)\n")
+        sys.__stdout__.write("\n")
+        sys.__stdout__.flush()
 
     return {
         **state,
@@ -833,7 +843,6 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
         data_summary += f"### {obs['iteration']}. {action_name}\n"
         data_summary += f"Result: {result_preview}\n\n"
 
-    # 프롬프트 파일에서 로드
     try:
         analysis_prompt = format_prompt(
             "velociraptor_analysis.txt",
@@ -1192,15 +1201,9 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
     execution_time = time.time() - start_time
     # print(f"\n│ [✓] SleuthKit extraction pipeline: 3 steps, {execution_time:.2f}s")
 
-    # LLM 분석 단계 추가 (Velociraptor와 동일한 메커니즘)
-    # print(f"│ ")
-    # print(f"│ Analyzing extraction results with LLM...")
-    # print(f"│ ")
-
     from ..llm_client.client import LLMClient
     llm = LLMClient()
 
-    # 추출 과정 요약 생성
     extraction_summary = f"**File Extraction Process:**\n\n"
     for obs in observations:
         action = obs['action']
@@ -1209,10 +1212,8 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
         extraction_summary += f"### Step {obs['iteration']}: {action_name}\n"
         extraction_summary += f"Result: {result_preview}\n\n"
 
-    # 상태 판단
     status = "Success" if success else "Partial/Failed"
 
-    # 우선순위 점수 계산 (경로 기반 휴리스틱)
     priority_score = 3  # 기본값
     suspicious_paths = ['appdata', 'temp', 'startup', 'programdata', 'windows\\system32']
     suspicious_extensions = ['.exe', '.dll', '.sys', '.bat', '.ps1', '.vbs', '.scr']
@@ -1224,7 +1225,6 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
         priority_score += 1
     priority_score = min(priority_score, 5)
 
-    # 프롬프트 파일에서 로드 및 포맷팅
     try:
         analysis_prompt = format_prompt(
             "sleuthkit_extraction_analysis.txt",
@@ -1283,7 +1283,7 @@ Please review the extracted file manually at {out_dir}"""
     return {
         "observations": observations,
         "iterations": 3,
-        "answer": analysis,  # LLM이 생성한 분석 보고서 (Velociraptor와 동일)
+        "answer": analysis,
         "success": success
     }
 
