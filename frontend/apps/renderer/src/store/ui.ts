@@ -150,6 +150,8 @@ export const useUIStore = create<UIState>((set, get) => ({
       panelMessages: [],
       totalReportRaw: '',
       currentTriggerId: null,
+      currentStageId: 1,
+      loadedConversationTitle: null,
     }),
 
   sidebarOpen: false,
