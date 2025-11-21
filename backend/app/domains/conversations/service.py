@@ -117,3 +117,32 @@ def get_conversation_reports(conversation_id: str) -> Optional[Dict[str, Any]]:
         "conversation_id": conversation_id,
         "items": items,
     }
+
+def update_last_stage(conversation_id: str, stage_id: int) -> Optional[Dict[str, Any]]:
+    if not ObjectId.is_valid(conversation_id):
+        raise ValueError("invalid conversation_id")
+
+    db = get_db()
+    oid = ObjectId(conversation_id)
+
+    res = db[CONV_COLL].find_one_and_update(
+        {"_id": oid},
+        {
+            "$set": {
+                "last_stage_id": stage_id,
+                "updated_at": _now(),
+            }
+        },
+        return_document=True,
+    )
+
+    if not res:
+        return None
+
+    return {
+        "_id": str(res["_id"]),
+        "title": res.get("title", ""),
+        "last_stage_id": res.get("last_stage_id"),
+        "created_at": res.get("created_at"),
+        "updated_at": res.get("updated_at"),
+    }
