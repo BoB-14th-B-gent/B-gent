@@ -96,6 +96,7 @@ async def run_pipeline_service(*, input_text: str, stage_id: int = 0, inline_thr
             "/evidences/input",
             json={
                 "conversation_id": conversation_id,
+                "stage_id": stage_id,
                 "mode": mode,
                 "inline_threshold": inline_threshold,
             },
@@ -161,6 +162,13 @@ async def run_pipeline_service(*, input_text: str, stage_id: int = 0, inline_thr
                     "content": bgent_msg,
                 },
             )
+
+        await _http_json(
+            client,
+            "PATCH",
+            f"/conversations/{conversation_id}/stage",
+            params={"stage_id": stage_id},
+        )
 
     return {
         "conversation_id": conversation_id,
