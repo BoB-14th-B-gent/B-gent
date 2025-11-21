@@ -282,11 +282,11 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
         data: e.data ?? {},
       }))
 
-      putUILayout(conversationId, STAGE_ID, { nodes: dtoNodes, edges: dtoEdges }).catch(err => {
+      putUILayout(conversationId, currentStageId, { nodes: dtoNodes, edges: dtoEdges }).catch(err => {
         console.warn('[Diagram] putUILayout failed:', err)
       })
     }, 800) as unknown as number
-  }, [nodes, edges, conversationId, STAGE_ID])
+  }, [nodes, edges, conversationId, currentStageId])
 
   useEffect(() => {
     scheduleFit(50)
