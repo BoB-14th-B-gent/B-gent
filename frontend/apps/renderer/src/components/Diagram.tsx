@@ -640,12 +640,10 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
       }
 
       if (
-        id === 'velociraptor' ||
-        id === 'elastic' ||
-        id === 'sleuthkit' ||
         id.startsWith('velociraptor-') ||
         id.startsWith('elastic-') ||
-        id.startsWith('sleuthkit-')
+        id.startsWith('sleuthkit-') ||
+        id.startsWith('ghidra-')
       ) {
         if (mcpserverOpen && activeMCPServerId === id) {
           closeMCPServer()
