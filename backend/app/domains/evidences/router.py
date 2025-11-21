@@ -8,7 +8,7 @@ router = APIRouter()
 @router.post("/input", response_model=EvidenceCreatedOut, summary="사용자 프롬프트 내용에서 전처리기 증거 추출 및 변환 후 저장")
 def create_from_conversation(body: EvidenceFromConversationIn):
     try:
-        res = create_evidences_from_latest_message(conversation_id=body.conversation_id, inline_threshold=body.inline_threshold)
+        res = create_evidences_from_latest_message(conversation_id=body.conversation_id, stage_id=body.stage_id or 1, inline_threshold=body.inline_threshold)
         return EvidenceCreatedOut.model_validate(res)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from app.domains.conversations.schema import ConversationCreateInput, ConversationCreatedOut, ConversationDetailOut, ConversationListOut, ConversationReportsOut
-from app.domains.conversations.service import create_conversation_with_input, get_conversation_detail, list_conversations, get_conversation_reports
+from app.domains.conversations.service import create_conversation_with_input, get_conversation_detail, list_conversations, get_conversation_reports, update_last_stage
 
 from app.domains.triggers.service import get_triggers_by_conversation_id
 from app.domains.triggers.schema import TriggerListOut
@@ -49,3 +49,13 @@ def get_reports_for_conversation(conversation_id: str):
         raise HTTPException(status_code=404, detail="reports not found")
 
     return data
+
+@router.patch("/{conversation_id}/stage", summary="대화의 last_stage_id 업데이트")
+def update_conversation_stage(conversation_id: str, stage_id: int = Query(..., ge=1)):
+    try:
+        out = update_last_stage(conversation_id, stage_id)
+        if not out:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        return out
+    except ValueError as e:
+        raise HTTPException(400, str(e))
