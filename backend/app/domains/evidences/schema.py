@@ -6,6 +6,7 @@ class EvidenceFromConversationIn(BaseModel):
     conversation_id: str
     mode: Optional[str] = Field("auto")
     inline_threshold: int = 10 * 1024 * 1024
+    stage_id: int
 
 class EvidenceCreatedItem(BaseModel):
     evidence_id: str

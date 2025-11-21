@@ -145,11 +145,12 @@ def _clean_instruction_text(msg: str, file_names: List[str], inline_blocks: List
 def create_evidences_from_latest_message(
     *,
     conversation_id: str,
+    stage_id: int,
     mode: str = "auto",
     inline_threshold: int = 10 * 1024 * 1024,
 ) -> Dict[str, Any]:
     db = get_db()
-    msg = get_latest_user_message_for_stage(conversation_id)
+    msg = get_latest_user_message_for_stage(conversation_id, stage_id)
     if not msg:
         raise ValueError("해당 conversation의 user 메시지가 없습니다.")
 
@@ -188,6 +189,7 @@ def create_evidences_from_latest_message(
                     inline_threshold_bytes=inline_threshold,
                     extra_meta={
                         "conversation_id": ObjectId(conversation_id) if ObjectId.is_valid(conversation_id) else conversation_id,
+                        "stage_id": stage_id,
                         "prompt_ref": ObjectId(prompt_id),
                     },
                 )
