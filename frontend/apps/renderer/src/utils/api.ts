@@ -14,6 +14,7 @@ export type CreateTriggerRes = { trigger_id: string; status: string; created_at:
 
 export type CreateInputEvidencesReq = {
   conversation_id: string
+  stage_id: number
   mode: 'auto' | 'manual'
   inline_threshold: number
 }
@@ -234,7 +235,7 @@ export type TriggerDoc = {
 
   prompt_id?: OID
 
-  status?: 'pending' | 'processing' | 'done' | 'error'
+  status?: 'initial' | 'collecting' | 'ready' | 'processing' | 'done'
 
   report_id?: OID
 
@@ -247,8 +248,8 @@ export async function getTrigger(triggerId: string): Promise<TriggerDoc> {
 }
 
 export async function getLatestReportId(): Promise<string | null> {
-  const res = await http<{ items?: Array<{ _id: string }> }>(`/reports?limit=1`)
-  return res.items?.[0]?._id ?? null
+  const res = await http<{ _id: string }>(`/reports/latest`)
+  return res._id ?? null
 }
 
 export async function listConversations(): Promise<ConversationSummary[]> {
@@ -260,6 +261,17 @@ export async function getConversation(conversationId: string): Promise<Conversat
   return http<ConversationSummary>(`/conversations/${encodeURIComponent(conversationId)}`, {
     method: 'GET',
   })
+}
+
+export async function updateConversationStage(
+  conversationId: string,
+  stageId: number
+): Promise<ConversationSummary> {
+  const qs = new URLSearchParams({ stage_id: String(stageId) })
+  return http<ConversationSummary>(
+    `/conversations/${encodeURIComponent(conversationId)}/stage?${qs.toString()}`,
+    { method: 'PATCH' }
+  )
 }
 
 export async function getMessages(
