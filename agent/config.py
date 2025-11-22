@@ -276,6 +276,7 @@ def get_config() -> AppConfig:
 
             try:
                 import json
+                import re
 
                 with open(mcp_config_file, "r") as f:
                     servers_data = json.load(f)
@@ -285,12 +286,28 @@ def get_config() -> AppConfig:
 
                         if command and command.startswith("~/"):
                             command = os.path.expanduser(command)
+
+                        env = srv.get("env")
+                        if env:
+                            expanded_env = {}
+                            for key, value in env.items():
+                                if isinstance(value, str):
+                                    expanded_value = re.sub(
+                                        r'\$\{(\w+)\}',
+                                        lambda m: os.getenv(m.group(1), m.group(0)),
+                                        value
+                                    )
+                                    expanded_env[key] = expanded_value
+                                else:
+                                    expanded_env[key] = value
+                            env = expanded_env
+
                         mcp_servers.append(MCPServerConfigItem(
                             name=srv["name"],
                             url=srv.get("url"),
                             command=command,
                             args=srv.get("args"),
-                            env=srv.get("env"),
+                            env=env,
                             headers=srv.get("headers"),
                             enabled=srv.get("enabled", True)
                         ))

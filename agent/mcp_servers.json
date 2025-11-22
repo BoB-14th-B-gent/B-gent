@@ -46,6 +46,15 @@
         "GHIDRA_INSTALL_DIR": "/mnt/c/Users/user/Desktop/ghidra_11.3.2_PUBLIC"
       },
       "enabled": true
+    },
+    {
+      "name": "virustotal",
+      "command": "npx",
+      "args": ["@burtthecoder/mcp-virustotal"],
+      "env": {
+        "VIRUSTOTAL_API_KEY": "${VIRUSTOTAL_API_KEY}"
+      },
+      "enabled": true
     }
   ]
 }

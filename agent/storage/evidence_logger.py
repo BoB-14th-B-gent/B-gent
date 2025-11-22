@@ -79,7 +79,10 @@ def _parse_csv_to_list(text: str) -> Optional[List[Dict[str, Any]]]:
 
         if has_header:
             reader = csv.DictReader(buf, dialect=dialect)
-            return [dict(row) for row in reader]
+            return [
+                {k: v for k, v in row.items() if k is not None}
+                for row in reader
+            ]
         else:
             reader = csv.reader(buf, dialect=dialect)
             rows = list(reader)
@@ -265,7 +268,7 @@ def _parse_generic_response(response: Any) -> Dict[str, Any]:
     처리 우선순위:
         1. 이미 dict → 그대로 반환
         2. list → {"type": "list", "data": [...]}
-        3. 문자열 → JSON/XML/CSV 파싱 시도
+        3. 문자열 → JSON 파싱 시도, 실패하면 그대로 문자열로 저장
         4. 기타 → {"type": "...", "raw": "..."}
     """
     if isinstance(response, dict):
@@ -285,25 +288,11 @@ def _parse_generic_response(response: Any) -> Dict[str, Any]:
             return {"type": "empty", "raw": ""}
 
         parsed_json = _parse_json_string(text)
-        if parsed_json is not None:
+        if parsed_json is not None and isinstance(parsed_json, (dict, list)):
             if isinstance(parsed_json, dict):
                 return parsed_json
             else:
                 return {"type": "json", "data": parsed_json}
-
-        if text.lstrip().startswith("<"):
-            parsed_xml = _parse_xml_to_dict(text)
-            if parsed_xml is not None:
-                return {"type": "xml", "data": parsed_xml}
-
-        if ("," in text or "\t" in text) and "\n" in text:
-            parsed_csv = _parse_csv_to_list(text)
-            if parsed_csv is not None:
-                return {
-                    "type": "csv",
-                    "data": parsed_csv,
-                    "count": len(parsed_csv)
-                }
 
         return {
             "type": "string",
@@ -321,6 +310,33 @@ def _parse_generic_response(response: Any) -> Dict[str, Any]:
         "type": type(response).__name__,
         "raw": str(response)
     }
+
+
+def _sanitize_for_mongodb(obj: Any) -> Any:
+    """MongoDB에 저장하기 위해 document를 정리
+
+    Args:
+        obj: 정리할 객체 (dict, list, 기타)
+
+    Returns:
+        정리된 객체 (None 키 제거, 재귀적 처리)
+    """
+    if isinstance(obj, dict):
+        return {
+            (str(k) if k is not None else "_none_key_"): _sanitize_for_mongodb(v)
+            for k, v in obj.items()
+        }
+    elif isinstance(obj, list):
+        return [_sanitize_for_mongodb(item) for item in obj]
+    elif isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    elif isinstance(obj, datetime):
+        return obj
+    else:
+        try:
+            return str(obj)
+        except Exception:
+            return None
 
 
 def _normalize_response(response: Any, mcp_name: str, tool_name: str) -> Dict[str, Any]:
@@ -370,11 +386,30 @@ def log_mcp_execution(
         bool: 저장 성공 여부
     """
     try:
+        import sys
+        import os
+        debug_mode = os.getenv("DEBUG") == "1"
+
+        if debug_mode:
+            sys.__stdout__.write(f"[DEBUG evidence_logger] Starting log_mcp_execution for {mcp_name}.{tool_name}\n")
+            sys.__stdout__.flush()
+
         db = _get_client()
         if db is None:
+            if debug_mode:
+                sys.__stdout__.write(f"[DEBUG evidence_logger] DB connection is None!\n")
+                sys.__stdout__.flush()
             return False
 
+        if debug_mode:
+            sys.__stdout__.write(f"[DEBUG evidence_logger] Normalizing response...\n")
+            sys.__stdout__.flush()
+
         normalized_response = _normalize_response(response, mcp_name, tool_name)
+
+        if debug_mode:
+            sys.__stdout__.write(f"[DEBUG evidence_logger] Creating evidence document...\n")
+            sys.__stdout__.flush()
 
         evidence = {
             "stage": stage,
@@ -386,7 +421,21 @@ def log_mcp_execution(
             "timestamp": datetime.utcnow()
         }
 
-        db.MCP_EVIDENCES.insert_one(evidence)
+        if debug_mode:
+            sys.__stdout__.write(f"[DEBUG evidence_logger] Sanitizing document for MongoDB...\n")
+            sys.__stdout__.flush()
+
+        sanitized_evidence = _sanitize_for_mongodb(evidence)
+
+        if debug_mode:
+            sys.__stdout__.write(f"[DEBUG evidence_logger] Inserting to MongoDB...\n")
+            sys.__stdout__.flush()
+
+        db.MCP_EVIDENCES.insert_one(sanitized_evidence)
+
+        if debug_mode:
+            sys.__stdout__.write(f"[DEBUG evidence_logger] MongoDB insert successful!\n")
+            sys.__stdout__.flush()
 
         if job_id and success:
             add_mcp_tool(job_id, mcp_name, tool_name)
@@ -394,5 +443,10 @@ def log_mcp_execution(
         return True
 
     except Exception as e:
+        import sys
+        import traceback
+        sys.__stdout__.write(f"[X]  MCP 실행 로그 저장 실패: {e}\n")
+        sys.__stdout__.write(f"[X]  Traceback:\n{traceback.format_exc()}\n")
+        sys.__stdout__.flush()
         print(f"[X]  MCP 실행 로그 저장 실패: {e}")
         return False

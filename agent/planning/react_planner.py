@@ -15,7 +15,8 @@ def generate_react_thought(
     observations: List[Dict[str, Any]],
     available_tools: List[Dict[str, Any]],
     file_paths: List[str] = None,
-    max_iterations: int = 30
+    max_iterations: int = 30,
+    user_prompt: str = None
 ) -> Dict[str, Any]:
     """ReAct Think 단계: LLM이 다음 행동 결정
 
@@ -25,6 +26,7 @@ def generate_react_thought(
         available_tools: 사용 가능한 MCP 도구 목록
         file_paths: 파일 경로 리스트
         max_iterations: 최대 반복 횟수
+        user_prompt: 원본 사용자 쿼리 (선택)
 
     Returns:
         Dict:
@@ -43,7 +45,8 @@ def generate_react_thought(
         observations,
         file_paths,
         current_iteration,
-        max_iterations
+        max_iterations,
+        user_prompt
     )
 
     if messages and messages[0]["role"] == "user":
@@ -61,9 +64,11 @@ def generate_react_thought(
 
         # DEBUG: LLM 응답 로깅
         import sys
-        sys.__stdout__.write(f"\n[DEBUG] LLM Response (iteration {current_iteration}):\n")
-        sys.__stdout__.write(f"{content[:500]}...\n" if len(content) > 500 else f"{content}\n")
-        sys.__stdout__.flush()
+        import os
+        if os.getenv("DEBUG") == "1":
+            sys.__stdout__.write(f"\n[DEBUG] LLM Response (iteration {current_iteration}):\n")
+            sys.__stdout__.write(f"{content[:500]}...\n" if len(content) > 500 else f"{content}\n")
+            sys.__stdout__.flush()
 
         return _parse_llm_response(content, current_iteration, max_iterations)
 
@@ -146,6 +151,23 @@ To execute an action:
 When done:
 {{"thought": "I have enough data", "finished": true, "answer": "comprehensive analysis"}}
 
+**CRITICAL JSON FORMAT RULES**:
+- The "finished" field MUST be at the TOP LEVEL, NOT inside "action"
+- ✓ CORRECT: {{"thought": "...", "action": {{"tool": "...", "operation": "...", "params": {{...}}}}, "finished": false}}
+- ✗ WRONG: {{"thought": "...", "action": {{"tool": "...", "finished": false}}}}
+
+**DO NOT REPEAT ACTIONS - CRITICAL**:
+- If you just called a tool and got results, DO NOT call it again with the same parameters
+- Analyze the data you received before requesting more
+- If one action returns comprehensive data, use it - don't repeat the same query
+- Each tool call should provide NEW information, not duplicate previous results
+
+**WHEN TO FINISH**:
+- ✓ VirusTotal get_file_report returned data → FINISH immediately with analysis
+- ✓ You have enough information to answer the user's question → FINISH with comprehensive answer
+- ✓ The last observation contains complete results → FINISH, don't request more data
+- ✗ DON'T keep calling tools "just to be thorough" - if you have the answer, FINISH
+
 IMPORTANT - Action Format:
 - "tool": MUST be the SERVER NAME ONLY (e.g., "sleuthkit", NOT "sleuthkit.list_files")
 - "operation": The specific tool/operation name (e.g., "list_files", "extract_files_by_path")
@@ -165,7 +187,61 @@ Common Tool Usage Patterns:
    - Use sleuthkit.list_files
    - Params: {{"image_path": "/full/path", "fs_offset_sectors": "offset", "directory": "/path"}}
 
-4. **Ghidra Binary Analysis** (CRITICAL - MUST follow this exact workflow):
+4. **VirusTotal Analysis** (RECOMMENDED - Always use *_report tools):
+
+   **CRITICAL RULE - ALWAYS USE *_report TOOLS FIRST AND PRIMARILY:**
+   - ✓ ALWAYS use get_file_report, get_url_report, get_ip_report, or get_domain_report
+   - ✓ These *_report tools provide COMPLETE and COMPREHENSIVE data
+   - ✗ DO NOT use *_relationship tools (get_file_relationship, get_url_relationship, etc.) unless the user EXPLICITLY asks for relationships/related items
+   - ✗ The *_relationship tools often fail and provide incomplete data compared to *_report tools
+
+   **File Analysis (virustotal.get_file_report):**
+   - Params: {{"hash": "sha256_or_md5_or_sha1"}}
+   - Returns COMPLETE analysis including:
+     * File metadata (name, type, size, hashes)
+     * Detection results from 70+ antivirus engines
+     * File signatures and behavior analysis
+     * Community votes and reputation
+     * Behavioral information
+   - ✓ This SINGLE call is sufficient for file analysis - DO NOT call relationship tools afterward
+
+   **URL Analysis (virustotal.get_url_report):**
+   - Params: {{"url": "http://example.com"}}
+   - Returns comprehensive URL scan results from multiple engines
+
+   **IP Analysis (virustotal.get_ip_report):**
+   - Params: {{"ip": "1.2.3.4"}}
+   - Returns complete IP reputation and analysis data
+
+   **Domain Analysis (virustotal.get_domain_report):**
+   - Params: {{"domain": "example.com"}}
+   - Returns comprehensive domain reputation and analysis
+
+   **Workflow:**
+   1. Call the appropriate *_report tool once (get_file_report, get_url_report, etc.)
+   2. Analyze the comprehensive data returned
+   3. FINISH with your analysis - DO NOT call *_relationship tools
+   4. Only if user explicitly asks "show me related files/URLs/IPs" → then use *_relationship tools
+
+   Best Practice:
+   - ✓ ALWAYS prefer *_report over *_relationship
+   - ✓ ONE *_report call is sufficient - analyze it thoroughly
+   - ✗ NEVER call *_relationship tools unless explicitly requested
+   - ✗ NEVER repeat the same *_report call multiple times
+
+   **CRITICAL - When you receive a LIST of items (dropped files, URLs, IPs, etc.):**
+   1. If one item from the list fails (e.g., "file not found"), DO NOT retry the same item
+   2. Move to the NEXT item in the list and try that instead
+   3. Continue trying different items from the list until you find one that succeeds
+   4. Example workflow:
+      - Iteration 1: get_file_relationship → Returns list of 8 dropped files
+      - Iteration 2: get_file_report on file #1 → Fails "not found"
+      - Iteration 3: get_file_report on file #2 → Try the second file (DON'T retry file #1!)
+      - Iteration 4: get_file_report on file #3 → If #2 failed, try third file
+   5. If you've tried several items and all fail, then finish with what you have
+   6. NEVER retry the same failed item from a list - always move forward to the next one
+
+5. **Ghidra Binary Analysis** (CRITICAL - MUST follow this exact workflow):
    STEP 1: Import binary into Ghidra project
    - Use ghidra.import_binary FIRST
    - Params: {{"binary_path": "/full/path/to/binary.exe"}}
@@ -227,20 +303,47 @@ def _build_conversation_context(
     observations: List[Dict[str, Any]],
     file_paths: List[str],
     current_iteration: int,
-    max_iterations: int
+    max_iterations: int,
+    user_prompt: str = None
 ) -> List[Dict[str, str]]:
     """대화 컨텍스트 생성"""
     messages = []
 
-    user_message = f"**Task:** {task_description}\n\n"
+    user_message = ""
+
+    if user_prompt and user_prompt.strip():
+        user_message += f"**Original User Query:** {user_prompt}\n\n"
+
+    user_message += f"**Task:** {task_description}\n\n"
 
     if file_paths:
-        user_message += f"**Files:** {', '.join(file_paths)}\n\n"
+        user_message += f"**Files:** {', '.join(f for f in file_paths if f is not None)}\n\n"
 
     user_message += f"**Iteration:** {current_iteration}/{max_iterations}\n\n"
 
     if observations:
-        user_message += "**Previous Observations:**\n\n"
+        user_message += "**Action History Summary:**\n"
+        tried_actions = {}
+        for obs in observations:
+            action = obs.get("action", {})
+            success = obs.get("success", False)
+            action_name = f"{action.get('tool', '')}.{action.get('operation', '')}"
+
+            if action_name not in tried_actions:
+                tried_actions[action_name] = {"success": 0, "failed": 0, "iterations": []}
+
+            if success:
+                tried_actions[action_name]["success"] += 1
+            else:
+                tried_actions[action_name]["failed"] += 1
+
+            tried_actions[action_name]["iterations"].append(obs.get("iteration", 0))
+
+        for action_name, stats in tried_actions.items():
+            status_icon = "✓" if stats["success"] > 0 else "✗"
+            user_message += f"- {status_icon} {action_name}: {stats['success']} successful, {stats['failed']} failed (iterations: {', '.join(map(str, stats['iterations']))})\n"
+
+        user_message += "\n**Previous Observations:**\n\n"
 
         for obs in observations[-5:]:
             iteration = obs.get("iteration", 0)
@@ -253,13 +356,58 @@ def _build_conversation_context(
             user_message += f"**Iteration {iteration}:**\n"
             user_message += f"- Thought: {thought}\n"
             user_message += f"- Action: {action_name}\n"
-            user_message += f"- Result: {observation[:500]}...\n\n"
+            user_message += f"- Result: {observation[:5000]}{'...' if len(observation) > 5000 else ''}\n\n"
 
             # DEBUG: observation 확인
             if iteration == 1 and action.get('operation') == 'import_binary':
                 import sys
-                sys.__stdout__.write(f"\n[DEBUG] import_binary observation:\n{observation}\n\n")
-                sys.__stdout__.flush()
+                import os
+                if os.getenv("DEBUG") == "1":
+                    sys.__stdout__.write(f"\n[DEBUG] import_binary observation:\n{observation}\n\n")
+                    sys.__stdout__.flush()
+
+        if len(observations) >= 2:
+            recent_actions = []
+            for obs in observations[-3:]:
+                action = obs.get("action", {})
+                action_sig = f"{action.get('tool')}.{action.get('operation')}:{json.dumps(action.get('params'), sort_keys=True)}"
+                recent_actions.append(action_sig)
+
+            if len(recent_actions) >= 2 and recent_actions[-1] == recent_actions[-2]:
+                user_message += "\n⚠️ **WARNING**: You just repeated the same action. The previous result contains all the data you need. Analyze it carefully and either:\n"
+                user_message += "1. Use a different tool/operation to get additional data, OR\n"
+                user_message += "2. Finish the task with your analysis of the existing data\n\n"
+
+        if len(observations) >= 3:
+            failure_counts = {}
+            for obs in observations:
+                action = obs.get("action", {})
+                success = obs.get("success", False)
+
+                if not success:
+                    action_sig = f"{action.get('tool')}.{action.get('operation')}:{json.dumps(action.get('params'), sort_keys=True)}"
+                    failure_counts[action_sig] = failure_counts.get(action_sig, 0) + 1
+
+            for action_sig, count in failure_counts.items():
+                if count >= 3:
+                    try:
+                        tool_operation, params_json = action_sig.split(":", 1)
+                        tool_name, operation_name = tool_operation.split(".", 1)
+                        params = json.loads(params_json)
+
+                        user_message += f"\n🚨 **CRITICAL ERROR - REPEATED FAILURE DETECTED**:\n"
+                        user_message += f"You have tried '{tool_name}.{operation_name}' with the same parameters {count} times and it FAILED every time.\n"
+                        user_message += f"Failed operation: {operation_name}\n"
+                        user_message += f"Failed parameters: {params}\n\n"
+                        user_message += "**YOU MUST STOP TRYING THIS APPROACH!**\n\n"
+                        user_message += "**Required Actions:**\n"
+                        user_message += "1. DO NOT call this tool with these parameters again\n"
+                        user_message += "2. Try a DIFFERENT tool or operation\n"
+                        user_message += "3. If no alternative exists, FINISH with the data you already have\n"
+                        user_message += "4. Analyze why this failed and choose a completely different approach\n\n"
+
+                    except (ValueError, json.JSONDecodeError):
+                        pass
 
         user_message += "**What should you do next?**\n"
     else:
@@ -286,7 +434,57 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
         json_str = content.strip()
 
     try:
-        parsed = json.loads(json_str)
+        import re
+        json_str = re.sub(r',\s*}', '}', json_str)
+        json_str = re.sub(r',\s*]', ']', json_str)
+
+        try:
+            parsed = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            print(f"│ [✗] JSON 파싱 실패: {e}")
+            print(f"│ Raw JSON (first 300 chars): {json_str[:300]}")
+            return {
+                "finished": True,
+                "thought": f"Failed to parse LLM response: invalid JSON",
+                "action": None,
+                "answer": f"Analysis failed due to LLM response parsing error: {str(e)}"
+            }
+
+        if not isinstance(parsed, dict):
+            print(f"│ [✗] LLM 응답이 dict가 아님: {type(parsed)}")
+            return {
+                "finished": True,
+                "thought": "Invalid response format",
+                "action": None,
+                "answer": "Analysis failed: LLM response is not a valid dictionary"
+            }
+
+        if 'thought' not in parsed:
+            parsed['thought'] = "No thought provided"
+
+        if 'finished' not in parsed:
+            parsed['finished'] = False
+
+        if 'action' in parsed and isinstance(parsed['action'], dict):
+            if 'finished' in parsed['action']:
+                if 'finished' not in parsed:
+                    parsed['finished'] = parsed['action'].pop('finished')
+                else:
+                    parsed['action'].pop('finished')
+
+        if not parsed.get('finished', False):
+            if 'action' not in parsed or parsed['action'] is None:
+                print(f"│ [✗] finished=False이지만 action이 없음")
+                parsed['finished'] = True
+                if 'answer' not in parsed:
+                    parsed['answer'] = "No action provided - task cannot continue"
+
+            elif isinstance(parsed['action'], dict):
+                if 'tool' not in parsed['action'] or 'operation' not in parsed['action']:
+                    print(f"│ [✗] Action에 tool 또는 operation 필드 없음. Keys: {list(parsed['action'].keys())}")
+                    parsed['finished'] = True
+                    parsed['answer'] = "Invalid action format: missing tool or operation"
+                    parsed['action'] = None
 
         thought = parsed.get("thought", "")
         finished = parsed.get("finished", False)

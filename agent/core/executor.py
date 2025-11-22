@@ -78,8 +78,10 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
     if action.tool == 'ghidra' and action.operation == 'import_binary':
         if job_id and job_id in _ghidra_import_cache:
             import sys
-            sys.__stdout__.write(f"[DEBUG] BLOCKED import_binary re-call for job {job_id}\n")
-            sys.__stdout__.flush()
+            import os
+            if os.getenv("DEBUG") == "1":
+                sys.__stdout__.write(f"[DEBUG] BLOCKED import_binary re-call for job {job_id}\n")
+                sys.__stdout__.flush()
             return ActionResult(
                 action=action,
                 success=False,
@@ -117,7 +119,15 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
             if result.get("success"):
                 result_data = result.get("result", "")
 
-                log_mcp_execution(
+                # DEBUG: MongoDB 저장 확인
+                import sys
+                import os
+                if os.getenv("DEBUG") == "1":
+                    sys.__stdout__.write(f"[DEBUG] Calling log_mcp_execution for {action.tool}.{action.operation}\n")
+                    sys.__stdout__.write(f"[DEBUG] Response length: {len(str(result_data))} chars\n")
+                    sys.__stdout__.flush()
+
+                save_result = log_mcp_execution(
                     mcp_name=action.tool,
                     tool_name=action.operation,
                     request=action.params,
@@ -126,14 +136,19 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
                     job_id=job_id
                 )
 
+                if os.getenv("DEBUG") == "1":
+                    sys.__stdout__.write(f"[DEBUG] log_mcp_execution returned: {save_result}\n")
+                    sys.__stdout__.flush()
+
                 if job_id:
                     from ..storage.job_storage import add_mcp_tool
                     add_mcp_tool(job_id, action.tool, action.operation, task_id)
 
                 if action.tool == 'ghidra' and action.operation == 'import_binary':
                     import sys
-                    sys.__stdout__.write("[DEBUG] Ghidra import_binary detected, waiting for analysis...\n")
-                    sys.__stdout__.flush()
+                    if os.getenv("DEBUG") == "1":
+                        sys.__stdout__.write("[DEBUG] Ghidra import_binary detected, waiting for analysis...\n")
+                        sys.__stdout__.flush()
                     wait_result = _wait_for_ghidra_analysis(action, job_id, task_id, timeout)
                     if wait_result.get("binary_name"):
                         binary_name = wait_result['binary_name']
@@ -142,17 +157,20 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
                                     f"Use this exact binary name ({binary_name}) for all subsequent Ghidra operations.\n" \
                                     f"Do NOT call import_binary or list_project_binaries again - you already have the binary name above.\n\n" \
                                     f"Next steps: Use search_strings, list_imports, list_exports, search_functions_by_name with binary_name=\"{binary_name}\""
-                        sys.__stdout__.write(f"[DEBUG] Analysis completed: {binary_name}\n")
-                        sys.__stdout__.flush()
+                        if os.getenv("DEBUG") == "1":
+                            sys.__stdout__.write(f"[DEBUG] Analysis completed: {binary_name}\n")
+                            sys.__stdout__.flush()
                     elif wait_result.get("error"):
                         result_data = result_data + f"\n\nWarning: {wait_result['error']}"
-                        sys.__stdout__.write(f"[DEBUG] Analysis warning: {wait_result['error']}\n")
-                        sys.__stdout__.flush()
+                        if os.getenv("DEBUG") == "1":
+                            sys.__stdout__.write(f"[DEBUG] Analysis warning: {wait_result['error']}\n")
+                            sys.__stdout__.flush()
 
                     if job_id:
                         _ghidra_import_cache[job_id] = True
-                        sys.__stdout__.write(f"[DEBUG] Marked import_binary as called for job {job_id}\n")
-                        sys.__stdout__.flush()
+                        if os.getenv("DEBUG") == "1":
+                            sys.__stdout__.write(f"[DEBUG] Marked import_binary as called for job {job_id}\n")
+                            sys.__stdout__.flush()
 
                 if result_data:
                     preview = str(result_data)

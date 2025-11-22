@@ -442,7 +442,8 @@ def node_react_think(state: Dict[str, Any]) -> Dict[str, Any]:
         observations=observations,
         available_tools=available_tools,
         file_paths=file_paths,
-        max_iterations=max_iterations
+        max_iterations=max_iterations,
+        user_prompt=state.get("user_prompt")
     )
 
     think_time = time.time() - start_time
@@ -580,10 +581,10 @@ def node_react_observe(state: Dict[str, Any]) -> Dict[str, Any]:
     obs_preview = observation[:200] if len(observation) > 200 else observation
     # print(f"│ [OBSERVE] {obs_preview}...")
 
-    # DEBUG: observation 내용 확인 (에러 메시지 전달 확인용)
+    # DEBUG: observation 내용 확인 (성공/실패 모두 출력)
     import sys
     import os
-    if os.getenv("MCP_DEBUG") == "1" or not success:
+    if os.getenv("DEBUG") == "1":
         sys.__stdout__.write(f"\n[DEBUG] Observation (iteration {iteration}, success={success}):\n")
         sys.__stdout__.write(f"{obs_preview}\n")
         if len(observation) > 200:
@@ -1214,7 +1215,7 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
 
     status = "Success" if success else "Partial/Failed"
 
-    priority_score = 3  # 기본값
+    priority_score = 3
     suspicious_paths = ['appdata', 'temp', 'startup', 'programdata', 'windows\\system32']
     suspicious_extensions = ['.exe', '.dll', '.sys', '.bat', '.ps1', '.vbs', '.scr']
 
