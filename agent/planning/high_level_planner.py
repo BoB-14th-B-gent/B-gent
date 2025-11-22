@@ -131,7 +131,6 @@ def generate_high_level_plan(
 
     llm = LLMClient()
 
-    # 프롬프트 파일에서 로드
     try:
         system_prompt = load_prompt("high_level_planning_system.txt")
     except FileNotFoundError:
@@ -141,10 +140,11 @@ def generate_high_level_plan(
 사용자의 요청과 파일 목록을 분석하여 *High-level 작업 계획*을 생성하세요.
 
 *중요: 도구 선택 우선순위*:
-1. 사용자가 "Ghidra"를 명시하거나, 바이너리/실행 파일 분석, 디컴파일, 리버스 엔지니어링, 함수 분석을 요청하면 → 무조건 tool_hint: "ghidra"
-2. 사용자가 "Elasticsearch", "인덱스", "로그" 등을 명시하면 → tool_hint: "elastic"
-3. **사용자가 "디스크 이미지 분석", "아티팩트 분석", "포렌식 분석"을 요청하면 → tool_hint: "velociraptor"** (기본값)
-4. **사용자가 명시적으로 "파일 추출", "특정 파일 찾기", "파일 복사"를 요청할 때만 → tool_hint: "sleuthkit"**
+1. 사용자가 "VirusTotal", "바이러스토탈", "virustotal", "vt", "SHA256", "해시" 등을 명시하거나 파일 해시 조사를 요청하면 → 무조건 tool_hint: "virustotal"
+2. 사용자가 "Ghidra"를 명시하거나, **파일이 제공된 상태에서** 바이너리/실행 파일 디컴파일, 리버스 엔지니어링, 함수 분석을 요청하면 → tool_hint: "ghidra"
+3. 사용자가 "Elasticsearch", "인덱스", "로그" 등을 명시하면 → tool_hint: "elastic"
+4. **사용자가 "디스크 이미지 분석", "아티팩트 분석", "포렌식 분석"을 요청하면 → tool_hint: "velociraptor"** (기본값)
+5. **사용자가 명시적으로 "파일 추출", "특정 파일 찾기", "파일 복사"를 요청할 때만 → tool_hint: "sleuthkit"**
 
 **주의: "disk image"만으로는 SleuthKit을 선택하지 마세요!**
 - "analyze disk image" → velociraptor (아티팩트 분석)
@@ -173,10 +173,13 @@ def generate_high_level_plan(
 
 *Task 생성 규칙*:
 1. *Task 설명에 구체적인 정보 포함 (매우 중요):*
-   - *사용자 요청에 파일 경로/이름이 명시되어 있으면, Task 설명에도 반드시 포함*
+   - *사용자 요청에 파일 경로/이름/해시가 명시되어 있으면, Task 설명에도 반드시 포함*
    - 예: "C:\\Users\\hacker\\file.exe 파일을 추출해줘" → "SleuthKit으로 C:\\Users\\hacker\\file.exe 추출"
-   - *잘못된 예*: "의심 파일(exe, dll) 추출" (너��� 추상적)
+   - 예: "SHA256 abc123... 조사해줘" → "VirusTotal get_file_report로 SHA256 abc123... 조사"
+   - *잘못된 예*: "의심 파일(exe, dll) 추출" (너무 추상적)
+   - *잘못된 예*: "VirusTotal로 파일 해시 조사" (해시값 누락, 도구명 누락)
    - *올바른 예*: "SleuthKit으로 C:\\Users\\hacker\\Downloads\\Report_2025.pdf.exe 추출"
+   - *올바른 예*: "VirusTotal get_file_report로 SHA256 ec5d14ca...625dfcf6 조사"
 
 2. *적절한 Task 크기 유지*:
    - *너무 세분화하지 마세요* 하나의 도구로 처리 가능한 작업은 하나의 Task로 통합
@@ -184,12 +187,14 @@ def generate_high_level_plan(
    - 예외: 서로 다른 도구가 필요하거나, 명확히 순차 의존성이 있는 경우에만 분리
 
 3. *분석 대상별* Task 분리:
+   - **파일 해시 조사 (SHA256, MD5 등)** → task_type: "file_analysis", tool_hint: "virustotal"
    - **디스크 이미지 아티팩트 분석** → task_type: "artifact_collection", tool_hint: "velociraptor" (기본값)
    - **디스크 이미지에서 특정 파일 추출** → task_type: "file_extract", tool_hint: "sleuthkit" (명시적 요청 시에만)
-   - PE 파일 분석 → task_type: "file_analysis", tool_hint: "ghidra"
+   - PE 파일 디컴파일/리버스 엔지니어링 → task_type: "file_analysis", tool_hint: "ghidra"
    - 로그 수집/검색/분석 → task_type: "log_collection", tool_hint: "elastic"
 
 4. *도구별* tool_hint 필수 지정:
+   - **VirusTotal** (파일 해시 조사, 악성코드 분석, 평판 조회) → tool_hint: "virustotal"
    - **Velociraptor** (아티팩트 수집, 디스크 이미지 분석, 레지스트리/프리페치/브라우저 히스토리 등) → tool_hint: "velociraptor" *기본값*
    - **SleuthKit** (특정 파일 추출만) → tool_hint: "sleuthkit" *명시적 요청 시에만*
    - Elasticsearch (로그 수집/검색/분석) → tool_hint: "elastic"
@@ -315,7 +320,46 @@ def generate_high_level_plan(
 }
 ```
 
-*예시 4* (바이너리 리버스 엔지니어링):
+*예시 4* (VirusTotal 파일 해시 조사):
+입력: "virustotal mcp를 사용하여 SHA256 ec5d14ca011ba8c12f4d51b0d463cf51051feaf1655c7f709dce3ffa625dfcf6인 바이너리에 대해서 조사해줘"
+입력: "이 파일의 SHA256 해시를 VirusTotal에서 조회해줘"
+출력:
+```json
+{
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "description": "VirusTotal로 파일 해시 조사 (SHA256: ec5d14ca011ba8c12f4d51b0d463cf51051feaf1655c7f709dce3ffa625dfcf6)",
+      "task_type": "file_analysis",
+      "target_files": [],
+      "dependencies": [],
+      "metadata": {"tool_hint": "virustotal", "priority": "high", "file_hash": "ec5d14ca011ba8c12f4d51b0d463cf51051feaf1655c7f709dce3ffa625dfcf6"}
+    }
+  ]
+}
+```
+
+*예시 5* (VirusTotal 파일 해시 조사 - **가장 간단하고 효율적**):
+입력: "SHA256 ec5d14ca011ba8c12f4d51b0d463cf51051feaf1655c7f709dce3ffa625dfcf6 조사해줘"
+입력: "virustotal로 해시 abc123... 분석"
+출력:
+```json
+{
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "description": "VirusTotal get_file_report로 SHA256 ec5d14ca011ba8c12f4d51b0d463cf51051feaf1655c7f709dce3ffa625dfcf6 조사",
+      "task_type": "file_analysis",
+      "target_files": [],
+      "dependencies": [],
+      "metadata": {"tool_hint": "virustotal", "priority": "high"}
+    }
+  ]
+}
+```
+*중요*: Task 설명에 **실제 해시값과 도구명(get_file_report)**을 반드시 포함하세요!
+
+*예시 6* (바이너리 리버스 엔지니어링):
 입력: "Ghidra로 suspicious.exe의 main 함수를 디컴파일해줘"
 출력:
 ```json
@@ -333,7 +377,7 @@ def generate_high_level_plan(
 }
 ```
 
-*예시 5* (Ghidra 바이너리 분석 - **최소 2단계, 복잡한 경우 3단계 이상**):
+*예시 7* (Ghidra 바이너리 분석 - **최소 2단계, 복잡한 경우 3단계 이상**):
 
 **간단한 분석 요청 (2-Task)**:
 입력: "Ghidra로 바이너리를 분석해줘"
@@ -417,11 +461,11 @@ def generate_high_level_plan(
 
     file_info = ""
     if disk_images:
-        file_info += f"\n- 디스크 이미지 ({len(disk_images)}개): {', '.join(disk_images)}"
+        file_info += f"\n- 디스크 이미지 ({len(disk_images)}개): {', '.join(f for f in disk_images if f is not None)}"
     if pe_files:
-        file_info += f"\n- PE 파일 ({len(pe_files)}개): {', '.join(pe_files)}"
+        file_info += f"\n- PE 파일 ({len(pe_files)}개): {', '.join(f for f in pe_files if f is not None)}"
     if categorized_files["unknown"]:
-        file_info += f"\n- 기타 파일 ({len(categorized_files['unknown'])}개, 무시됨): {', '.join(categorized_files['unknown'][:3])}"
+        file_info += f"\n- 기타 파일 ({len(categorized_files['unknown'])}개, 무시됨): {', '.join(f for f in categorized_files['unknown'][:3] if f is not None)}"
 
     user_message = f"""사용자 요청: {user_prompt}
 
@@ -441,7 +485,6 @@ def generate_high_level_plan(
         sys.stderr.write(f"[Plan] LLM 호출 중 (High-level Planning)...\n")
         sys.stderr.flush()
 
-        # 순환 참조 방지: 타임아웃을 10초로 제한
         response = llm.chat(messages, response_format_json=True, timeout=10)
 
         llm_elapsed = time.time() - llm_start
@@ -516,8 +559,13 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str,
         List[HighLevelTask]: 검증 및 수정된 Task 리스트
     """
     import sys
-    ghidra_keywords = ["ghidra", "바이너리", "리버스", "디컴파일", "reverse", "binary", "decompile"]
+
     prompt_lower = user_prompt.lower()
+    virustotal_keywords = ["virustotal", "바이러스토탈", "vt", "sha256", "sha1", "md5", "해시", "hash"]
+    if any(kw in prompt_lower for kw in virustotal_keywords):
+        return tasks
+
+    ghidra_keywords = ["ghidra", "바이너리", "리버스", "디컴파일", "reverse", "binary", "decompile"]
     is_ghidra_request = any(kw in prompt_lower for kw in ghidra_keywords)
 
     ghidra_tasks = [t for t in tasks if t.metadata.get("tool_hint") == "ghidra"]
@@ -551,7 +599,6 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str,
 
         return [task_001, task_002]
 
-    # Ghidra task가 이미 존재하는 경우, 2개 이상이고 analysis_phase가 올바르면 통과
     if len(ghidra_tasks) >= 2:
         has_metadata = any(t.metadata.get("analysis_phase") == "metadata" for t in ghidra_tasks)
         has_decompile = any(t.metadata.get("analysis_phase") == "decompile" for t in ghidra_tasks)
@@ -560,8 +607,6 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str,
             # print("Ghidra Task 검증 통과 (2단계 구조 확인)")
             return tasks
 
-    # Ghidra task가 1개만 있거나, analysis_phase가 불완전한 경우에만 수정
-    # (Ghidra task가 없는 경우 자동 생성하지 않음)
     if len(ghidra_tasks) > 0:
         # print("\nGhidra Task 구조 오류 감지!")
         # print(f"   현재: {len(ghidra_tasks)}개 Ghidra Task")
@@ -602,7 +647,6 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str,
 
         return result
 
-    # Ghidra task가 없으면 그대로 반환 (자동 생성 금지)
     return tasks
 
 
@@ -629,6 +673,24 @@ def _generate_default_high_level_plan(
 
     tasks = []
     prompt_lower = user_prompt.lower()
+
+    virustotal_keywords = ["virustotal", "바이러스토탈", "vt", "sha256", "sha1", "md5", "해시", "hash"]
+    if any(kw in prompt_lower for kw in virustotal_keywords):
+        import re
+        hash_pattern = r'\b[a-fA-F0-9]{32,64}\b'
+        hash_matches = re.findall(hash_pattern, user_prompt)
+        file_hash = hash_matches[0] if hash_matches else ""
+
+        return [
+            HighLevelTask(
+                task_id="task_001",
+                description=f"VirusTotal로 파일 해시 조사{' (해시: ' + file_hash + ')' if file_hash else ''}",
+                task_type=TaskType.FILE_ANALYSIS,
+                target_files=[],
+                dependencies=[],
+                metadata={"tool_hint": "virustotal", "priority": "high", "file_hash": file_hash}
+            )
+        ]
 
     ghidra_keywords = ["ghidra", "바이너리", "리버스", "디컴파일", "reverse", "binary", "decompile"]
     if any(kw in prompt_lower for kw in ghidra_keywords):

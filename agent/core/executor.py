@@ -19,6 +19,8 @@ from ..constants import (
     SEPARATOR
 )
 
+_ghidra_import_cache: Dict[str, bool] = {}
+
 def execute_action(action: Action, job_id: Optional[str] = None, task_id: Optional[str] = None) -> ActionResult:
     """액션 실행 (재시도 및 타임아웃 지원)
 
@@ -62,7 +64,6 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
     timeout = action.timeout_seconds
     last_error = None
 
-    # Elasticsearch 쓰기 작업 차단 (보안)
     if action.tool == 'elastic':
         operation_lower = action.operation.lower()
         forbidden_operations = ['create', 'delete', 'update', 'insert', 'remove', 'put', 'post', 'modify', 'write']
@@ -71,6 +72,20 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
                 action=action,
                 success=False,
                 error=f"SECURITY BLOCK: Elasticsearch operation '{action.operation}' is forbidden. Only read-only operations are allowed (search, query, get, list, count). Elasticsearch is for forensic analysis only - treat it as read-only evidence.",
+                execution_time_seconds=0.0
+            )
+
+    if action.tool == 'ghidra' and action.operation == 'import_binary':
+        if job_id and job_id in _ghidra_import_cache:
+            import sys
+            import os
+            if os.getenv("DEBUG") == "1":
+                sys.__stdout__.write(f"[DEBUG] BLOCKED import_binary re-call for job {job_id}\n")
+                sys.__stdout__.flush()
+            return ActionResult(
+                action=action,
+                success=False,
+                error=f"BLOCKED: import_binary already called for this job (job_id: {job_id}). Re-importing will break Ghidra analysis. The binary name is already in the first import_binary observation result. Do NOT call import_binary again - use the existing binary name.",
                 execution_time_seconds=0.0
             )
 
@@ -104,7 +119,15 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
             if result.get("success"):
                 result_data = result.get("result", "")
 
-                log_mcp_execution(
+                # DEBUG: MongoDB 저장 확인
+                import sys
+                import os
+                if os.getenv("DEBUG") == "1":
+                    sys.__stdout__.write(f"[DEBUG] Calling log_mcp_execution for {action.tool}.{action.operation}\n")
+                    sys.__stdout__.write(f"[DEBUG] Response length: {len(str(result_data))} chars\n")
+                    sys.__stdout__.flush()
+
+                save_result = log_mcp_execution(
                     mcp_name=action.tool,
                     tool_name=action.operation,
                     request=action.params,
@@ -113,9 +136,41 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
                     job_id=job_id
                 )
 
+                if os.getenv("DEBUG") == "1":
+                    sys.__stdout__.write(f"[DEBUG] log_mcp_execution returned: {save_result}\n")
+                    sys.__stdout__.flush()
+
                 if job_id:
                     from ..storage.job_storage import add_mcp_tool
                     add_mcp_tool(job_id, action.tool, action.operation, task_id)
+
+                if action.tool == 'ghidra' and action.operation == 'import_binary':
+                    import sys
+                    if os.getenv("DEBUG") == "1":
+                        sys.__stdout__.write("[DEBUG] Ghidra import_binary detected, waiting for analysis...\n")
+                        sys.__stdout__.flush()
+                    wait_result = _wait_for_ghidra_analysis(action, job_id, task_id, timeout)
+                    if wait_result.get("binary_name"):
+                        binary_name = wait_result['binary_name']
+                        result_data = f"SUCCESS: Binary imported and analyzed.\n\n" \
+                                    f"BINARY_NAME: {binary_name}\n\n" \
+                                    f"Use this exact binary name ({binary_name}) for all subsequent Ghidra operations.\n" \
+                                    f"Do NOT call import_binary or list_project_binaries again - you already have the binary name above.\n\n" \
+                                    f"Next steps: Use search_strings, list_imports, list_exports, search_functions_by_name with binary_name=\"{binary_name}\""
+                        if os.getenv("DEBUG") == "1":
+                            sys.__stdout__.write(f"[DEBUG] Analysis completed: {binary_name}\n")
+                            sys.__stdout__.flush()
+                    elif wait_result.get("error"):
+                        result_data = result_data + f"\n\nWarning: {wait_result['error']}"
+                        if os.getenv("DEBUG") == "1":
+                            sys.__stdout__.write(f"[DEBUG] Analysis warning: {wait_result['error']}\n")
+                            sys.__stdout__.flush()
+
+                    if job_id:
+                        _ghidra_import_cache[job_id] = True
+                        if os.getenv("DEBUG") == "1":
+                            sys.__stdout__.write(f"[DEBUG] Marked import_binary as called for job {job_id}\n")
+                            sys.__stdout__.flush()
 
                 if result_data:
                     preview = str(result_data)
@@ -287,4 +342,107 @@ def _is_retryable_error(error_msg: str) -> bool:
     """
     error_lower = error_msg.lower()
     return any(pattern in error_lower for pattern in RETRYABLE_ERROR_PATTERNS)
+
+def _wait_for_ghidra_analysis(
+    action: Action,
+    job_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    timeout: float = 120.0
+) -> Dict[str, Any]:
+    """Ghidra 바이너리 분석 완료까지 대기 (exponential backoff)
+
+    import_binary 호출 후 Ghidra가 바이너리를 분석하는 동안 대기
+    list_project_binaries를 주기적으로 호출하여 analysis_complete 확인
+
+    Args:
+        action: import_binary 액션 (binary_path 포함)
+        job_id: 작업 ID (로깅용)
+        task_id: Task ID
+        timeout: 최대 대기 시간 (초, 기본값: 120)
+
+    Returns:
+        Dict[str, Any]:
+            - binary_name: 분석 완료된 바이너리 이름 (성공 시)
+            - error: 에러 메시지 (실패 시)
+            - elapsed: 소요 시간 (초)
+    """
+    import json
+    from ..mcp_client.lazy_loader import get_mcp_client_for_server
+
+    start_time = time.time()
+    wait_intervals = [2, 3, 5, 8, 10, 15, 20]  # Exponential backoff (seconds)
+    check_count = 0
+    max_timeout = time.time() + timeout
+
+    client = get_mcp_client_for_server('ghidra')
+
+    while time.time() < max_timeout:
+        if check_count < len(wait_intervals):
+            wait_time = wait_intervals[check_count]
+        else:
+            wait_time = wait_intervals[-1]
+
+        elapsed = time.time() - start_time
+
+        if check_count > 0:
+            time.sleep(wait_time)
+
+        check_count += 1
+        elapsed = time.time() - start_time
+
+        try:
+            list_result = client.call_tool(
+                server_name='ghidra',
+                tool_name='list_project_binaries',
+                arguments={},
+                timeout=30.0
+            )
+
+            log_mcp_execution(
+                mcp_name='ghidra',
+                tool_name='list_project_binaries',
+                request={},
+                response=list_result.get('result', ''),
+                success=list_result.get('success', False),
+                job_id=job_id
+            )
+
+            if job_id:
+                from ..storage.job_storage import add_mcp_tool
+                add_mcp_tool(job_id, 'ghidra', 'list_project_binaries', task_id)
+
+            if not list_result.get('success'):
+                continue
+
+            result_text = list_result.get('result', '')
+            try:
+                programs_data = json.loads(result_text)
+                programs = programs_data.get('programs', [])
+
+                if not programs:
+                    continue
+
+                latest_program = programs[-1]
+                binary_name = latest_program.get('name', '')
+                analysis_complete = latest_program.get('analysis_complete', False)
+
+                if analysis_complete:
+                    return {
+                        'binary_name': binary_name,
+                        'elapsed': elapsed,
+                        'checks': check_count
+                    }
+
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+        except Exception as e:
+            pass
+
+    elapsed = time.time() - start_time
+    return {
+        'error': f'Ghidra analysis timeout after {elapsed:.1f}s ({check_count} checks)',
+        'elapsed': elapsed,
+        'checks': check_count
+    }
 

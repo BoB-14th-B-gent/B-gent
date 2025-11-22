@@ -242,10 +242,10 @@ class MCPClientManager:
 
             for item in result.content:
 
-                if hasattr(item, 'text'):
+                if hasattr(item, 'text') and item.text is not None:
                     content_parts.append(item.text)
 
-                elif hasattr(item, 'data'):
+                elif hasattr(item, 'data') and item.data is not None:
                     content_parts.append(json.dumps(item.data))
             result_text = "\n".join(content_parts) if content_parts else str(result.content)
             success = True
