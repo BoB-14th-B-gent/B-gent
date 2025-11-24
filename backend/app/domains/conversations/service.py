@@ -25,7 +25,7 @@ def _title_from_input(s: str, limit: int = 30) -> str:
         first = first[:limit - 1] + "…"
     return first or "Untitled"
 
-def create_conversation_with_input(input_text: str) -> Dict[str, Any]:
+def create_conversation_with_input(input_text: str, case_id: Optional[str] = None) -> Dict[str, Any]:
     db = get_db()
     now = _now()
     title = _title_from_input(input_text)
@@ -36,6 +36,12 @@ def create_conversation_with_input(input_text: str) -> Dict[str, Any]:
         "created_at": now,
         "updated_at": now,
     }
+
+    if case_id:
+        if not ObjectId.is_valid(case_id):
+            raise ValueError("invalid case_id")
+        conv_doc["case_id"] = ObjectId(case_id)
+
     conv_id = db[CONV_COLL].insert_one(conv_doc).inserted_id
 
     create_message(
@@ -71,6 +77,28 @@ def get_conversation_detail(conversation_id: str) -> Optional[Dict[str, Any]]:
 def list_conversations() -> List[Dict[str, Any]]:
     db = get_db()
     cursor = db[CONV_COLL].find().sort("created_at", 1)
+
+    items: List[Dict[str, Any]] = []
+    for d in cursor:
+        items.append(
+            {
+                "_id": str(d["_id"]),
+                "title": d.get("title", ""),
+                "last_stage_id": d.get("last_stage_id", 1),
+                "created_at": d.get("created_at"),
+                "updated_at": d.get("updated_at"),
+            }
+        )
+    return items
+
+def list_conversations_by_case(case_id: str) -> List[Dict[str, Any]]:
+    if not ObjectId.is_valid(case_id):
+        raise ValueError("invalid case_id")
+
+    db = get_db()
+    cid = ObjectId(case_id)
+
+    cursor = db[CONV_COLL].find({"case_id": cid}).sort("created_at", 1)
 
     items: List[Dict[str, Any]] = []
     for d in cursor:

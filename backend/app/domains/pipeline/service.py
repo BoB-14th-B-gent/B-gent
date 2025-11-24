@@ -47,13 +47,22 @@ def _build_bgent_message_from_structured(structured: Dict[str, Any]) -> str:
 
     return "\n".join(lines).strip()
 
-async def run_pipeline_service(*, input_text: str, stage_id: int = 0, inline_threshold: int = 10 * 1024 * 1024, mode: str = "auto", conversation_id: Optional[str] = None) -> Dict[str, Any]:
+async def run_pipeline_service(*, input_text: str, stage_id: int = 0, inline_threshold: int = 10 * 1024 * 1024, mode: str = "auto", conversation_id: Optional[str] = None, case_id: Optional[str] = None) -> Dict[str, Any]:
     async with httpx.AsyncClient(base_url=BACKEND_INTERNAL_URL, timeout=TIMEOUT) as client:
         existing_conv = conversation_id is not None
 
-        if not conversation_id:
+        if not existing_conv:
+            if not case_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": "case_id is required when conversation_id is not provided"},
+                )
+
             conv_res = await _http_json(
-                client, "POST", "/conversations", json={"input": input_text}
+                client,
+                "POST",
+                f"/cases/{case_id}/conversations",
+                json={"input": input_text},
             )
             conversation_id = (
                 conv_res.get("_id")
@@ -66,7 +75,14 @@ async def run_pipeline_service(*, input_text: str, stage_id: int = 0, inline_thr
                     detail={"error": "conversation_id missing", "response": conv_res},
                 )
 
-        if existing_conv:
+        else:
+            await _http_json(
+                client,
+                "PATCH",
+                f"/conversations/{conversation_id}/stage",
+                params={"stage_id": stage_id},
+            )
+            
             await _http_json(
                 client,
                 "POST",
@@ -163,12 +179,12 @@ async def run_pipeline_service(*, input_text: str, stage_id: int = 0, inline_thr
                 },
             )
 
-        await _http_json(
-            client,
-            "PATCH",
-            f"/conversations/{conversation_id}/stage",
-            params={"stage_id": stage_id},
-        )
+        # await _http_json(
+        #     client,
+        #     "PATCH",
+        #     f"/conversations/{conversation_id}/stage",
+        #     params={"stage_id": stage_id},
+        # )
 
     return {
         "conversation_id": conversation_id,

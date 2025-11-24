@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.domains.cases.router import router as cases_router
 from app.domains.conversations.router import router as conversations_router
 from app.domains.messages.router import router as messages_router
 from app.domains.triggers.router import router as triggers_router
@@ -22,9 +23,10 @@ app.add_middleware(
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"], 
+    allow_headers=["*"],
 )
 
+app.include_router(cases_router, prefix="/cases", tags=["Cases"])
 app.include_router(conversations_router, prefix="/conversations", tags=["Conversations"])
 app.include_router(messages_router, prefix="/conversations", tags=["Messages"])
 app.include_router(triggers_router, prefix="/triggers", tags=["Triggers"])
