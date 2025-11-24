@@ -64,10 +64,18 @@ interface UIState {
   loadedConversationTitle: string | null
   setLoadedConversationTitle: (title: string | null) => void
 
-  resetForConversation: (conversationId: string, stageId?: number) => void
+  resetForConversation: (conversationId: string | null, stageId?: number) => void
 
   sidebarOpen: boolean
   toggleSidebar: () => void
+
+  selectedCaseId: string | null
+  selectedCaseName: string | null
+  caseModalOpen: boolean
+
+  openCaseModal: () => void
+  closeCaseModal: () => void
+  setSelectedCase: (id: string | null, name: string | null) => void
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
@@ -156,4 +164,17 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   sidebarOpen: false,
   toggleSidebar: () => set({ sidebarOpen: !get().sidebarOpen }),
+
+  selectedCaseId: null,
+  selectedCaseName: null,
+  caseModalOpen: true,
+
+  openCaseModal: () => set({ caseModalOpen: true }),
+  closeCaseModal: () => set({ caseModalOpen: false }),
+  setSelectedCase: (id, name) =>
+    set({
+      selectedCaseId: id,
+      selectedCaseName: name,
+      caseModalOpen: false,
+    }),
 }))
