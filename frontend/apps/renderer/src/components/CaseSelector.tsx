@@ -218,7 +218,7 @@ export default function CaseSelectModal() {
 
           {activeTab === 'new' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <label style={{ fontSize: 12, color: '#4b5563' }}>
+              <label style={{ fontSize: 14, color: '#4b5563' }}>
                 Case Name
                 <input
                   type="text"
@@ -229,7 +229,7 @@ export default function CaseSelectModal() {
                 />
               </label>
 
-              <label style={{ fontSize: 12, color: '#4b5563' }}>
+              <label style={{ fontSize: 14, color: '#4b5563' }}>
                 Description
                 <textarea
                   value={form.description ?? ''}
@@ -239,7 +239,7 @@ export default function CaseSelectModal() {
                 />
               </label>
 
-              <label style={{ fontSize: 12, color: '#4b5563' }}>
+              <label style={{ fontSize: 14, color: '#4b5563' }}>
                 Analyst
                 <input
                   type="text"
@@ -251,7 +251,7 @@ export default function CaseSelectModal() {
               </label>
 
               <div
-                style={{ marginTop: 'auto', display: 'flex', justifyContent: 'flex-end', gap: 8 }}
+                style={{ marginTop: 35, display: 'flex', justifyContent: 'flex-end', gap: 8 }}
               >
                 <button type="button" onClick={closeCaseModal} style={secondaryBtn}>
                   Cancel
@@ -272,8 +272,8 @@ export default function CaseSelectModal() {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
-                기존 Case를 선택하면 해당 Case의 Conversation 목록이 열립니다.
+              <div style={{ fontSize: 14, color: '#4b5563', marginBottom: 8 }}>
+                Case List
               </div>
 
               <div
@@ -281,8 +281,8 @@ export default function CaseSelectModal() {
                   border: '1px solid #e5e7eb',
                   borderRadius: 10,
                   padding: 4,
-                  flex: 1,
-                  overflow: 'auto',
+                  height: 245,
+                  overflowY: 'auto',
                   background: '#f9fafb',
                 }}
               >

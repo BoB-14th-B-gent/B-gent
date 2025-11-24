@@ -72,7 +72,7 @@ export default function App() {
 
       <div className="absolute top-3 right-3 z-30 flex items-center gap-2 rounded-full border border-slate-300/70 bg-white/90 px-3 py-1.5 shadow-sm">
         <span className="text-sm font-medium text-slate-500">CASE</span>
-        <span className="max-w-[220px] truncate text-base font-semibold text-slate-800">
+        <span className="text-base font-semibold whitespace-nowrap text-slate-800">
           {selectedCaseName || '선택된 Case 없음'}
         </span>
 
