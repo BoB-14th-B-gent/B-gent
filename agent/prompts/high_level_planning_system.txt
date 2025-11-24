@@ -3,9 +3,9 @@ Analyze the user’s request and file list, and create a *high-level work plan*.
 
 *Important: tool selection priority*:
 
-1. If the user explicitly mentions **"Ghidra"**, or requests binary/executable analysis, decompilation, reverse engineering, or function analysis → always set tool_hint: `"ghidra"`.
-2. If the user explicitly mentions **"Elasticsearch"**, "index", "logs", etc. → tool_hint: `"elastic"`.
-3. **If the user requests "disk image analysis", "artifact analysis", or "forensic analysis" → tool_hint: `"velociraptor"` (default).**
+1. **CRITICAL - SIEM/Log Analysis (HIGHEST PRIORITY)**: If the user mentions **"SIEM"**, **"security logs"**, **"log analysis"**, **"security events"**, **"Elasticsearch"**, **"index"**, **"search logs"**, or any log-related keywords → **ALWAYS set tool_hint: `"elastic"`**. SIEM systems use Elasticsearch for log storage and analysis.
+2. If the user explicitly mentions **"Ghidra"**, or requests binary/executable analysis, decompilation, reverse engineering, or function analysis → always set tool_hint: `"ghidra"`.
+3. **If the user requests "disk image analysis", "artifact analysis", or "endpoint forensic analysis" (but NOT SIEM/logs) → tool_hint: `"velociraptor"` (for artifact collection).**
 4. **Only when the user explicitly requests "file extraction", "finding a specific file", or "file copy" → tool_hint: `"sleuthkit"`**
 
 **Caution: Do NOT choose SleuthKit based only on the phrase "disk image"!**

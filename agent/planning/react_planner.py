@@ -57,7 +57,8 @@ def generate_react_thought(
         response = llm.chat(
             messages,
             response_format_json=True,
-            timeout=60
+            timeout=180,
+            max_tokens=2048
         )
 
         content = response["choices"][0]["message"]["content"]
@@ -118,7 +119,13 @@ def _build_system_prompt(available_tools: List[Dict[str, Any]]) -> str:
         properties = schema.get('properties', {}) if isinstance(schema, dict) else {}
 
         param_desc = ""
-        if required_params:
+        if properties:
+            # Show ALL parameters with full schema details
+            import json as json_module
+            schema_json = json_module.dumps(schema, ensure_ascii=False, separators=(',', ':'))
+            param_desc = f"\n  Schema: {schema_json}"
+        elif required_params:
+            # Fallback: show only required params if schema is incomplete
             param_list = []
             for param in required_params:
                 param_info = properties.get(param, {})
@@ -138,6 +145,17 @@ def _build_system_prompt(available_tools: List[Dict[str, Any]]) -> str:
         sys.stderr.write("[WARNING] Prompt file not found, using inline fallback\n")
         return f"""DFIR analyst agent. Use ReAct pattern: Think → Act → Observe.
 
+**TOOL SELECTION PRIORITY - READ THIS FIRST:**
+
+When the user mentions SIEM, security logs, log analysis, or security events:
+- ✓ ALWAYS use "elastic" (Elasticsearch) for SIEM analysis, log search, and security event queries
+- ✓ Elasticsearch is your PRIMARY tool for SIEM systems - it stores and indexes security logs
+- ✗ DO NOT use "velociraptor" for SIEM analysis - Velociraptor is for endpoint forensics and artifact collection, NOT for searching existing SIEM logs
+
+When the user mentions endpoint forensics, artifact collection, or live system investigation:
+- ✓ Use "velociraptor" for collecting artifacts from live endpoints
+- ✗ DO NOT use Velociraptor for analyzing logs that are already in a SIEM system
+
 Available Tools:
 {tools_desc}
 
@@ -153,8 +171,8 @@ When done:
 
 **CRITICAL JSON FORMAT RULES**:
 - The "finished" field MUST be at the TOP LEVEL, NOT inside "action"
-- ✓ CORRECT: {{"thought": "...", "action": {{"tool": "...", "operation": "...", "params": {{...}}}}, "finished": false}}
-- ✗ WRONG: {{"thought": "...", "action": {{"tool": "...", "finished": false}}}}
+- ✓ CORRECT: {{"thought": "your reasoning", "action": {{"tool": "server_name", "operation": "tool_name", "params": {{"key": "value"}}}}, "finished": false}}
+- ✗ WRONG: {{"thought": "reasoning", "action": {{"tool": "server_name", "finished": false}}}}
 
 **DO NOT REPEAT ACTIONS - CRITICAL**:
 - If you just called a tool and got results, DO NOT call it again with the same parameters
@@ -280,12 +298,65 @@ Common Tool Usage Patterns:
    Iteration 4: ghidra.list_project_binaries → {{"name": "file.exe-abc123", "analysis_complete": true}}
    Iteration 5: ghidra.decompile_function with binary_name="file.exe-abc123" ✓
 
+6. **Elasticsearch Query Patterns** (CRITICAL - MUST follow this workflow!):
+
+   **MANDATORY WORKFLOW - You MUST follow this order:**
+
+   STEP 1: ALWAYS start with list_indices (REQUIRED - DO NOT SKIP!)
+   - {{"tool": "elastic", "operation": "list_indices", "params": {{}}}}
+   - This shows you what indices actually exist in the system
+   - You MUST call this FIRST before any search_documents operation
+
+   STEP 2: Only after getting indices, use search_documents
+   - **CRITICAL**: search_documents requires "body" parameter with "query" inside
+   - The "body" parameter MUST contain a "query" field
+   - The "query" field contains the actual Elasticsearch query (match_all, range, bool, etc.)
+   - ✗ WRONG: Missing "body" parameter
+   - ✗ WRONG: Putting "query" directly in params instead of inside "body"
+
+   **IMPORTANT**: Use ONLY valid Elasticsearch DSL query types:
+   - ✓ CORRECT: "term", "terms", "match", "match_phrase", "bool", "range", "exists", "match_all"
+   - ✗ WRONG: "match_terms" (DOES NOT EXIST!)
+
+   **CRITICAL - JSON FORMATTING FOR ELASTICSEARCH QUERIES:**
+   - ALL field names MUST be in double quotes
+   - ✓ CORRECT: {{"query": {{"term": {{"category": "malware"}}}}}}
+   - ✗ WRONG: {{"query": {{"term": {{category: "malware"}}}}}}  (missing quotes around "category")
+   - ✓ CORRECT: {{"range": {{"@timestamp": {{"gte": "now-7d"}}}}}}
+   - ✗ WRONG: {{"range": {{timestamp: {{"gte": "now-7d"}}}}}}  (missing quotes around "timestamp")
+   - Every field name like "category", "timestamp", "@timestamp", etc. MUST have double quotes
+
+   Example workflow (MUST follow this pattern):
+
+   Iteration 1: List indices first (MANDATORY FIRST STEP)
+   {{"tool": "elastic", "operation": "list_indices", "params": {{}}}}
+
+   Iteration 2: Search with match_all (simplest query)
+   {{"tool": "elastic", "operation": "search_documents", "params": {{"index": "syslog-2024.11", "body": {{"query": {{"match_all": {{}}}}, "size": 100}}}}}}
+
+   Iteration 3: Search with time range
+   {{"tool": "elastic", "operation": "search_documents", "params": {{"index": "logs-*", "body": {{"query": {{"range": {{"@timestamp": {{"gte": "now-7d"}}}}}}, "size": 500}}}}}}
+
+   For more complex queries (bool with multiple conditions), use nested query structures inside the "body" parameter.
+
+   Other useful operations:
+   - Get index mapping: {{"tool": "elastic", "operation": "get_index_mapping", "params": {{"index": "logs-*"}}}}
+   - Count documents: {{"tool": "elastic", "operation": "count_documents", "params": {{"index": "logs-*", "body": {{"query": {{"match_all": {{}}}}}}}}}}
+
+   **CRITICAL - DO NOT use general_api_request for Elasticsearch:**
+   - ✗ NEVER use: {{"tool": "elastic", "operation": "general_api_request", ...}}
+   - ✗ Elasticsearch MCP server does NOT support raw API paths like "/api/v8/...", "/_search", etc.
+   - ✓ ALWAYS use specific tools: list_indices, search_documents, get_index_mapping, count_documents
+   - If a tool returns an error, FIX the parameters - do NOT try general_api_request as a workaround
+
 Rules:
 - ONE action per response
 - ALWAYS include complete "params" with ALL required fields
 - Use exact server and operation names from the tools list above
 - For file extraction, prefer extract_files_by_path over extract_files_by_inode
 - First get disk partition info to find fs_offset_sectors before file operations
+- For Elasticsearch: ALWAYS call list_indices FIRST, then use the actual index names in search_documents
+- For search_documents: "body" parameter is MANDATORY and must contain "query" inside it
 
 CRITICAL SECURITY RESTRICTIONS:
 - **Elasticsearch (elastic) - READ-ONLY MODE**:
@@ -295,7 +366,18 @@ CRITICAL SECURITY RESTRICTIONS:
   - If you attempt a forbidden operation, it will be blocked
   - Elasticsearch is for forensic analysis only - treat it as read-only evidence
 
-Respond ONLY with JSON."""
+**FINAL REMINDER - JSON FORMAT**:
+Your response MUST be:
+1. ONLY a single valid JSON object
+2. NO markdown code blocks
+3. NO extra text before or after the JSON
+4. NO multiple JSON objects
+5. MUST include "thought", "finished", and either "action" or "answer"
+
+Example of CORRECT response:
+{{"thought": "I need to check available indices first", "action": {{"tool": "elastic", "operation": "list_indices", "params": {{}}}}, "finished": false}}
+
+Respond ONLY with a single valid JSON object."""
 
 
 def _build_conversation_context(
@@ -437,6 +519,21 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
         import re
         json_str = re.sub(r',\s*}', '}', json_str)
         json_str = re.sub(r',\s*]', ']', json_str)
+
+        # Fix common LLM JSON generation errors
+        # 1. Check if JSON has mismatched braces
+        if json_str:
+            open_braces = json_str.count('{')
+            close_braces = json_str.count('}')
+            if open_braces > close_braces:
+                # Add missing closing braces
+                missing = open_braces - close_braces
+                # Also add "finished" field if missing
+                if '"finished"' not in json_str:
+                    json_str = json_str.rstrip() + ', "finished": false' + '}' * missing
+                else:
+                    json_str = json_str.rstrip() + '}' * missing
+                print(f"│ [FIX] Added {missing} missing brace(s) and finished field")
 
         try:
             parsed = json.loads(json_str)

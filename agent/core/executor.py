@@ -20,6 +20,7 @@ from ..constants import (
 )
 
 _ghidra_import_cache: Dict[str, bool] = {}
+_validation_error_cache: Dict[str, int] = {}  # Track validation errors by action signature
 
 def execute_action(action: Action, job_id: Optional[str] = None, task_id: Optional[str] = None) -> ActionResult:
     """액션 실행 (재시도 및 타임아웃 지원)
@@ -63,6 +64,20 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
     max_retries = action.retry_count
     timeout = action.timeout_seconds
     last_error = None
+
+    # Check for repeated validation errors
+    import json as json_module
+    action_signature = f"{action.tool}.{action.operation}:{json_module.dumps(action.params, sort_keys=True)}"
+
+    if action_signature in _validation_error_cache:
+        error_count = _validation_error_cache[action_signature]
+        if error_count >= 2:
+            return ActionResult(
+                action=action,
+                success=False,
+                error=f"BLOCKED: This exact action has failed {error_count} times with validation errors. The parameters are incompatible with the tool schema. DO NOT retry this action - use a different tool or different parameters. Check the tool schema carefully.",
+                execution_time_seconds=0.0
+            )
 
     if action.tool == 'elastic':
         operation_lower = action.operation.lower()
@@ -197,6 +212,17 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
             else:
                 error_msg = result.get("error", "Unknown error")
                 last_error = error_msg
+
+                # Track validation errors
+                validation_errors = ['validation error', 'unexpected keyword argument', 'missing required argument',
+                                    'input should be a valid', 'type=dict_type', 'type=unexpected_keyword_argument']
+                if any(err_pattern.lower() in error_msg.lower() for err_pattern in validation_errors):
+                    _validation_error_cache[action_signature] = _validation_error_cache.get(action_signature, 0) + 1
+                    import sys
+                    import os
+                    if os.getenv("DEBUG") == "1":
+                        sys.__stdout__.write(f"[DEBUG] Validation error detected for {action_signature}, count: {_validation_error_cache[action_signature]}\n")
+                        sys.__stdout__.flush()
 
                 log_mcp_execution(
                     mcp_name=action.tool,

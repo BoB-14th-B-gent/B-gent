@@ -485,7 +485,7 @@ def generate_high_level_plan(
         sys.stderr.write(f"[Plan] LLM 호출 중 (High-level Planning)...\n")
         sys.stderr.flush()
 
-        response = llm.chat(messages, response_format_json=True, timeout=10)
+        response = llm.chat(messages, response_format_json=True, timeout=30, max_tokens=2048)
 
         llm_elapsed = time.time() - llm_start
         sys.stderr.write(f"[Plan] LLM 응답 완료 ({llm_elapsed:.2f}초)\n")

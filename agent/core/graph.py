@@ -1254,7 +1254,7 @@ Provide forensic analysis of this extracted file, including risk assessment and 
         # print(f"│ Requesting LLM analysis...")
         response = llm.chat(
             [{"role": "user", "content": analysis_prompt}],
-            timeout=60
+            timeout=180
         )
         analysis = response["choices"][0]["message"]["content"]
         # print(f"│ ")
