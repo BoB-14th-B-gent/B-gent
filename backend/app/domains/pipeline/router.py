@@ -12,5 +12,6 @@ async def run_pipeline(body: RunPipelineReq):
         inline_threshold=body.inline_threshold,
         mode=body.mode,
         conversation_id=body.conversation_id,
+        case_id=body.case_id
     )
     return PipelineResult(**result)
