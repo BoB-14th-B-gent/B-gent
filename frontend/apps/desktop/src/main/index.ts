@@ -6,7 +6,16 @@ import { promises as fsp } from 'node:fs'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-import { app, BrowserWindow, ipcMain, dialog, shell, nativeImage } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  shell,
+  nativeImage,
+  Menu,
+  MenuItemConstructorOptions,
+} from 'electron'
 import dotenv from 'dotenv'
 
 app.setName('B-GENT')
@@ -81,7 +90,7 @@ function createReportWindow(payload: { reportId?: string } = {}) {
   const w = new BrowserWindow({
     show: false,
     width: 1280,
-    height: 900,
+    height: 800,
     backgroundColor: '#111827',
     title: 'B-GENT Report',
     webPreferences: {
@@ -103,6 +112,45 @@ function createReportWindow(payload: { reportId?: string } = {}) {
     const base = getRendererUrl()
     const target = `${base}#/report-window?${search.toString()}`
     console.log('[main] loading report window:', target)
+    void w.loadURL(target)
+  }
+
+  w.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url)
+    return { action: 'deny' }
+  })
+
+  w.once('ready-to-show', () => w.show())
+  return w
+}
+
+function createCaseWindow(payload: { caseId?: string; conversationId?: string } = {}) {
+  const w = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 800,
+    backgroundColor: '#111827',
+    title: 'B-GENT Case Viewer',
+    webPreferences: {
+      preload: getPreloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+
+  const search = new URLSearchParams()
+  if (payload.caseId) search.set('caseId', payload.caseId)
+  if (payload.conversationId) search.set('conversationId', payload.conversationId)
+
+  if (app.isPackaged) {
+    const html = getAssetPath('renderer', 'index.html')
+    const base = pathToFileURL(html).toString()
+    const target = `${base}#/case-window?${search.toString()}`
+    void w.loadURL(target)
+  } else {
+    const base = getRendererUrl()
+    const target = `${base}#/case-window?${search.toString()}`
+    console.log('[main] loading case window:', target)
     void w.loadURL(target)
   }
 
@@ -140,6 +188,15 @@ function createSplashWindow() {
   return s
 }
 
+function openNewMainWindow() {
+  const w = createMainWindow()
+
+  w.once('ready-to-show', () => {
+    w.show()
+    w.focus()
+  })
+}
+
 function attachSplashAutoTransition() {
   if (!splash || !win) return
 
@@ -160,6 +217,91 @@ async function boot() {
   win = createMainWindow()
   splash = createSplashWindow()
   attachSplashAutoTransition()
+}
+
+function setupMenu() {
+  const isMac = process.platform === 'darwin'
+
+  const template: MenuItemConstructorOptions[] = []
+
+  if (isMac) {
+    template.push({
+      label: app.name,
+      submenu: [
+        { role: 'about' as const },
+        { type: 'separator' as const },
+        { role: 'services' as const },
+        { type: 'separator' as const },
+        { role: 'hide' as const },
+        { role: 'hideOthers' as const },
+        { role: 'unhide' as const },
+        { type: 'separator' as const },
+        { role: 'quit' as const },
+      ],
+    })
+  }
+
+  template.push({
+    label: 'File',
+    submenu: [
+      {
+        label: 'New Window',
+        accelerator: 'CmdOrCtrl+N',
+        click: () => {
+          openNewMainWindow()
+        },
+      },
+      { type: 'separator' as const },
+      ...(isMac
+        ? ([{ role: 'close' as const }] as MenuItemConstructorOptions[])
+        : ([{ role: 'quit' as const }] as MenuItemConstructorOptions[])),
+    ],
+  })
+
+  template.push({
+    label: 'Edit',
+    submenu: [
+      { role: 'undo' as const },
+      { role: 'redo' as const },
+      { type: 'separator' as const },
+      { role: 'cut' as const },
+      { role: 'copy' as const },
+      { role: 'paste' as const },
+      { role: 'pasteAndMatchStyle' as const },
+      { role: 'delete' as const },
+      { type: 'separator' as const },
+      { role: 'selectAll' as const },
+    ],
+  })
+
+  template.push({
+    label: 'View',
+    submenu: [
+      { role: 'reload' as const },
+      { role: 'forceReload' as const },
+      { role: 'toggleDevTools' as const },
+      { type: 'separator' as const },
+      { role: 'resetZoom' as const },
+      { role: 'zoomIn' as const },
+      { role: 'zoomOut' as const },
+      { type: 'separator' as const },
+      { role: 'togglefullscreen' as const },
+    ],
+  })
+
+  template.push({
+    label: 'Window',
+    submenu: [
+      { role: 'minimize' as const },
+      { role: 'zoom' as const },
+      ...(isMac
+        ? ([{ role: 'front' as const }] as MenuItemConstructorOptions[])
+        : ([] as MenuItemConstructorOptions[])),
+    ],
+  })
+
+  const menu = Menu.buildFromTemplate(template)
+  Menu.setApplicationMenu(menu)
 }
 
 ipcMain.handle('app:getPublicConfig', () => ({
@@ -188,6 +330,15 @@ ipcMain.handle('backend:request', async (_e, init: RequestInit & { path: string 
 ipcMain.handle('report:open', (_e, payload: { reportId?: string }) => {
   createReportWindow(payload)
   return { ok: true }
+})
+
+ipcMain.handle('case:open', (_e, payload: { caseId?: string; conversationId?: string }) => {
+  createCaseWindow(payload)
+  return { ok: true }
+})
+
+ipcMain.handle('app:quit', () => {
+  app.quit()
 })
 
 ipcMain.handle(
@@ -225,12 +376,8 @@ if (!gotLock) {
     }
   })
 
-  app.whenReady().then(boot)
-
-  app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit()
-  })
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) boot()
+  app.whenReady().then(() => {
+    boot()
+    setupMenu()
   })
 }

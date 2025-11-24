@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { listConversations, getMessages, type ConversationSummary } from '@/utils/api'
+import { listCaseConversations, getMessages, type ConversationSummary } from '@/utils/api'
 import { useUIStore, type ChatMsg } from '@/store/ui'
 import { formatKST } from '@/utils/date'
 import { graphEvents } from '@/graph/events'
@@ -30,18 +30,24 @@ export default function ConversationSelector({ refreshKey }: Props) {
   const setPanelMessages = useUIStore(s => s.setPanelMessages)
   const setPromptText = useUIStore(s => s.setPromptText)
   const setCurrentStageId = useUIStore(s => s.setCurrentStageId)
+  const selectedCaseId = useUIStore(s => s.selectedCaseId)
 
   useEffect(() => {
+    if (!selectedCaseId) {
+      setItems([])
+      return
+    }
     setLoading(true)
-    listConversations()
+    listCaseConversations(selectedCaseId)
       .then(list => {
         setItems(list ?? [])
       })
       .finally(() => setLoading(false))
-  }, [refreshKey])
+  }, [refreshKey, selectedCaseId])
 
   const handleSelect = async (conv: ConversationSummary) => {
     if (!conv._id) return
+    if (!selectedCaseId) return
 
     graphEvents.dispatchEvent(new CustomEvent('graph', { detail: { type: 'reset' } }))
 
@@ -54,15 +60,11 @@ export default function ConversationSelector({ refreshKey }: Props) {
     try {
       const msgs = await getMessages(conv._id, conv.last_stage_id ?? 1)
 
-      const uiMsgs: ChatMsg[] = msgs.map(m => {
-        const role = m.role === 'USER' ? 'user' : 'bgent'
-
-        return {
-          id: crypto.randomUUID(),
-          role,
-          text: normalizeLoadedReport(m.content ?? ''),
-        }
-      })
+      const uiMsgs: ChatMsg[] = msgs.map(m => ({
+        id: crypto.randomUUID(),
+        role: m.role === 'USER' ? 'user' : 'bgent',
+        text: normalizeLoadedReport(m.content ?? ''),
+      }))
 
       setPanelMessages(uiMsgs)
     } catch (e) {
@@ -83,7 +85,11 @@ export default function ConversationSelector({ refreshKey }: Props) {
       {loading && <div style={{ marginTop: 8 }}>Loading...</div>}
 
       {!loading && items.length === 0 && (
-        <div style={{ marginTop: 8, fontSize: 13, opacity: 0.7 }}>아직 저장된 대화가 없습니다.</div>
+        <div style={{ marginTop: 8, fontSize: 13, opacity: 0.7 }}>
+          {selectedCaseId
+            ? '이 케이스에는 아직 저장된 대화가 없습니다.'
+            : '아직 저장된 대화가 없습니다.'}
+        </div>
       )}
 
       {!loading &&

@@ -73,6 +73,8 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
   const openTotalReport = useUIStore(s => s.openTotalReport)
   const closeAllPanels = useUIStore(s => s.closeAllPanels)
 
+  const selectedCaseId = useUIStore(s => s.selectedCaseId)
+
   const rfRef = useRef<ReactFlowInstance | null>(null)
 
   const saveLayoutTmo = useRef<number | null>(null)
@@ -282,11 +284,11 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
         data: e.data ?? {},
       }))
 
-      putUILayout(conversationId, currentStageId, { nodes: dtoNodes, edges: dtoEdges }).catch(err => {
+      putUILayout(conversationId, STAGE_ID, { nodes: dtoNodes, edges: dtoEdges }).catch(err => {
         console.warn('[Diagram] putUILayout failed:', err)
       })
     }, 800) as unknown as number
-  }, [nodes, edges, conversationId, currentStageId])
+  }, [nodes, edges, conversationId])
 
   useEffect(() => {
     scheduleFit(50)
@@ -776,7 +778,7 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
         padding: 10,
       }}
     >
-      {!promptOpen && !conversationId && (
+      {!promptOpen && !conversationId && !selectedCaseId &&(
         <div
           style={{
             position: 'absolute',
