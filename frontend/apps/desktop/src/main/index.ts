@@ -259,6 +259,22 @@ function setupMenu() {
   })
 
   template.push({
+    label: 'Edit',
+    submenu: [
+      { role: 'undo' as const },
+      { role: 'redo' as const },
+      { type: 'separator' as const },
+      { role: 'cut' as const },
+      { role: 'copy' as const },
+      { role: 'paste' as const },
+      { role: 'pasteAndMatchStyle' as const },
+      { role: 'delete' as const },
+      { type: 'separator' as const },
+      { role: 'selectAll' as const },
+    ],
+  })
+
+  template.push({
     label: 'View',
     submenu: [
       { role: 'reload' as const },
