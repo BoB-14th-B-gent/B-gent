@@ -13,4 +13,9 @@ contextBridge.exposeInMainWorld('api', {
     defaultPath?: string
     filters?: { name: string; extensions: string[] }[]
   }) => ipcRenderer.invoke('fs:save', opts),
+
+  quitApp: () => ipcRenderer.invoke('app:quit'),
+
+  openCaseWindow: (payload: { caseId?: string; conversationId?: string } = {}) =>
+    ipcRenderer.invoke('case:open', payload),
 })
