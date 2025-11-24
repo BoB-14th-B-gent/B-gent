@@ -21,6 +21,7 @@ export default function PromptPanel() {
     conversationId,
     currentStageId,
     setCurrentStageId,
+    selectedCaseId,
   } = useUIStore()
 
   const [sending, setSending] = useState(false)
@@ -116,6 +117,9 @@ export default function PromptPanel() {
       if (conversationId) {
         payload.conversation_id = conversationId
       }
+      if (selectedCaseId) {
+        payload.case_id = selectedCaseId
+      }
 
       const res = await pipelineRun(payload)
 
@@ -174,6 +178,7 @@ export default function PromptPanel() {
     currentStageId,
     setCurrentStageId,
     conversationId,
+    selectedCaseId,
   ])
 
   const onKeyDown = useCallback(
