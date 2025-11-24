@@ -41,6 +41,7 @@ export type ConversationSummary = {
   last_stage_id: number
   created_at: string
   updated_at: string
+  case_id?: string | null
 }
 
 export type ConversationListRes = {
@@ -70,7 +71,7 @@ export type RFNodeDTO = {
   id: string
   type: string
   position: RFPosition
-  data?: Record<string, any>
+  data?: Record<string, unknown>
 }
 
 export type RFEdgeDTO = {
@@ -78,7 +79,7 @@ export type RFEdgeDTO = {
   source: string
   target: string
   type?: string
-  data?: Record<string, any>
+  data?: Record<string, unknown>
 }
 
 export type UILayoutRes = {
@@ -95,6 +96,35 @@ export type UILayoutUpsertReq = {
   edges: RFEdgeDTO[]
 }
 
+export type CaseDetail = {
+  _id: string
+  name: string
+  description?: string | null
+  analyst?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type CaseListRes = {
+  items: CaseDetail[]
+}
+
+export type CaseCreateReq = {
+  name: string
+  description?: string | null
+  analyst?: string | null
+}
+
+export type CaseCreateRes = {
+  _id: string
+  created_at: string
+}
+
+export type CaseConversationListRes = {
+  case_id: string
+  items: ConversationSummary[]
+}
+
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
@@ -108,9 +138,6 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  createConversation: (body: CreateConversationReq) =>
-    http<CreateConversationRes>('/conversations', { method: 'POST', body: JSON.stringify(body) }),
-
   createTrigger: (body: CreateTriggerReq) =>
     http<CreateTriggerRes>('/triggers', { method: 'POST', body: JSON.stringify(body) }),
 
@@ -190,6 +217,7 @@ export type PipelineRunReq = {
   inline_threshold?: number
   mode?: 'auto' | 'manual'
   conversation_id?: string
+  case_id?: string
 }
 
 export type PipelineRunRes = {
@@ -266,12 +294,11 @@ export async function getConversation(conversationId: string): Promise<Conversat
 export async function updateConversationStage(
   conversationId: string,
   stageId: number
-): Promise<ConversationSummary> {
+): Promise<void> {
   const qs = new URLSearchParams({ stage_id: String(stageId) })
-  return http<ConversationSummary>(
-    `/conversations/${encodeURIComponent(conversationId)}/stage?${qs.toString()}`,
-    { method: 'PATCH' }
-  )
+  await http(`/conversations/${encodeURIComponent(conversationId)}/stage?${qs.toString()}`, {
+    method: 'PATCH',
+  })
 }
 
 export async function getMessages(
@@ -327,4 +354,38 @@ export async function getConversationReports(conversationId: string): Promise<Re
     { method: 'GET' }
   )
   return res.items ?? []
+}
+
+export async function listCases(): Promise<CaseDetail[]> {
+  const res = await http<CaseListRes>('/cases', { method: 'GET' })
+  return res.items ?? []
+}
+
+export async function createCase(body: CaseCreateReq): Promise<CaseCreateRes> {
+  return http<CaseCreateRes>('/cases', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function listCaseConversations(caseId: string): Promise<ConversationSummary[]> {
+  const res = await http<CaseConversationListRes>(
+    `/cases/${encodeURIComponent(caseId)}/conversations`,
+    { method: 'GET' }
+  )
+  return res.items ?? []
+}
+
+export async function createCaseConversation(
+  caseId: string,
+  body: CreateConversationReq
+): Promise<CreateConversationRes> {
+  return http<CreateConversationRes>(`/cases/${encodeURIComponent(caseId)}/conversations`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function getCase(caseId: string): Promise<CaseDetail> {
+  return http<CaseDetail>(`/cases/${encodeURIComponent(caseId)}`, { method: 'GET' })
 }
