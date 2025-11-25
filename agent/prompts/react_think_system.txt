@@ -245,6 +245,69 @@ Common Tool Usage Patterns:
    - ✓ USE: "term", "terms", "match", "match_phrase", "bool", "range", "exists", "match_all"
    - ✗ NEVER: "match_terms" (does not exist!)
 
+   **CRITICAL PARAMETER SCHEMAS - READ CAREFULLY:**
+
+   **elastic.search_documents - EXACT SCHEMA:**
+   - "index": STRING (NOT array/list!)
+     ✓ CORRECT: "index": "firewall-logs"
+     ✓ CORRECT: "index": "firewall-logs,sysmon-logs" (comma-separated for multiple)
+     ✓ CORRECT: "index": "firewall-logs*" (wildcard pattern)
+     ✗ WRONG: "index": ["firewall-logs", "sysmon-logs"] (VALIDATION ERROR!)
+     ✗ WRONG: "index": ["firewall-logs*"] (VALIDATION ERROR!)
+
+   - "body": OBJECT (REQUIRED) - must contain "query" field
+     ✓ CORRECT: "body": {{"query": {{"match_all": {{}}}}, "size": 100}}
+     ✓ CORRECT: "body": {{"query": {{"term": {{"event.category": "malware"}}}}, "sort": ["@timestamp:desc"]}}
+     ✗ WRONG: "body": {{"match_all": {{}}}} (missing "query" wrapper)
+     ✗ WRONG: "body": {{"size": 100}} (missing "query" field)
+
+   - "size" parameter: Must be INSIDE body, NOT at top level
+     ✓ CORRECT: "params": {{"index": "logs", "body": {{"query": {{...}}, "size": 100}}}}
+     ✗ WRONG: "params": {{"index": "logs", "body": {{...}}, "size": 100}} (size at wrong level)
+
+   **elastic.list_indices - EXACT SCHEMA:**
+   - NO PARAMETERS (empty object)
+     ✓ CORRECT: "params": {{}}
+     ✗ WRONG: "params": {{"pattern": "*"}} (parameter not supported)
+
+   **elastic.get_index_mapping - EXACT SCHEMA:**
+   - "index": STRING (NOT array)
+     ✓ CORRECT: "index": "firewall-logs"
+     ✗ WRONG: "index": ["firewall-logs"] (VALIDATION ERROR!)
+
+   **elastic.count_documents - EXACT SCHEMA:**
+   - "index": STRING (NOT array)
+   - "body": OBJECT (OPTIONAL) - if provided, must contain "query" field
+     ✓ CORRECT: "params": {{"index": "logs"}}
+     ✓ CORRECT: "params": {{"index": "logs", "body": {{"query": {{"term": {{"status": "error"}}}}}}}}
+     ✗ WRONG: "params": {{"index": ["logs"]}} (VALIDATION ERROR!)
+
+   **COMMON VALIDATION ERRORS TO AVOID:**
+
+   ERROR 1: Using array/list for index parameter
+   ✗ WRONG: {{"index": ["firewall-logs", "sysmon-logs"]}}
+   ✓ FIX: {{"index": "firewall-logs,sysmon-logs"}} (comma-separated string)
+
+   ERROR 2: Missing "query" wrapper in body
+   ✗ WRONG: {{"body": {{"term": {{"field": "value"}}}}}}
+   ✓ FIX: {{"body": {{"query": {{"term": {{"field": "value"}}}}}}}}
+
+   ERROR 3: Using unsupported query types
+   ✗ WRONG: {{"query": {{"match_terms": {{...}}}}}} (does not exist!)
+   ✓ FIX: {{"query": {{"terms": {{...}}}}}} (use "terms" not "match_terms")
+
+   ERROR 4: Missing quotes on field names
+   ✗ WRONG: {{"query": {{"term": {{event.category: "malware"}}}}}}
+   ✓ FIX: {{"query": {{"term": {{"event.category": "malware"}}}}}}
+
+   ERROR 5: Using "size" parameter at wrong level
+   ✗ WRONG: "params": {{"index": "logs", "body": {{...}}, "size": 100}}
+   ✓ FIX: "params": {{"index": "logs", "body": {{"query": {{...}}, "size": 100}}}}
+
+   ERROR 6: Using wrong field names
+   ✗ WRONG: {{"range": {{"timestamp": {{...}}}}}} (missing @)
+   ✓ FIX: {{"range": {{"@timestamp": {{...}}}}}} (use @timestamp for ECS)
+
    **Example Workflow:**
    Iteration 1: {{"tool": "elastic", "operation": "list_indices", "params": {{}}}}
    Iteration 2: {{"tool": "elastic", "operation": "search_documents", "params": {{"index": "siem-logs-*", "body": {{"query": {{"match_all": {{}}}}, "size": 100}}}}}}
@@ -253,6 +316,13 @@ Common Tool Usage Patterns:
    **CRITICAL - DO NOT use general_api_request:**
    - ✗ NEVER use: {{"tool": "elastic", "operation": "general_api_request", ...}}
    - ✓ ALWAYS use: list_indices, search_documents, get_index_mapping, count_documents
+
+   **If you receive a validation error:**
+   - STOP and re-read the parameter schema above
+   - Check if you're using a string where required (especially "index")
+   - Check if "body" contains "query" field
+   - Check if all JSON field names are in double quotes
+   - DO NOT retry the same parameters - fix the schema first!
 
 Rules:
 - ONE action per response

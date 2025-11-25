@@ -479,17 +479,7 @@ def generate_high_level_plan(
     ]
 
     try:
-        import time
-        import sys
-        llm_start = time.time()
-        sys.stderr.write(f"[Plan] LLM 호출 중 (High-level Planning)...\n")
-        sys.stderr.flush()
-
         response = llm.chat(messages, response_format_json=True, timeout=30, max_tokens=2048)
-
-        llm_elapsed = time.time() - llm_start
-        sys.stderr.write(f"[Plan] LLM 응답 완료 ({llm_elapsed:.2f}초)\n")
-        sys.stderr.flush()
 
         content = response["choices"][0]["message"]["content"]
         data = json.loads(content)
@@ -497,8 +487,6 @@ def generate_high_level_plan(
         tasks_data = data.get("tasks", [])
 
         if not tasks_data:
-            sys.stderr.write("[Plan] LLM이 빈 계획을 생성 → 폴백 사용\n")
-            sys.stderr.flush()
             return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
 
         tasks = []
@@ -523,25 +511,13 @@ def generate_high_level_plan(
 
         return tasks
 
-    except json.JSONDecodeError as e:
-        sys.stderr.write(f"[Plan] LLM 응답 파싱 실패: {e} → 폴백 사용\n")
-        sys.stderr.flush()
+    except json.JSONDecodeError:
         return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
 
-    except TimeoutError as e:
-        sys.stderr.write(f"[Plan] LLM 타임아웃 (순환 참조 가능성) → 폴백 사용\n")
-        sys.stderr.flush()
+    except TimeoutError:
         return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
 
-    except Exception as e:
-        error_str = str(e).lower()
-        if "timeout" in error_str or "recursion" in error_str or "connection" in error_str:
-            sys.stderr.write(f"[Plan] LLM 연결 실패 (순환 참조/타임아웃): {e} → 폴백 사용\n")
-        else:
-            sys.stderr.write(f"[Plan] High-level 계획 생성 실패: {e} → 폴백 사용\n")
-        sys.stderr.flush()
-        import traceback
-        traceback.print_exc()
+    except Exception:
         return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
 
 

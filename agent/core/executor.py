@@ -22,6 +22,218 @@ from ..constants import (
 _ghidra_import_cache: Dict[str, bool] = {}
 _validation_error_cache: Dict[str, int] = {}  # Track validation errors by action signature
 
+
+def _get_tool_schema(client, server_name: str, tool_name: str) -> Optional[Dict[str, Any]]:
+    """MCP 도구의 input_schema 가져오기
+
+    Args:
+        client: MCP client instance
+        server_name: 서버 이름 (elastic, ghidra 등)
+        tool_name: 도구 이름 (search_documents, import_binary 등)
+
+    Returns:
+        Optional[Dict]: input_schema (JSON Schema 형식), 없으면 None
+    """
+    if not hasattr(client, 'tools_cache'):
+        return None
+
+    tools = client.tools_cache.get(server_name, [])
+    for tool in tools:
+        if tool.get('name') == tool_name:
+            return tool.get('input_schema')
+
+    return None
+
+
+def _validate_params_against_schema(params: Dict[str, Any], schema: Dict[str, Any], action: Action) -> Optional[str]:
+    """파라미터를 JSON Schema로 검증
+
+    Args:
+        params: 검증할 파라미터
+        schema: JSON Schema
+        action: 액션 정보 (에러 메시지용)
+
+    Returns:
+        Optional[str]: 에러 메시지 (검증 실패 시), None (검증 성공 시)
+    """
+    if not schema:
+        return None  # 스키마 없으면 검증 생략
+
+    try:
+        import jsonschema
+        jsonschema.validate(params, schema)
+        return None  # 검증 성공
+    except ImportError:
+        # jsonschema 없으면 기본 타입 검증만
+        return _basic_type_validation(params, schema, action)
+    except jsonschema.ValidationError as e:
+        return _format_jsonschema_error(e, action, schema)
+    except Exception as e:
+        return f"Schema validation error: {str(e)}"
+
+
+def _basic_type_validation(params: Dict[str, Any], schema: Dict[str, Any], action: Action) -> Optional[str]:
+    """기본적인 타입 검증 (jsonschema 없을 때 fallback)
+
+    Args:
+        params: 검증할 파라미터
+        schema: JSON Schema
+        action: 액션 정보
+
+    Returns:
+        Optional[str]: 에러 메시지 또는 None
+    """
+    properties = schema.get('properties', {})
+    required = schema.get('required', [])
+
+    # Required 필드 확인
+    for req_field in required:
+        if req_field not in params:
+            return (
+                f"VALIDATION ERROR: Missing required parameter '{req_field}'\n\n"
+                f"Action: {action.tool}.{action.operation}\n"
+                f"Your params: {params}\n"
+                f"Required params: {required}\n\n"
+                f"See: agent/prompts/strategies/{action.tool}.md for correct schema"
+            )
+
+    # 기본 타입 확인
+    for param_name, param_value in params.items():
+        if param_name in properties:
+            prop_schema = properties[param_name]
+            expected_type = prop_schema.get('type')
+
+            if expected_type == 'string' and not isinstance(param_value, str):
+                example_fix = ""
+                if isinstance(param_value, list):
+                    example_fix = f"\n  CORRECT: \"{param_name}\": \"{','.join(str(v) for v in param_value)}\""
+
+                return (
+                    f"TYPE ERROR: Parameter '{param_name}' must be a STRING\n\n"
+                    f"Action: {action.tool}.{action.operation}\n"
+                    f"Expected: string\n"
+                    f"Got: {type(param_value).__name__} = {param_value}\n\n"
+                    f"Fix:\n"
+                    f"  WRONG: \"{param_name}\": {param_value}{example_fix}\n\n"
+                    f"See: agent/prompts/strategies/{action.tool}.md"
+                )
+            elif expected_type == 'object' and not isinstance(param_value, dict):
+                return (
+                    f"TYPE ERROR: Parameter '{param_name}' must be an OBJECT (dict)\n\n"
+                    f"Action: {action.tool}.{action.operation}\n"
+                    f"Expected: object/dict\n"
+                    f"Got: {type(param_value).__name__}\n\n"
+                    f"See: agent/prompts/strategies/{action.tool}.md"
+                )
+            elif expected_type == 'array' and not isinstance(param_value, list):
+                return (
+                    f"TYPE ERROR: Parameter '{param_name}' must be an ARRAY (list)\n\n"
+                    f"Action: {action.tool}.{action.operation}\n"
+                    f"Expected: array/list\n"
+                    f"Got: {type(param_value).__name__}\n\n"
+                    f"See: agent/prompts/strategies/{action.tool}.md"
+                )
+
+    return None
+
+
+def _format_jsonschema_error(error: 'jsonschema.ValidationError', action: Action, schema: Dict[str, Any]) -> str:
+    """jsonschema ValidationError를 사용자 친화적 메시지로 변환
+
+    Args:
+        error: jsonschema ValidationError
+        action: 액션 정보
+        schema: JSON Schema
+
+    Returns:
+        str: 사용자 친화적 에러 메시지
+    """
+    import json as json_module
+
+    # Extract error details
+    field_path = ".".join(str(p) for p in error.path) if error.path else "root"
+    error_msg = error.message
+    validator = error.validator
+
+    # Get expected type/format from schema
+    expected = ""
+    if validator == "type":
+        expected = f"Expected type: {error.validator_value}"
+    elif validator == "required":
+        expected = f"Required fields: {error.validator_value}"
+
+    # Format readable error message
+    return (
+        f"SCHEMA VALIDATION ERROR\n\n"
+        f"Action: {action.tool}.{action.operation}\n"
+        f"Field: {field_path}\n"
+        f"Error: {error_msg}\n"
+        f"{expected}\n\n"
+        f"Your params:\n{json_module.dumps(action.params, indent=2, ensure_ascii=False)}\n\n"
+        f"Common fixes:\n"
+        f"  1. Check parameter types (string vs list, object vs string)\n"
+        f"  2. Ensure all required fields are present\n"
+        f"  3. Remove unexpected/unsupported parameters\n\n"
+        f"See: agent/prompts/strategies/{action.tool}.md for correct examples"
+    )
+
+
+def _enhance_mcp_error_message(error_msg: str, action: Action) -> str:
+    """MCP에서 반환된 에러 메시지를 개선
+
+    Args:
+        error_msg: 원본 에러 메시지
+        action: 액션 정보
+
+    Returns:
+        str: 개선된 에러 메시지
+    """
+    import json as json_module
+    error_lower = error_msg.lower()
+
+    # Pattern 1: Pydantic validation errors
+    if "validation error" in error_lower or "type=" in error_lower:
+        return (
+            f"PARAMETER VALIDATION FAILED\n\n"
+            f"Action: {action.tool}.{action.operation}\n"
+            f"Your params:\n{json_module.dumps(action.params, indent=2, ensure_ascii=False)}\n\n"
+            f"MCP Server Error:\n{error_msg}\n\n"
+            f"Common issues:\n"
+            f"  - Wrong parameter type (e.g., list instead of string)\n"
+            f"  - Missing required parameters\n"
+            f"  - Unsupported parameters\n\n"
+            f"Check: agent/prompts/strategies/{action.tool}.md for correct schema"
+        )
+
+    # Pattern 2: Missing required argument
+    if "missing required" in error_lower or "required argument" in error_lower:
+        return (
+            f"MISSING REQUIRED PARAMETER\n\n"
+            f"Action: {action.tool}.{action.operation}\n"
+            f"Your params:\n{json_module.dumps(action.params, indent=2, ensure_ascii=False)}\n\n"
+            f"Error: {error_msg}\n\n"
+            f"See: agent/prompts/strategies/{action.tool}.md for required parameters"
+        )
+
+    # Pattern 3: Unexpected keyword
+    if "unexpected keyword" in error_lower:
+        return (
+            f"UNSUPPORTED PARAMETER\n\n"
+            f"Action: {action.tool}.{action.operation}\n"
+            f"Your params:\n{json_module.dumps(action.params, indent=2, ensure_ascii=False)}\n\n"
+            f"Error: {error_msg}\n\n"
+            f"One or more parameters are not supported by this tool.\n\n"
+            f"See: agent/prompts/strategies/{action.tool}.md for supported parameters"
+        )
+
+    # Default: add context
+    return (
+        f"MCP TOOL ERROR\n\n"
+        f"Action: {action.tool}.{action.operation}\n"
+        f"Error: {error_msg}\n\n"
+        f"See: agent/prompts/strategies/{action.tool}.md for usage guide"
+    )
+
 def execute_action(action: Action, job_id: Optional[str] = None, task_id: Optional[str] = None) -> ActionResult:
     """액션 실행 (재시도 및 타임아웃 지원)
 
@@ -127,7 +339,22 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
             else:
                 # print(f"   실행 중: {action.tool}.{action.operation}")
                 # print(f"   이유: {action.reason}")
-                pass
+
+                # PRE-VALIDATION: Check schema before MCP call (only on first attempt)
+                client = get_mcp_client_for_server(action.tool)
+                tool_schema = _get_tool_schema(client, action.tool, action.operation)
+
+                if tool_schema:
+                    validation_error = _validate_params_against_schema(action.params, tool_schema, action)
+                    if validation_error:
+                        # Schema validation failed BEFORE MCP call
+                        return ActionResult(
+                            action=action,
+                            success=False,
+                            error=validation_error,
+                            execution_time_seconds=0.0
+                        )
+
             result = _call_mcp_tool_with_timeout(action, timeout)
             execution_time = time.time() - start_time
 
@@ -223,6 +450,10 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
                     if os.getenv("DEBUG") == "1":
                         sys.__stdout__.write(f"[DEBUG] Validation error detected for {action_signature}, count: {_validation_error_cache[action_signature]}\n")
                         sys.__stdout__.flush()
+
+                    # Enhance validation error message
+                    error_msg = _enhance_mcp_error_message(error_msg, action)
+                    last_error = error_msg
 
                 log_mcp_execution(
                     mcp_name=action.tool,

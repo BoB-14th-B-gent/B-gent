@@ -125,15 +125,6 @@ class LLMClient:
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
 
-        # DEBUG: 요청 데이터 로깅
-        import sys
-        sys.stderr.write(f"\n[DEBUG] Remote API 요청:\n")
-        sys.stderr.write(f"  URL: {self.base}\n")
-        sys.stderr.write(f"  Payload type: {type(payload['prompt'])}\n")
-        sys.stderr.write(f"  Payload length: {len(payload['prompt'])}\n")
-        sys.stderr.write(f"  Payload preview: {payload['prompt'][:200]}...\n")
-        sys.stderr.flush()
-
         r = requests.post(self.base, json=payload, headers=self._headers(), timeout=timeout, verify=self.verify)
 
         if r.status_code == 404:

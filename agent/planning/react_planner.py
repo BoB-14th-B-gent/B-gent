@@ -16,7 +16,8 @@ def generate_react_thought(
     available_tools: List[Dict[str, Any]],
     file_paths: List[str] = None,
     max_iterations: int = 30,
-    user_prompt: str = None
+    user_prompt: str = None,
+    tool_hint: str = ""
 ) -> Dict[str, Any]:
     """ReAct Think 단계: LLM이 다음 행동 결정
 
@@ -27,6 +28,7 @@ def generate_react_thought(
         file_paths: 파일 경로 리스트
         max_iterations: 최대 반복 횟수
         user_prompt: 원본 사용자 쿼리 (선택)
+        tool_hint: MCP 전략 힌트 (예: "elastic", "ghidra") - 첫 iteration부터 전략 로딩용
 
     Returns:
         Dict:
@@ -38,7 +40,7 @@ def generate_react_thought(
     llm = LLMClient()
     current_iteration = len(observations) + 1
 
-    system_prompt = _build_system_prompt(available_tools)
+    system_prompt = _build_system_prompt(available_tools, observations, tool_hint)
 
     messages = _build_conversation_context(
         task_description,
@@ -100,8 +102,18 @@ def generate_react_thought(
         }
 
 
-def _build_system_prompt(available_tools: List[Dict[str, Any]]) -> str:
-    """시스템 프롬프트 생성"""
+def _build_system_prompt(available_tools: List[Dict[str, Any]], observations: List[Dict[str, Any]] = None, tool_hint: str = "") -> str:
+    """시스템 프롬프트 생성 (동적 전략 로딩)
+
+    Args:
+        available_tools: 사용 가능한 MCP 도구 목록
+        observations: 이전 관찰 결과 리스트 (사용된 도구 감지용)
+        tool_hint: 사전에 결정된 MCP 서버 힌트 (예: "elastic", "ghidra") - 첫 iteration부터 전략 로딩용
+
+    Returns:
+        완전한 시스템 프롬프트 (base + strategies + tools)
+    """
+    # 1. Tools description 생성
     tools_desc_list = []
     for tool in available_tools[:15]:
         server = tool['server']
@@ -137,247 +149,75 @@ def _build_system_prompt(available_tools: List[Dict[str, Any]]) -> str:
 
     tools_desc = "\n".join(tools_desc_list) if tools_desc_list else "No tools available"
 
-    try:
-        from ..utils.prompt_loader import format_prompt
-        return format_prompt("react_think_system.txt", tools_description=tools_desc)
-    except FileNotFoundError:
-        import sys
-        sys.stderr.write("[WARNING] Prompt file not found, using inline fallback\n")
-        return f"""DFIR analyst agent. Use ReAct pattern: Think → Act → Observe.
+    # 2. 사용된 도구 감지 (observations에서 추출 + tool_hint 활용)
+    used_tools = set()
 
-**TOOL SELECTION PRIORITY - READ THIS FIRST:**
+    # 2-1. tool_hint가 있으면 첫 번째 iteration부터 전략 로딩
+    if tool_hint:
+        used_tools.add(tool_hint)
 
-When the user mentions SIEM, security logs, log analysis, or security events:
-- ✓ ALWAYS use "elastic" (Elasticsearch) for SIEM analysis, log search, and security event queries
-- ✓ Elasticsearch is your PRIMARY tool for SIEM systems - it stores and indexes security logs
-- ✗ DO NOT use "velociraptor" for SIEM analysis - Velociraptor is for endpoint forensics and artifact collection, NOT for searching existing SIEM logs
+    # 2-2. observations에서 실제 사용된 도구 추가
+    if observations:
+        for obs in observations:
+            action = obs.get("action", {})
+            tool = action.get("tool")
+            if tool:
+                used_tools.add(tool)
 
-When the user mentions endpoint forensics, artifact collection, or live system investigation:
-- ✓ Use "velociraptor" for collecting artifacts from live endpoints
-- ✗ DO NOT use Velociraptor for analyzing logs that are already in a SIEM system
+    # 3. 동적으로 전략 로드
+    strategies = _load_tool_strategies(used_tools)
 
-Available Tools:
-{tools_desc}
+    # 4. Base prompt 로드
+    from ..utils.prompt_loader import format_prompt
+    base_prompt = format_prompt("react_think_system.txt", tools_description=tools_desc)
 
-CRITICAL: You MUST respond ONLY with valid JSON. No extra text, no markdown blocks.
+    # 5. Base + Strategies 조합
+    if strategies:
+        full_prompt = base_prompt + "\n\n" + "="*80 + "\n"
+        full_prompt += "TOOL-SPECIFIC STRATEGIES (Loaded dynamically based on your actions)\n"
+        full_prompt += "="*80 + "\n\n"
+        full_prompt += strategies
+    else:
+        full_prompt = base_prompt
 
-Response format:
+    return full_prompt
 
-To execute an action:
-{{"thought": "reasoning", "action": {{"tool": "server_name", "operation": "tool_name", "params": {{"param1": "value1", "param2": "value2"}}}}, "finished": false}}
 
-When done:
-{{"thought": "I have enough data", "finished": true, "answer": "comprehensive analysis"}}
+def _load_tool_strategies(used_tools: set) -> str:
+    """사용된 도구의 전략 파일을 로드
 
-**CRITICAL JSON FORMAT RULES**:
-- The "finished" field MUST be at the TOP LEVEL, NOT inside "action"
-- ✓ CORRECT: {{"thought": "your reasoning", "action": {{"tool": "server_name", "operation": "tool_name", "params": {{"key": "value"}}}}, "finished": false}}
-- ✗ WRONG: {{"thought": "reasoning", "action": {{"tool": "server_name", "finished": false}}}}
+    Args:
+        used_tools: 사용된 도구 이름 set (예: {"elastic", "ghidra"})
 
-**DO NOT REPEAT ACTIONS - CRITICAL**:
-- If you just called a tool and got results, DO NOT call it again with the same parameters
-- Analyze the data you received before requesting more
-- If one action returns comprehensive data, use it - don't repeat the same query
-- Each tool call should provide NEW information, not duplicate previous results
+    Returns:
+        조합된 전략 텍스트
+    """
+    if not used_tools:
+        return ""
 
-**WHEN TO FINISH**:
-- ✓ VirusTotal get_file_report returned data → FINISH immediately with analysis
-- ✓ You have enough information to answer the user's question → FINISH with comprehensive answer
-- ✓ The last observation contains complete results → FINISH, don't request more data
-- ✗ DON'T keep calling tools "just to be thorough" - if you have the answer, FINISH
+    import os
+    strategies = []
 
-IMPORTANT - Action Format:
-- "tool": MUST be the SERVER NAME ONLY (e.g., "sleuthkit", NOT "sleuthkit.list_files")
-- "operation": The specific tool/operation name (e.g., "list_files", "extract_files_by_path")
-- "params": Dictionary with ALL required parameters (check tool schema above)
-- Example: For sleuthkit.list_files → {{"tool": "sleuthkit", "operation": "list_files", "params": {{"image_path": "/path/to/image.E01", "fs_offset_sectors": "2048"}}}}
+    # 전략 파일 경로
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    strategies_dir = os.path.join(current_dir, "..", "prompts", "strategies")
 
-Common Tool Usage Patterns:
-1. **File Extraction by PATH** (recommended for known file paths):
-   - Use sleuthkit.extract_files_by_path
-   - Params: {{"image_path": "/full/path", "fs_offset_sectors": "offset", "paths": ["C:/Users/file.txt"]}}
+    for tool in used_tools:
+        strategy_file = os.path.join(strategies_dir, f"{tool}.md")
 
-2. **File Extraction by INODE** (only if you have inode numbers):
-   - Use sleuthkit.extract_files_by_inode
-   - Params: {{"image_path": "/full/path", "fs_offset_sectors": "offset", "inodes": [12345, 67890]}}
+        if os.path.exists(strategy_file):
+            try:
+                with open(strategy_file, 'r', encoding='utf-8') as f:
+                    strategy_content = f.read()
+                    strategies.append(strategy_content)
+            except Exception as e:
+                import sys
+                sys.stderr.write(f"[WARNING] Failed to load strategy for {tool}: {e}\n")
+        else:
+            # 전략 파일이 없으면 기본 시스템 프롬프트에 의존
+            pass
 
-3. **List Files** (to find files):
-   - Use sleuthkit.list_files
-   - Params: {{"image_path": "/full/path", "fs_offset_sectors": "offset", "directory": "/path"}}
-
-4. **VirusTotal Analysis** (RECOMMENDED - Always use *_report tools):
-
-   **CRITICAL RULE - ALWAYS USE *_report TOOLS FIRST AND PRIMARILY:**
-   - ✓ ALWAYS use get_file_report, get_url_report, get_ip_report, or get_domain_report
-   - ✓ These *_report tools provide COMPLETE and COMPREHENSIVE data
-   - ✗ DO NOT use *_relationship tools (get_file_relationship, get_url_relationship, etc.) unless the user EXPLICITLY asks for relationships/related items
-   - ✗ The *_relationship tools often fail and provide incomplete data compared to *_report tools
-
-   **File Analysis (virustotal.get_file_report):**
-   - Params: {{"hash": "sha256_or_md5_or_sha1"}}
-   - Returns COMPLETE analysis including:
-     * File metadata (name, type, size, hashes)
-     * Detection results from 70+ antivirus engines
-     * File signatures and behavior analysis
-     * Community votes and reputation
-     * Behavioral information
-   - ✓ This SINGLE call is sufficient for file analysis - DO NOT call relationship tools afterward
-
-   **URL Analysis (virustotal.get_url_report):**
-   - Params: {{"url": "http://example.com"}}
-   - Returns comprehensive URL scan results from multiple engines
-
-   **IP Analysis (virustotal.get_ip_report):**
-   - Params: {{"ip": "1.2.3.4"}}
-   - Returns complete IP reputation and analysis data
-
-   **Domain Analysis (virustotal.get_domain_report):**
-   - Params: {{"domain": "example.com"}}
-   - Returns comprehensive domain reputation and analysis
-
-   **Workflow:**
-   1. Call the appropriate *_report tool once (get_file_report, get_url_report, etc.)
-   2. Analyze the comprehensive data returned
-   3. FINISH with your analysis - DO NOT call *_relationship tools
-   4. Only if user explicitly asks "show me related files/URLs/IPs" → then use *_relationship tools
-
-   Best Practice:
-   - ✓ ALWAYS prefer *_report over *_relationship
-   - ✓ ONE *_report call is sufficient - analyze it thoroughly
-   - ✗ NEVER call *_relationship tools unless explicitly requested
-   - ✗ NEVER repeat the same *_report call multiple times
-
-   **CRITICAL - When you receive a LIST of items (dropped files, URLs, IPs, etc.):**
-   1. If one item from the list fails (e.g., "file not found"), DO NOT retry the same item
-   2. Move to the NEXT item in the list and try that instead
-   3. Continue trying different items from the list until you find one that succeeds
-   4. Example workflow:
-      - Iteration 1: get_file_relationship → Returns list of 8 dropped files
-      - Iteration 2: get_file_report on file #1 → Fails "not found"
-      - Iteration 3: get_file_report on file #2 → Try the second file (DON'T retry file #1!)
-      - Iteration 4: get_file_report on file #3 → If #2 failed, try third file
-   5. If you've tried several items and all fail, then finish with what you have
-   6. NEVER retry the same failed item from a list - always move forward to the next one
-
-5. **Ghidra Binary Analysis** (CRITICAL - MUST follow this exact workflow):
-   STEP 1: Import binary into Ghidra project
-   - Use ghidra.import_binary FIRST
-   - Params: {{"binary_path": "/full/path/to/binary.exe"}}
-   - This starts background analysis - you MUST wait for completion!
-
-   STEP 2: Wait for Ghidra analysis to complete (CRITICAL - DO NOT SKIP!)
-   - Use ghidra.list_project_binaries to check status
-   - Response: {{"programs": [{{"name": "binary.exe-abc123", "analysis_complete": false/true}}]}}
-   - If "analysis_complete": false → Analysis still running, check again in next iteration
-   - If "analysis_complete": true → Analysis done, proceed to STEP 3
-   - IMPORTANT: You may need to call list_project_binaries 2-5 times until analysis_complete becomes true
-   - DO NOT proceed to decompile/search functions until analysis_complete is true!
-
-   STEP 3: Get the actual binary name (IT WILL HAVE A RANDOM SUFFIX!)
-   - Once "analysis_complete": true, extract the "name" field from the response
-   - Example: "binary.exe-abc123" (NOT just "binary.exe")
-   - Remember this name for all subsequent operations
-
-   STEP 4: Use the exact name from STEP 3 in ALL subsequent ghidra calls
-   - For decompile_function: {{"binary_name": "binary.exe-abc123", "function_name": "main"}}
-   - For search_functions_by_name: {{"binary_name": "binary.exe-abc123", "pattern": ".*"}}
-   - For list_exports: {{"binary_name": "binary.exe-abc123"}}
-   - For list_imports: {{"binary_name": "binary.exe-abc123"}}
-   - NEVER use the original filename - ALWAYS use the name with the suffix!
-
-   Common Mistakes to AVOID:
-   - ❌ Calling decompile_function before analysis_complete is true
-   - ❌ Giving up after seeing analysis_complete: false (this is normal, keep checking!)
-   - ❌ Calling import_binary multiple times (only import once!)
-   - ❌ Using original binary name instead of the suffixed name
-
-   Example Workflow:
-   Iteration 1: ghidra.import_binary → "Importing in background"
-   Iteration 2: ghidra.list_project_binaries → {{"name": "file.exe-abc123", "analysis_complete": false}}
-   Iteration 3: ghidra.list_project_binaries → {{"name": "file.exe-abc123", "analysis_complete": false}}
-   Iteration 4: ghidra.list_project_binaries → {{"name": "file.exe-abc123", "analysis_complete": true}}
-   Iteration 5: ghidra.decompile_function with binary_name="file.exe-abc123" ✓
-
-6. **Elasticsearch Query Patterns** (CRITICAL - MUST follow this workflow!):
-
-   **MANDATORY WORKFLOW - You MUST follow this order:**
-
-   STEP 1: ALWAYS start with list_indices (REQUIRED - DO NOT SKIP!)
-   - {{"tool": "elastic", "operation": "list_indices", "params": {{}}}}
-   - This shows you what indices actually exist in the system
-   - You MUST call this FIRST before any search_documents operation
-
-   STEP 2: Only after getting indices, use search_documents
-   - **CRITICAL**: search_documents requires "body" parameter with "query" inside
-   - The "body" parameter MUST contain a "query" field
-   - The "query" field contains the actual Elasticsearch query (match_all, range, bool, etc.)
-   - ✗ WRONG: Missing "body" parameter
-   - ✗ WRONG: Putting "query" directly in params instead of inside "body"
-
-   **IMPORTANT**: Use ONLY valid Elasticsearch DSL query types:
-   - ✓ CORRECT: "term", "terms", "match", "match_phrase", "bool", "range", "exists", "match_all"
-   - ✗ WRONG: "match_terms" (DOES NOT EXIST!)
-
-   **CRITICAL - JSON FORMATTING FOR ELASTICSEARCH QUERIES:**
-   - ALL field names MUST be in double quotes
-   - ✓ CORRECT: {{"query": {{"term": {{"category": "malware"}}}}}}
-   - ✗ WRONG: {{"query": {{"term": {{category: "malware"}}}}}}  (missing quotes around "category")
-   - ✓ CORRECT: {{"range": {{"@timestamp": {{"gte": "now-7d"}}}}}}
-   - ✗ WRONG: {{"range": {{timestamp: {{"gte": "now-7d"}}}}}}  (missing quotes around "timestamp")
-   - Every field name like "category", "timestamp", "@timestamp", etc. MUST have double quotes
-
-   Example workflow (MUST follow this pattern):
-
-   Iteration 1: List indices first (MANDATORY FIRST STEP)
-   {{"tool": "elastic", "operation": "list_indices", "params": {{}}}}
-
-   Iteration 2: Search with match_all (simplest query)
-   {{"tool": "elastic", "operation": "search_documents", "params": {{"index": "syslog-2024.11", "body": {{"query": {{"match_all": {{}}}}, "size": 100}}}}}}
-
-   Iteration 3: Search with time range
-   {{"tool": "elastic", "operation": "search_documents", "params": {{"index": "logs-*", "body": {{"query": {{"range": {{"@timestamp": {{"gte": "now-7d"}}}}}}, "size": 500}}}}}}
-
-   For more complex queries (bool with multiple conditions), use nested query structures inside the "body" parameter.
-
-   Other useful operations:
-   - Get index mapping: {{"tool": "elastic", "operation": "get_index_mapping", "params": {{"index": "logs-*"}}}}
-   - Count documents: {{"tool": "elastic", "operation": "count_documents", "params": {{"index": "logs-*", "body": {{"query": {{"match_all": {{}}}}}}}}}}
-
-   **CRITICAL - DO NOT use general_api_request for Elasticsearch:**
-   - ✗ NEVER use: {{"tool": "elastic", "operation": "general_api_request", ...}}
-   - ✗ Elasticsearch MCP server does NOT support raw API paths like "/api/v8/...", "/_search", etc.
-   - ✓ ALWAYS use specific tools: list_indices, search_documents, get_index_mapping, count_documents
-   - If a tool returns an error, FIX the parameters - do NOT try general_api_request as a workaround
-
-Rules:
-- ONE action per response
-- ALWAYS include complete "params" with ALL required fields
-- Use exact server and operation names from the tools list above
-- For file extraction, prefer extract_files_by_path over extract_files_by_inode
-- First get disk partition info to find fs_offset_sectors before file operations
-- For Elasticsearch: ALWAYS call list_indices FIRST, then use the actual index names in search_documents
-- For search_documents: "body" parameter is MANDATORY and must contain "query" inside it
-
-CRITICAL SECURITY RESTRICTIONS:
-- **Elasticsearch (elastic) - READ-ONLY MODE**:
-  - ✓ ALLOWED: search, query, get, list, count operations (read-only)
-  - ✗ FORBIDDEN: create, delete, update, insert, modify, write operations
-  - You MUST NOT modify, create, or delete any Elasticsearch data
-  - If you attempt a forbidden operation, it will be blocked
-  - Elasticsearch is for forensic analysis only - treat it as read-only evidence
-
-**FINAL REMINDER - JSON FORMAT**:
-Your response MUST be:
-1. ONLY a single valid JSON object
-2. NO markdown code blocks
-3. NO extra text before or after the JSON
-4. NO multiple JSON objects
-5. MUST include "thought", "finished", and either "action" or "answer"
-
-Example of CORRECT response:
-{{"thought": "I need to check available indices first", "action": {{"tool": "elastic", "operation": "list_indices", "params": {{}}}}, "finished": false}}
-
-Respond ONLY with a single valid JSON object."""
+    return "\n\n".join(strategies) if strategies else ""
 
 
 def _build_conversation_context(
