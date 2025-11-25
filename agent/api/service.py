@@ -5,7 +5,7 @@ import io
 import threading
 from typing import List
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
 
 async def send_log(trigger_id: str, message: str):
@@ -50,18 +50,19 @@ def execute_agent_sync(conversation_id: str, stage_id: int, trigger_id: str,
     try:
         from agent.core.router import run_job
 
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        # 항상 새로운 이벤트 루프 생성 (백그라운드 스레드에서 실행되므로)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
         loop.run_until_complete(send_log(trigger_id, f"[INFO] Agent execution started for conversation: {conversation_id}"))
 
-        data_dir = os.path.join(os.path.dirname(__file__), '../../../../data')
+        data_dir = os.path.join(os.path.dirname(__file__), '../../data')
         absolute_file_paths = []
 
         for filename in file_paths:
+            if not filename or not filename.strip():
+                continue  # 빈 파일명 스킵
+
             if os.path.isabs(filename):
                 absolute_file_paths.append(filename)
             else:
@@ -107,6 +108,7 @@ def execute_agent_sync(conversation_id: str, stage_id: int, trigger_id: str,
             sys.stderr = original_stderr
 
         loop.run_until_complete(send_log(trigger_id, f"[INFO] Agent execution completed"))
+        loop.close()
 
     except Exception as e:
         sys.stdout = original_stdout
@@ -119,9 +121,12 @@ def execute_agent_sync(conversation_id: str, stage_id: int, trigger_id: str,
         print(tb)
 
         try:
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(send_log(trigger_id, error_msg))
-            loop.run_until_complete(send_log(trigger_id, f"[TRACEBACK] {tb}"))
+            # 예외 발생 시에도 새로운 이벤트 루프로 로그 전송
+            error_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(error_loop)
+            error_loop.run_until_complete(send_log(trigger_id, error_msg))
+            error_loop.run_until_complete(send_log(trigger_id, f"[TRACEBACK] {tb}"))
+            error_loop.close()
         except:
             pass
 
