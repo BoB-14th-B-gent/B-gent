@@ -2,11 +2,54 @@ import asyncio
 import sys
 import os
 import io
-import threading
-from typing import List
+from typing import List, Tuple, Dict, Any
+from pathlib import Path
+from dotenv import load_dotenv
+from pymongo import MongoClient
+from bson import ObjectId
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
+try:
+    BASE_DIR = Path(__file__).resolve().parents[2]
+    ENV_PATH = BASE_DIR / ".env"
+
+    if ENV_PATH.exists():
+        load_dotenv(ENV_PATH, override=False)
+        print(f"[agent.service] .env loaded: {ENV_PATH}")
+    else:
+        print(f"[agent.service] .env NOT FOUND at: {ENV_PATH}")
+except Exception as e:
+    print(f"[agent.service] dotenv load skipped: {e}")
+
+MONGO_URI = os.getenv("MONGO_URI")
+MONGO_DB = os.getenv("MONGO_DB")
+
+_mongo_client: MongoClient | None = None
+
+def get_db():
+    global _mongo_client
+    if _mongo_client is None:
+        _mongo_client = MongoClient(MONGO_URI)
+        print(f"[agent.service] connected → {MONGO_URI} / db={MONGO_DB}")
+    return _mongo_client[MONGO_DB]
+
+def get_agent_state_from_db(trigger_id: str) -> Dict[str, Any]:
+    db = get_db()
+    col = db["AGENT_STATES"]
+
+    doc = col.find_one({"trigger_id": ObjectId(trigger_id)}, sort=[("updated_at", -1)])
+    if not doc:
+        return {}
+
+    if "_id" in doc:
+        doc["_id"] = str(doc["_id"])
+    if isinstance(doc.get("trigger_id"), ObjectId):
+        doc["trigger_id"] = str(doc["trigger_id"])
+    if isinstance(doc.get("conversation_id"), ObjectId):
+        doc["conversation_id"] = str(doc["conversation_id"])
+
+    return doc
 
 async def send_log(trigger_id: str, message: str):
     from .router import send_log_to_client
@@ -15,13 +58,11 @@ async def send_log(trigger_id: str, message: str):
     except Exception as e:
         print(f"Failed to send log via WebSocket: {e}")
 
-
 class LogCapture(io.StringIO):
     def __init__(self, trigger_id: str, original_stdout):
         super().__init__()
         self.trigger_id = trigger_id
         self.original_stdout = original_stdout
-        self.buffer = ""
 
     def write(self, text):
         self.original_stdout.write(text)
@@ -41,27 +82,79 @@ class LogCapture(io.StringIO):
     def flush(self):
         self.original_stdout.flush()
 
+def _load_trigger_and_prompt(trigger_id: str) -> Tuple[str, int, str, List[str]]:
+    db = get_db()
+    triggers_col = db["TRIGGERS"]
+    prompts_col = db["PROMPTS"]
 
-def execute_agent_sync(conversation_id: str, stage_id: int, trigger_id: str,
-                        prompt: str, file_paths: List[str]):
+    try:
+        trigger_obj_id = ObjectId(trigger_id)
+    except Exception:
+        trigger = triggers_col.find_one({"_id": trigger_id})
+    else:
+        trigger = triggers_col.find_one({"_id": trigger_obj_id})
+
+    if not trigger:
+        raise RuntimeError(f"Trigger not found for id={trigger_id}")
+
+    conv_raw = trigger.get("conversation_id")
+    if isinstance(conv_raw, ObjectId):
+        conversation_id = str(conv_raw)
+    else:
+        conversation_id = str(conv_raw)
+
+    stage_id = int(trigger.get("stage_id", 0))
+
+    prompt_raw = trigger.get("prompt_id")
+    if isinstance(prompt_raw, ObjectId):
+        prompt_obj_id = prompt_raw
+    else:
+        try:
+            prompt_obj_id = ObjectId(prompt_raw)
+        except Exception:
+            prompt_obj_id = prompt_raw
+
+    if isinstance(prompt_obj_id, ObjectId):
+        prompt_doc = prompts_col.find_one({"_id": prompt_obj_id})
+    else:
+        prompt_doc = prompts_col.find_one({"_id": prompt_obj_id})
+
+    if not prompt_doc:
+        raise RuntimeError(f"Prompt not found for trigger={trigger_id}")
+
+    user_prompt = prompt_doc.get("user_prompt", "")
+    unprocessed_filenames = prompt_doc.get("unprocessed_filenames", []) or []
+
+    return conversation_id, stage_id, user_prompt, unprocessed_filenames
+
+def execute_agent_sync(trigger_id: str):
     original_stdout = sys.stdout
     original_stderr = sys.stderr
 
     try:
         from agent.core.router import run_job
 
-        # 항상 새로운 이벤트 루프 생성 (백그라운드 스레드에서 실행되므로)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-        loop.run_until_complete(send_log(trigger_id, f"[INFO] Agent execution started for conversation: {conversation_id}"))
+        loop.run_until_complete(send_log(trigger_id, f"[INFO] Agent execution started for trigger: {trigger_id}"))
+
+        try:
+            conversation_id, stage_id, prompt, file_paths = _load_trigger_and_prompt(trigger_id)
+            loop.run_until_complete(send_log(trigger_id, f"[DEBUG] Loaded from MongoDB → conv={conversation_id}, stage={stage_id}, files={file_paths}"))
+        except Exception as db_error:
+            err_msg = f"[ERROR] Failed to load trigger/prompt from MongoDB: {db_error}"
+            print(err_msg)
+            loop.run_until_complete(send_log(trigger_id, err_msg))
+            loop.close()
+            return
 
         data_dir = os.path.join(os.path.dirname(__file__), '../../data')
-        absolute_file_paths = []
+        absolute_file_paths: List[str] = []
 
         for filename in file_paths:
             if not filename or not filename.strip():
-                continue  # 빈 파일명 스킵
+                continue
 
             if os.path.isabs(filename):
                 absolute_file_paths.append(filename)
@@ -89,7 +182,7 @@ def execute_agent_sync(conversation_id: str, stage_id: int, trigger_id: str,
                 generate_report_flag=False,
                 conversation_id=conversation_id,
                 trigger_id=trigger_id,
-                stage_id=stage_id
+                stage_id=stage_id,
             )
             loop.run_until_complete(send_log(trigger_id, f"[DEBUG] run_job returned: {type(result)}"))
         except Exception as run_job_error:
@@ -121,7 +214,6 @@ def execute_agent_sync(conversation_id: str, stage_id: int, trigger_id: str,
         print(tb)
 
         try:
-            # 예외 발생 시에도 새로운 이벤트 루프로 로그 전송
             error_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(error_loop)
             error_loop.run_until_complete(send_log(trigger_id, error_msg))
@@ -130,7 +222,6 @@ def execute_agent_sync(conversation_id: str, stage_id: int, trigger_id: str,
         except:
             pass
 
-
-async def execute_agent_async(prompt: str, stage_id: int, file_paths: List[str]):
+async def execute_agent_async(trigger_id: str):
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, execute_agent_sync, prompt, stage_id, file_paths)
+    await loop.run_in_executor(None, execute_agent_sync, trigger_id)

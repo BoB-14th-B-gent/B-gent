@@ -1,14 +1,16 @@
 from pydantic import BaseModel
-from typing import List, Optional
-
+from typing import Any, Dict, List, Optional
 
 class AgentExecuteRequest(BaseModel):
-    conversation_id: str
-    stage_id: int
     trigger_id: str
-    prompt: str
-    unprocessed_filename: List[str]
-
-
+    
 class AgentExecuteResponse(BaseModel):
     ok: bool
+
+class AgentState(BaseModel):
+    trigger_id: str
+    conversation_id: Optional[str] = None
+    stage_id: Optional[int] = None
+    status: str
+    plan: List[Dict[str, Any]] = []
+    updated_at: Optional[str] = None
