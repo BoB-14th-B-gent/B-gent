@@ -21,7 +21,7 @@ class EvidenceCreatedOut(BaseModel):
     items: List[EvidenceCreatedItem]
 
 class EvidenceListItem(BaseModel):
-    _id: str
+    id: str = Field(alias="_id")
     conversation_id: Optional[str] = None
     stage_id: Optional[int] = None
     filename: Optional[str] = None
@@ -32,7 +32,7 @@ class EvidenceListOut(BaseModel):
     items: List[EvidenceListItem]
 
 class EvidenceInputDetail(BaseModel):
-    _id: str
+    id: str = Field(alias="_id")
     conversation_id: Optional[str] = None
     stage_id: Optional[int] = None
     filename: Optional[str] = None
@@ -40,3 +40,15 @@ class EvidenceInputDetail(BaseModel):
     data: Optional[dict] = None
     data_gridfs_id: Optional[str] = None
     ingested_at: Optional[datetime] = None
+
+class McpEvidenceListItem(BaseModel):
+    id: str = Field(alias="_id")
+    trigger_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    stage_id: Optional[int] = None
+    mcp_name: Optional[str] = None
+    tool_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+class McpEvidenceListOut(BaseModel):
+    items: List[McpEvidenceListItem]
