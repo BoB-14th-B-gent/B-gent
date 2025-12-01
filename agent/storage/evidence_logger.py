@@ -1,27 +1,19 @@
-"""MCP 실행 로깅 모듈
-
-MCP 도구 호출 결과를 MongoDB MCP_EVIDENCES 컬렉션에 저장
-"""
-from __future__ import annotations
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import json
 import csv
 import io
 import xml.etree.ElementTree as ET
-from .job_storage import _get_client, add_mcp_tool
-
+from bson import ObjectId
+from .job_storage import _get_client, add_mcp_tool, get_agent_state
 
 def _parse_json_string(text: str) -> Optional[Any]:
-    """JSON 문자열 파싱 시도"""
     try:
         return json.loads(text)
     except (json.JSONDecodeError, TypeError):
         return None
 
-
 def _parse_xml_to_dict(text: str) -> Optional[Dict[str, Any]]:
-    """XML 문자열을 dict로 변환"""
     try:
         def etree_to_dict(element: ET.Element) -> Dict[str, Any]:
             result = {element.tag: {} if element.attrib else None}
@@ -58,9 +50,7 @@ def _parse_xml_to_dict(text: str) -> Optional[Dict[str, Any]]:
     except (ET.ParseError, Exception):
         return None
 
-
 def _parse_csv_to_list(text: str) -> Optional[List[Dict[str, Any]]]:
-    """CSV 문자열을 list of dict로 변환"""
     try:
         lines = [line for line in text.splitlines() if line.strip()]
         if len(lines) < 2:
@@ -97,16 +87,7 @@ def _parse_csv_to_list(text: str) -> Optional[List[Dict[str, Any]]]:
     except Exception:
         return None
 
-
 def _parse_space_separated_table(text: str) -> Optional[List[Dict[str, Any]]]:
-    """공백으로 구분된 테이블을 파싱 (Elasticsearch _cat API 등)
-
-    Args:
-        text: 공백 구분 테이블 텍스트
-
-    Returns:
-        List[Dict]: 파싱된 데이터 또는 None
-    """
     try:
         lines = [line for line in text.splitlines() if line.strip()]
         if len(lines) < 1:
@@ -115,7 +96,7 @@ def _parse_space_separated_table(text: str) -> Optional[List[Dict[str, Any]]]:
         result = []
         for line in lines:
             values = line.split()
-            if len(values) >= 3:  
+            if len(values) >= 3:
                 row = {
                     "health": values[0] if len(values) > 0 else None,
                     "status": values[1] if len(values) > 1 else None,
@@ -142,9 +123,7 @@ def _parse_space_separated_table(text: str) -> Optional[List[Dict[str, Any]]]:
     except Exception:
         return None
 
-
 def _parse_elastic_response(response: Any, tool_name: str) -> Dict[str, Any]:
-    """Elasticsearch MCP 응답 파싱"""
     if isinstance(response, dict):
         return response
 
@@ -178,9 +157,7 @@ def _parse_elastic_response(response: Any, tool_name: str) -> Dict[str, Any]:
 
     return _parse_generic_response(response)
 
-
 def _parse_velociraptor_response(response: Any, tool_name: str) -> Dict[str, Any]:
-    """Velociraptor MCP 응답 파싱"""
     if isinstance(response, dict):
         return response
 
@@ -225,9 +202,7 @@ def _parse_velociraptor_response(response: Any, tool_name: str) -> Dict[str, Any
 
     return _parse_generic_response(response)
 
-
 def _parse_sleuthkit_response(response: Any, tool_name: str) -> Dict[str, Any]:
-    """Sleuthkit MCP 응답 파싱"""
     if isinstance(response, str):
         text = response.strip()
 
@@ -250,27 +225,10 @@ def _parse_sleuthkit_response(response: Any, tool_name: str) -> Dict[str, Any]:
 
     return _parse_generic_response(response)
 
-
 def _parse_ghidra_response(response: Any, tool_name: str) -> Dict[str, Any]:
-    """Ghidra MCP 응답 파싱 (추후 구현)"""
     return _parse_generic_response(response)
 
-
 def _parse_generic_response(response: Any) -> Dict[str, Any]:
-    """범용 response 파서
-
-    Args:
-        response: MCP 도구 실행 결과 (다양한 타입 가능)
-
-    Returns:
-        Dict: 정규화된 JSON 구조
-
-    처리 우선순위:
-        1. 이미 dict → 그대로 반환
-        2. list → {"type": "list", "data": [...]}
-        3. 문자열 → JSON 파싱 시도, 실패하면 그대로 문자열로 저장
-        4. 기타 → {"type": "...", "raw": "..."}
-    """
     if isinstance(response, dict):
         return response
 
@@ -313,14 +271,6 @@ def _parse_generic_response(response: Any) -> Dict[str, Any]:
 
 
 def _sanitize_for_mongodb(obj: Any) -> Any:
-    """MongoDB에 저장하기 위해 document를 정리
-
-    Args:
-        obj: 정리할 객체 (dict, list, 기타)
-
-    Returns:
-        정리된 객체 (None 키 제거, 재귀적 처리)
-    """
     if isinstance(obj, dict):
         return {
             (str(k) if k is not None else "_none_key_"): _sanitize_for_mongodb(v)
@@ -332,24 +282,15 @@ def _sanitize_for_mongodb(obj: Any) -> Any:
         return obj
     elif isinstance(obj, datetime):
         return obj
+    elif isinstance(obj, ObjectId):
+        return obj
     else:
         try:
             return str(obj)
         except Exception:
             return None
 
-
 def _normalize_response(response: Any, mcp_name: str, tool_name: str) -> Dict[str, Any]:
-    """MCP별 커스텀 파싱을 적용한 response 정규화
-
-    Args:
-        response: MCP 도구 실행 결과
-        mcp_name: MCP 서버 이름
-        tool_name: 도구 이름
-
-    Returns:
-        Dict: 정규화된 JSON 구조
-    """
     if mcp_name == "elastic":
         return _parse_elastic_response(response, tool_name)
     elif mcp_name == "velociraptor":
@@ -361,6 +302,12 @@ def _normalize_response(response: Any, mcp_name: str, tool_name: str) -> Dict[st
 
     return _parse_generic_response(response)
 
+def _to_object_id_or_none(val: Any) -> Optional[ObjectId]:
+    if isinstance(val, ObjectId):
+        return val
+    if isinstance(val, str) and ObjectId.is_valid(val):
+        return ObjectId(val)
+    return None
 
 def log_mcp_execution(
     mcp_name: str,
@@ -371,70 +318,76 @@ def log_mcp_execution(
     stage: Optional[int] = None,
     job_id: Optional[str] = None
 ) -> bool:
-    """MCP 도구 실행 결과를 MongoDB에 저장
-
-    Args:
-        mcp_name: MCP 서버 이름 (elastic, velociraptor, sleuthkit, ghidra)
-        tool_name: 사용된 도구 이름
-        request: 도구에 전달된 파라미터
-        response: 도구 실행 결과 데이터
-        success: 실행 성공 여부
-        stage: 스테이지 번호 (선택사항)
-        job_id: Job ID (선택사항, AGENT_STATES 업데이트용)
-
-    Returns:
-        bool: 저장 성공 여부
-    """
     try:
         import sys
         import os
         debug_mode = os.getenv("DEBUG") == "1"
 
-        if debug_mode:
-            sys.__stdout__.write(f"[DEBUG evidence_logger] Starting log_mcp_execution for {mcp_name}.{tool_name}\n")
-            sys.__stdout__.flush()
-
         db = _get_client()
         if db is None:
             if debug_mode:
-                sys.__stdout__.write(f"[DEBUG evidence_logger] DB connection is None!\n")
+                sys.__stdout__.write("[DEBUG evidence_logger] DB is None\n")
                 sys.__stdout__.flush()
             return False
 
+        trigger_raw: Optional[Any] = None
+        conv_raw: Optional[Any] = None
+        stage_id: Optional[int] = stage
+
+        if job_id:
+            try:
+                state = get_agent_state(job_id)
+            except Exception:
+                state = None
+
+            if state:
+                trigger_raw = state.get("trigger_id")
+                conv_raw = state.get("conversation_id")
+                if stage_id is None:
+                    stage_id = state.get("stage_id")
+
+        trig_doc = None
+        trigger_oid: Optional[ObjectId] = _to_object_id_or_none(trigger_raw)
+
+        if trigger_oid:
+            trig_doc = db.TRIGGERS.find_one({"_id": trigger_oid})
+
+        if trig_doc:
+            if conv_raw is None:
+                conv_raw = trig_doc.get("conversation_id")
+            if stage_id is None:
+                stage_id = trig_doc.get("stage_id")
+
         if debug_mode:
-            sys.__stdout__.write(f"[DEBUG evidence_logger] Normalizing response...\n")
+            sys.__stdout__.write(
+                f"[DEBUG evidence_logger] resolved trigger_raw={trigger_raw}, "
+                f"conv_raw={conv_raw}, stage_id={stage_id}\n"
+            )
             sys.__stdout__.flush()
+
+        trigger_id_val = _to_object_id_or_none(trigger_raw)
+        conversation_id_val = _to_object_id_or_none(conv_raw)
 
         normalized_response = _normalize_response(response, mcp_name, tool_name)
 
-        if debug_mode:
-            sys.__stdout__.write(f"[DEBUG evidence_logger] Creating evidence document...\n")
-            sys.__stdout__.flush()
-
         evidence = {
-            "stage": stage,
             "mcp_name": mcp_name,
             "tool_name": tool_name,
+            "trigger_id": trigger_id_val,
+            "conversation_id": conversation_id_val,
+            "agent_id": job_id,
+            "stage_id": stage_id,
             "request": request,
             "response": normalized_response,
             "success": success,
-            "timestamp": datetime.utcnow()
+            "created_at": datetime.utcnow(),
         }
 
-        if debug_mode:
-            sys.__stdout__.write(f"[DEBUG evidence_logger] Sanitizing document for MongoDB...\n")
-            sys.__stdout__.flush()
-
         sanitized_evidence = _sanitize_for_mongodb(evidence)
-
-        if debug_mode:
-            sys.__stdout__.write(f"[DEBUG evidence_logger] Inserting to MongoDB...\n")
-            sys.__stdout__.flush()
-
         db.MCP_EVIDENCES.insert_one(sanitized_evidence)
 
         if debug_mode:
-            sys.__stdout__.write(f"[DEBUG evidence_logger] MongoDB insert successful!\n")
+            sys.__stdout__.write("[DEBUG evidence_logger] MCP_EVIDENCES insert OK\n")
             sys.__stdout__.flush()
 
         if job_id and success:
@@ -443,10 +396,8 @@ def log_mcp_execution(
         return True
 
     except Exception as e:
-        import sys
-        import traceback
-        sys.__stdout__.write(f"[X]  MCP 실행 로그 저장 실패: {e}\n")
-        sys.__stdout__.write(f"[X]  Traceback:\n{traceback.format_exc()}\n")
+        import traceback, sys
+        sys.__stdout__.write(f"[X] log_mcp_execution failed: {e}\n")
+        sys.__stdout__.write(f"[X] Traceback:\n{traceback.format_exc()}\n")
         sys.__stdout__.flush()
-        print(f"[X]  MCP 실행 로그 저장 실패: {e}")
         return False
