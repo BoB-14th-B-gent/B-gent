@@ -11,6 +11,7 @@ from app.domains.evidences.preprocessor.file_preprocessing import convert_files_
 from app.domains.evidences.preprocessor.text_preprocessing import inline_to_grouped_json
 
 INPUT_EVIDENCE_COLL = os.getenv("INPUT_EVIDENCE_COLL")
+MCP_EVIDENCE_COLL = os.getenv("MCP_EVIDENCE_COLL")
 
 SUPPORTED_INPUT_EXTS = {".json", ".jsonl", ".xml", ".csv"}
 UNSUPPORTED_KNOWN_EXTS = {".001", ".evtx", ".pcap", ".pcapng", ".vmdk", ".img", ".zip", ".gz", ".xz"}
@@ -234,6 +235,30 @@ def list_input_evidences(conversation_id: Optional[str], stage_id: Optional[int]
             "stage_id": d.get("stage_id"),
             "filename": d.get("filename"),
             "size": d.get("size"),
+            "created_at": d.get("created_at"),
+        })
+    return out
+
+def list_mcp_evidences(conversation_id: Optional[str], stage_id: Optional[int], limit: int = 100) -> List[Dict[str, Any]]:
+    db = get_db()
+    q: Dict[str, Any] = {}
+    if conversation_id:
+        q["conversation_id"] = ObjectId(conversation_id) if ObjectId.is_valid(conversation_id) else conversation_id
+    if stage_id is not None:
+        q["stage_id"] = int(stage_id)
+    cur = db[MCP_EVIDENCE_COLL].find(q, {
+        "trigger_id": 1, "mcp_name": 1, "tool_name": 1, "created_at": 1, "conversation_id": 1, "stage_id": 1
+    }).sort("created_at", -1).limit(limit)
+
+    out: List[Dict[str, Any]] = []
+    for d in cur:
+        out.append({
+            "_id": str(d["_id"]),
+            "trigger_id": (str(d.get("trigger_id")) if isinstance(d.get("trigger_id"), ObjectId) else d.get("trigger_id")),
+            "conversation_id": str(d.get("conversation_id")) if isinstance(d.get("conversation_id"), ObjectId) else d.get("conversation_id"),
+            "stage_id": d.get("stage_id"),
+            "mcp_name": d.get("mcp_name"),
+            "tool_name": d.get("tool_name"),
             "created_at": d.get("created_at"),
         })
     return out
