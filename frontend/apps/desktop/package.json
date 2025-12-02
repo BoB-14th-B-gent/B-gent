@@ -12,7 +12,9 @@
   "build": {
     "appId": "com.bgenteam.desktop",
     "productName": "B-Gent",
-    "directories": { "output": "release" },
+    "directories": {
+      "output": "release"
+    },
     "files": [
       "dist-electron/**",
       "assets/**",
@@ -20,24 +22,33 @@
       "package.json"
     ],
     "extraResources": [
-      { "from": "../renderer/dist", "to": "renderer" }
+      {
+        "from": "../renderer/dist",
+        "to": "renderer"
+      }
     ],
     "asar": true,
     "mac": {
       "category": "public.app-category.developer-tools",
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "assets/icon.icns"
     },
-    "dmg": { "iconSize": 128 }
+    "dmg": {
+      "iconSize": 128
+    }
   },
   "dependencies": {
     "dotenv": "^17.2.3",
     "electron": "^39.0.0",
-    "vite": "^7.1.12",
     "vite-plugin-electron": "^0.29.0"
   },
   "devDependencies": {
     "@types/node": "^24.10.0",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.12"
   }
 }

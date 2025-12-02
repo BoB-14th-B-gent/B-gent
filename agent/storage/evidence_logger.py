@@ -1,8 +1,3 @@
-"""MCP 실행 로깅 모듈
-
-MCP 도구 호출 결과를 MongoDB MCP_EVIDENCES 컬렉션에 저장
-"""
-from __future__ import annotations
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import json
@@ -12,17 +7,13 @@ import xml.etree.ElementTree as ET
 from bson import ObjectId
 from .job_storage import _get_client, add_mcp_tool, get_agent_state
 
-
 def _parse_json_string(text: str) -> Optional[Any]:
-    """JSON 문자열 파싱 시도"""
     try:
         return json.loads(text)
     except (json.JSONDecodeError, TypeError):
         return None
 
-
 def _parse_xml_to_dict(text: str) -> Optional[Dict[str, Any]]:
-    """XML 문자열을 dict로 변환"""
     try:
         def etree_to_dict(element: ET.Element) -> Dict[str, Any]:
             result = {element.tag: {} if element.attrib else None}
@@ -59,9 +50,7 @@ def _parse_xml_to_dict(text: str) -> Optional[Dict[str, Any]]:
     except (ET.ParseError, Exception):
         return None
 
-
 def _parse_csv_to_list(text: str) -> Optional[List[Dict[str, Any]]]:
-    """CSV 문자열을 list of dict로 변환"""
     try:
         lines = [line for line in text.splitlines() if line.strip()]
         if len(lines) < 2:
@@ -98,9 +87,7 @@ def _parse_csv_to_list(text: str) -> Optional[List[Dict[str, Any]]]:
     except Exception:
         return None
 
-
 def _parse_space_separated_table(text: str) -> Optional[List[Dict[str, Any]]]:
-    """공백으로 구분된 테이블을 파싱 (Elasticsearch _cat API 등)"""
     try:
         lines = [line for line in text.splitlines() if line.strip()]
         if len(lines) < 1:
@@ -136,9 +123,7 @@ def _parse_space_separated_table(text: str) -> Optional[List[Dict[str, Any]]]:
     except Exception:
         return None
 
-
 def _parse_elastic_response(response: Any, tool_name: str) -> Dict[str, Any]:
-    """Elasticsearch MCP 응답 파싱"""
     if isinstance(response, dict):
         return response
 
@@ -172,9 +157,7 @@ def _parse_elastic_response(response: Any, tool_name: str) -> Dict[str, Any]:
 
     return _parse_generic_response(response)
 
-
 def _parse_velociraptor_response(response: Any, tool_name: str) -> Dict[str, Any]:
-    """Velociraptor MCP 응답 파싱"""
     if isinstance(response, dict):
         return response
 
@@ -219,9 +202,7 @@ def _parse_velociraptor_response(response: Any, tool_name: str) -> Dict[str, Any
 
     return _parse_generic_response(response)
 
-
 def _parse_sleuthkit_response(response: Any, tool_name: str) -> Dict[str, Any]:
-    """Sleuthkit MCP 응답 파싱"""
     if isinstance(response, str):
         text = response.strip()
 
@@ -244,14 +225,10 @@ def _parse_sleuthkit_response(response: Any, tool_name: str) -> Dict[str, Any]:
 
     return _parse_generic_response(response)
 
-
 def _parse_ghidra_response(response: Any, tool_name: str) -> Dict[str, Any]:
-    """Ghidra MCP 응답 파싱 (추후 구현)"""
     return _parse_generic_response(response)
 
-
 def _parse_generic_response(response: Any) -> Dict[str, Any]:
-    """범용 response 파서"""
     if isinstance(response, dict):
         return response
 
@@ -294,7 +271,6 @@ def _parse_generic_response(response: Any) -> Dict[str, Any]:
 
 
 def _sanitize_for_mongodb(obj: Any) -> Any:
-    """MongoDB에 저장하기 위해 document를 정리"""
     if isinstance(obj, dict):
         return {
             (str(k) if k is not None else "_none_key_"): _sanitize_for_mongodb(v)
@@ -314,9 +290,7 @@ def _sanitize_for_mongodb(obj: Any) -> Any:
         except Exception:
             return None
 
-
 def _normalize_response(response: Any, mcp_name: str, tool_name: str) -> Dict[str, Any]:
-    """MCP별 커스텀 파싱을 적용한 response 정규화"""
     if mcp_name == "elastic":
         return _parse_elastic_response(response, tool_name)
     elif mcp_name == "velociraptor":
@@ -328,6 +302,12 @@ def _normalize_response(response: Any, mcp_name: str, tool_name: str) -> Dict[st
 
     return _parse_generic_response(response)
 
+def _to_object_id_or_none(val: Any) -> Optional[ObjectId]:
+    if isinstance(val, ObjectId):
+        return val
+    if isinstance(val, str) and ObjectId.is_valid(val):
+        return ObjectId(val)
+    return None
 
 def _to_object_id_or_none(val: Any) -> Optional[ObjectId]:
     """문자열/ObjectId를 ObjectId로 정규화 (유효하지 않으면 None)"""
@@ -347,7 +327,6 @@ def log_mcp_execution(
     stage: Optional[int] = None,
     job_id: Optional[str] = None
 ) -> bool:
-    """MCP 도구 실행 결과를 MongoDB에 저장"""
     try:
         import sys
         import os
@@ -364,7 +343,6 @@ def log_mcp_execution(
         conv_raw: Optional[Any] = None
         stage_id: Optional[int] = stage
 
-        # 1) AGENT_STATES 에서 trigger_id / conversation_id / stage_id 가져오기
         if job_id:
             try:
                 state = get_agent_state(job_id)
@@ -377,7 +355,6 @@ def log_mcp_execution(
                 if stage_id is None:
                     stage_id = state.get("stage_id")
 
-        # 2) TRIGGERS 에서 conversation_id / stage_id 보강
         trig_doc = None
         trigger_oid: Optional[ObjectId] = _to_object_id_or_none(trigger_raw)
 
@@ -397,7 +374,6 @@ def log_mcp_execution(
             )
             sys.__stdout__.flush()
 
-        # 3) 최종적으로 ObjectId로 정규화
         trigger_id_val = _to_object_id_or_none(trigger_raw)
         conversation_id_val = _to_object_id_or_none(conv_raw)
 

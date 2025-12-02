@@ -11,10 +11,24 @@ export default function McpPanel() {
     scrollRef.current.scrollTop = 0
   }, [mcpserverOpen, activeMCPServerId])
 
-  const serverName = MCP_SERVER_NAMES[activeMCPServerId ?? ''] ?? 'MCP Tools'
+  const { baseServerId, stageLabel } = useMemo(() => {
+    const raw = activeMCPServerId ?? ''
+    const m = /^([a-zA-Z0-9_-]+?)(?:-(\d+))?$/.exec(raw)
+    if (!m) return { baseServerId: raw, stageLabel: '' }
+
+    const [, base, stageStr] = m
+    const stage = stageStr ? Number(stageStr) : null
+    return {
+      baseServerId: base,
+      stageLabel: stage ? ` (Stage ${stage})` : '',
+    }
+  }, [activeMCPServerId])
+
+  const serverName = (MCP_SERVER_NAMES[baseServerId] ?? 'MCP Tools') + stageLabel
+
   const tools: MCPTool[] = useMemo(
-    () => MCP_TOOLS[activeMCPServerId ?? ''] ?? [],
-    [activeMCPServerId]
+    () => MCP_TOOLS[baseServerId] ?? [],
+    [baseServerId]
   )
 
   return (
@@ -68,7 +82,7 @@ export default function McpPanel() {
             cursor: 'pointer',
           }}
         >
-          x
+          ×
         </button>
       </header>
 

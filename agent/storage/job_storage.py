@@ -1,9 +1,3 @@
-"""MongoDB 스토리지 모듈
-
-작업과 결과를 MongoDB에 저장하고 조회하는 기능 제공
-"""
-from __future__ import annotations
-
 import json
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime
@@ -21,13 +15,10 @@ _state_update_callback: Optional[Callable[[Dict[str, Any]], None]] = None
 
 
 def set_state_update_callback(callback: Optional[Callable[[Dict[str, Any]], None]]):
-    """AGENT_STATES 업데이트 시 호출될 콜백 함수 설정"""
     global _state_update_callback
     _state_update_callback = callback
 
-
 def _convert_for_json(obj: Any) -> Any:
-    """ObjectId / datetime 등을 JSON 직렬화 가능하게 변환 (재귀)"""
     if isinstance(obj, ObjectId):
         return str(obj)
     if isinstance(obj, datetime):
@@ -38,18 +29,12 @@ def _convert_for_json(obj: Any) -> Any:
         return [_convert_for_json(v) for v in obj]
     return obj
 
-
 def _print_state_json(state_doc: Dict[str, Any]):
-    """MongoDB AGENT_STATES 변경사항을 JSON으로 출력
-
-    sys.__stdout__을 사용하여 stdout 리다이렉트를 우회하고 원본 stdout에 직접 출력
-    """
     try:
         import sys
         output_doc = state_doc.copy()
         output_doc.pop('_id', None)
 
-        # ObjectId / datetime 등 변환
         output_doc = _convert_for_json(output_doc)
 
         json_str = json.dumps(output_doc, ensure_ascii=False)
@@ -60,7 +45,6 @@ def _print_state_json(state_doc: Dict[str, Any]):
 
 
 def _get_client():
-    """MongoDB 클라이언트 가져오기 (지연 초기화)"""
     global _client, _db
 
     if _client is None:
@@ -79,9 +63,7 @@ def _get_client():
 
     return _db
 
-
 def _to_oid_or_keep(val: Optional[str | ObjectId]) -> Optional[ObjectId | str]:
-    """문자열이면 ObjectId로 변환 가능하면 변환, 아니면 원본 유지"""
     if val is None:
         return None
     if isinstance(val, ObjectId):
@@ -89,7 +71,6 @@ def _to_oid_or_keep(val: Optional[str | ObjectId]) -> Optional[ObjectId | str]:
     if isinstance(val, str) and ObjectId.is_valid(val):
         return ObjectId(val)
     return val
-
 
 def save_agent_state(
     agent_id: str,
@@ -100,25 +81,18 @@ def save_agent_state(
     trigger_id: Optional[str] = None,
     conversation_id: Optional[str] = None
 ) -> bool:
-    """에이전트 상태를 AGENT_STATES 컬렉션에 저장 (간결한 구조)
-
-    trigger_id / conversation_id 는 가능하면 ObjectId로 저장
-    """
     try:
         db = _get_client()
         if db is None:
             return False
 
-        # 기존 문서 조회
         existing_doc = db.AGENT_STATES.find_one({"agent_id": agent_id})
 
-        # 새 값이 None이면 기존 값 유지
         if trigger_id is None and existing_doc:
             trigger_id = existing_doc.get("trigger_id")
         if conversation_id is None and existing_doc:
             conversation_id = existing_doc.get("conversation_id")
 
-        # 문자열이면 ObjectId로 변환 (가능한 경우)
         trigger_id = _to_oid_or_keep(trigger_id)
         conversation_id = _to_oid_or_keep(conversation_id)
 
@@ -155,9 +129,7 @@ def save_agent_state(
         print(f"[X]  AGENT_STATES 저장 실패: {e}")
         return False
 
-
 def update_agent_status(agent_id: str, status: str) -> bool:
-    """에이전트 상태만 업데이트"""
     try:
         db = _get_client()
         if db is None:
@@ -190,9 +162,7 @@ def update_agent_status(agent_id: str, status: str) -> bool:
         print(f"[X]  상태 업데이트 실패: {e}")
         return False
 
-
 def add_mcp_tool(agent_id: str, mcp_name: str, tool_name: str, task_id: Optional[str] = None) -> bool:
-    """사용된 MCP 도구를 해당 task에 추가"""
     try:
         db = _get_client()
         if db is None:
@@ -252,9 +222,7 @@ def add_mcp_tool(agent_id: str, mcp_name: str, tool_name: str, task_id: Optional
         print(f"[X]  MCP 도구 추가 실패: {e}")
         return False
 
-
 def update_stage(agent_id: str, stage_id: int) -> bool:
-    """현재 스테이지 업데이트"""
     try:
         db = _get_client()
         if db is None:
@@ -287,9 +255,7 @@ def update_stage(agent_id: str, stage_id: int) -> bool:
         print(f"[X]  스테이지 업데이트 실패: {e}")
         return False
 
-
 def update_task_status(agent_id: str, task_id: str, task_status: str) -> bool:
-    """plan 배열 내 특정 task의 상태 업데이트"""
     try:
         db = _get_client()
         if db is None:
@@ -322,9 +288,7 @@ def update_task_status(agent_id: str, task_id: str, task_status: str) -> bool:
         print(f"[X]  Task 상태 업데이트 실패: {e}")
         return False
 
-
 def get_agent_state(agent_id: str) -> Optional[Dict[str, Any]]:
-    """에이전트 상태 조회"""
     try:
         db = _get_client()
         if db is None:
@@ -336,28 +300,15 @@ def get_agent_state(agent_id: str) -> Optional[Dict[str, Any]]:
         print(f"[X]  상태 조회 실패: {e}")
         return None
 
-
 def is_first_execution_in_conversation(conversation_id: Optional[str]) -> bool:
-    """해당 conversation에서 첫 번째 실행인지 확인
-
-    conversation_id가 동일한 기존 AGENT_STATES가 있는지 조회하여
-    첫 실행 여부를 판단합니다.
-
-    Args:
-        conversation_id: 대화 ID
-
-    Returns:
-        bool: 첫 실행이면 True, 아니면 False
-    """
     if not conversation_id:
-        return True  # conversation_id가 없으면 첫 실행으로 간주
+        return True
 
     try:
         db = _get_client()
         if db is None:
-            return True  # DB 연결 실패 시 첫 실행으로 간주
+            return True
 
-        # conversation_id를 ObjectId로 변환 (가능한 경우)
         conv_id = _to_oid_or_keep(conversation_id)
 
         existing = db.AGENT_STATES.find_one({"conversation_id": conv_id})
@@ -365,4 +316,4 @@ def is_first_execution_in_conversation(conversation_id: Optional[str]) -> bool:
 
     except Exception as e:
         print(f"[X]  첫 실행 여부 확인 실패: {e}")
-        return True  # 오류 시 첫 실행으로 간주
+        return True

@@ -14,6 +14,7 @@ export type CreateTriggerRes = { trigger_id: string; status: string; created_at:
 
 export type CreateInputEvidencesReq = {
   conversation_id: string
+  stage_id: number
   mode: 'auto' | 'manual'
   inline_threshold: number
 }
@@ -34,6 +35,96 @@ export type PatchTriggerEvidencesReq = {
   evidences: Array<{ collection: 'INPUT_EVIDENCES'; id: string }>
 }
 
+export type ConversationSummary = {
+  _id: string
+  title: string
+  last_stage_id: number
+  created_at: string
+  updated_at: string
+  case_id?: string | null
+}
+
+export type ConversationListRes = {
+  items: ConversationSummary[]
+}
+
+export type MessageRole = 'USER' | 'B-GENT'
+
+export type MessageItem = {
+  role: MessageRole
+  stage_id: number
+  content: string
+  created_at: string
+}
+
+export type MessageListRes = {
+  conversation_id: string
+  items: MessageItem[]
+}
+
+export type RFPosition = {
+  x: number
+  y: number
+}
+
+export type RFNodeDTO = {
+  id: string
+  type: string
+  position: RFPosition
+  data?: Record<string, unknown>
+}
+
+export type RFEdgeDTO = {
+  id: string
+  source: string
+  target: string
+  type?: string
+  data?: Record<string, unknown>
+}
+
+export type UILayoutRes = {
+  nodes?: RFNodeDTO[]
+  edges?: RFEdgeDTO[]
+  conversation_id: string
+  stage_id: number
+  created_at: string
+  updated_at: string
+}
+
+export type UILayoutUpsertReq = {
+  nodes: RFNodeDTO[]
+  edges: RFEdgeDTO[]
+}
+
+export type CaseDetail = {
+  _id: string
+  name: string
+  description?: string | null
+  analyst?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type CaseListRes = {
+  items: CaseDetail[]
+}
+
+export type CaseCreateReq = {
+  name: string
+  description?: string | null
+  analyst?: string | null
+}
+
+export type CaseCreateRes = {
+  _id: string
+  created_at: string
+}
+
+export type CaseConversationListRes = {
+  case_id: string
+  items: ConversationSummary[]
+}
+
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
@@ -47,9 +138,6 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  createConversation: (body: CreateConversationReq) =>
-    http<CreateConversationRes>('/conversations', { method: 'POST', body: JSON.stringify(body) }),
-
   createTrigger: (body: CreateTriggerReq) =>
     http<CreateTriggerRes>('/triggers', { method: 'POST', body: JSON.stringify(body) }),
 
@@ -128,6 +216,8 @@ export type PipelineRunReq = {
   stage_id?: number
   inline_threshold?: number
   mode?: 'auto' | 'manual'
+  conversation_id?: string
+  case_id?: string
 }
 
 export type PipelineRunRes = {
@@ -173,7 +263,7 @@ export type TriggerDoc = {
 
   prompt_id?: OID
 
-  status?: 'pending' | 'processing' | 'done' | 'error'
+  status?: 'initial' | 'collecting' | 'ready' | 'processing' | 'done'
 
   report_id?: OID
 
@@ -186,6 +276,116 @@ export async function getTrigger(triggerId: string): Promise<TriggerDoc> {
 }
 
 export async function getLatestReportId(): Promise<string | null> {
-  const res = await http<{ items?: Array<{ _id: string }> }>(`/reports?limit=1`)
-  return res.items?.[0]?._id ?? null
+  const res = await http<{ _id: string }>(`/reports/latest`)
+  return res._id ?? null
+}
+
+export async function listConversations(): Promise<ConversationSummary[]> {
+  const res = await http<ConversationListRes>('/conversations', { method: 'GET' })
+  return res.items ?? []
+}
+
+export async function getConversation(conversationId: string): Promise<ConversationSummary> {
+  return http<ConversationSummary>(`/conversations/${encodeURIComponent(conversationId)}`, {
+    method: 'GET',
+  })
+}
+
+export async function updateConversationStage(
+  conversationId: string,
+  stageId: number
+): Promise<void> {
+  const qs = new URLSearchParams({ stage_id: String(stageId) })
+  await http(`/conversations/${encodeURIComponent(conversationId)}/stage?${qs.toString()}`, {
+    method: 'PATCH',
+  })
+}
+
+export async function getMessages(
+  conversationId: string,
+  stageId: number,
+  limit = 100
+): Promise<MessageItem[]> {
+  const qs = new URLSearchParams({
+    stage_id: String(stageId),
+    limit: String(limit),
+  })
+  const path = `/conversations/${encodeURIComponent(conversationId)}/messages?${qs.toString()}`
+  const res = await http<MessageListRes>(path, { method: 'GET' })
+  return res.items ?? []
+}
+
+export async function getUILayout(conversationId: string, stageId: number): Promise<UILayoutRes> {
+  return http<UILayoutRes>(
+    `/conversations/${encodeURIComponent(conversationId)}/${encodeURIComponent(String(stageId))}`,
+    { method: 'GET' }
+  )
+}
+
+export async function putUILayout(
+  conversationId: string,
+  stageId: number,
+  body: UILayoutUpsertReq
+): Promise<UILayoutRes> {
+  return http<UILayoutRes>(
+    `/conversations/${encodeURIComponent(conversationId)}/${encodeURIComponent(String(stageId))}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }
+  )
+}
+
+export type ReportItem = {
+  _id: string
+  stage_id: number
+  report: string
+  created_at: string
+}
+
+export type ConversationReportsRes = {
+  conversation_id: string
+  items: ReportItem[]
+}
+
+export async function getConversationReports(conversationId: string): Promise<ReportItem[]> {
+  const res = await http<ConversationReportsRes>(
+    `/conversations/${encodeURIComponent(conversationId)}/reports`,
+    { method: 'GET' }
+  )
+  return res.items ?? []
+}
+
+export async function listCases(): Promise<CaseDetail[]> {
+  const res = await http<CaseListRes>('/cases', { method: 'GET' })
+  return res.items ?? []
+}
+
+export async function createCase(body: CaseCreateReq): Promise<CaseCreateRes> {
+  return http<CaseCreateRes>('/cases', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function listCaseConversations(caseId: string): Promise<ConversationSummary[]> {
+  const res = await http<CaseConversationListRes>(
+    `/cases/${encodeURIComponent(caseId)}/conversations`,
+    { method: 'GET' }
+  )
+  return res.items ?? []
+}
+
+export async function createCaseConversation(
+  caseId: string,
+  body: CreateConversationReq
+): Promise<CreateConversationRes> {
+  return http<CreateConversationRes>(`/cases/${encodeURIComponent(caseId)}/conversations`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function getCase(caseId: string): Promise<CaseDetail> {
+  return http<CaseDetail>(`/cases/${encodeURIComponent(caseId)}`, { method: 'GET' })
 }
