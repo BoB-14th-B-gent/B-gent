@@ -9,7 +9,7 @@ import time
 import uuid
 from typing import Dict, Any, Optional, List, Literal
 from .graph import create_workflow
-from ..storage.job_storage import save_agent_state, update_agent_status
+from ..storage.job_storage import save_agent_state, update_agent_status, is_first_execution_in_conversation
 from ..schemas.results import JobSummary
 
 WORKFLOW_MODE: Literal["two_stage"] = "two_stage"
@@ -62,7 +62,10 @@ def run_job(
     job_id = uuid.uuid4().hex[:24]
     start_time = time.time()
     file_paths = file_paths or []
-        
+
+    # 해당 conversation에서 첫 번째 실행인지 확인
+    is_first_execution = is_first_execution_in_conversation(conversation_id)
+
     if WORKFLOW_MODE == "two_stage":
         initial_state = {
             "job_id": job_id,
@@ -81,7 +84,8 @@ def run_job(
                 "tasks": {}
             },
             "completed": False,
-            "error": None
+            "error": None,
+            "is_first_execution": is_first_execution  # 첫 실행 여부 플래그
         }
     else:
         initial_state = {

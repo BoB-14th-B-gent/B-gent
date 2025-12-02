@@ -12,7 +12,8 @@
       "env": {
         "ELASTICSEARCH_HOSTS": "https://localhost:9200",
         "ELASTICSEARCH_USERNAME": "elastic",
-        "ELASTICSEARCH_PASSWORD": "test123"
+        "ELASTICSEARCH_PASSWORD": "test123",
+        "ELASTICSEARCH_VERIFY_CERTS": "false"
       },
       "enabled": true
     },

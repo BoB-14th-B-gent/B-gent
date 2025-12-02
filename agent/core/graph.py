@@ -135,12 +135,13 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
     user_prompt = state["user_prompt"]
     file_paths = state.get("file_paths", [])
     file_meta = state.get("file_meta", {})
+    is_first_execution = state.get("is_first_execution", True)  # 첫 실행 여부
 
     start_time = time.time()
 
     try:
         # print(f"│ Requesting LLM analysis...")
-        high_level_tasks = generate_high_level_plan(user_prompt, file_paths, file_meta)
+        high_level_tasks = generate_high_level_plan(user_prompt, file_paths, file_meta, is_first_execution)
 
         if not high_level_tasks:
             error_msg = "High-level 계획을 생성할 수 없습니다."
@@ -392,7 +393,8 @@ Think step by step, observe results, and adapt your actions accordingly."""
         "current_action": None,
         "finished": False,
         "answer": None,
-        "use_velociraptor_sequence": False
+        "use_velociraptor_sequence": False,
+        "tool_hint": tool_hint  # MCP 전략 프롬프트 미리 로딩용
     }
 
     # print(f"│ ReAct Loop initialized (max {react_context['max_iterations']} iterations)")
@@ -431,6 +433,7 @@ def node_react_think(state: Dict[str, Any]) -> Dict[str, Any]:
     available_tools = react_context.get("available_tools", [])
     file_paths = react_context.get("file_paths", [])
     max_iterations = react_context.get("max_iterations", 30)
+    tool_hint = react_context.get("tool_hint", "")  # MCP 전략 힌트
 
     # print(f"\n│ Iteration {iteration}/{max_iterations}")
     # print(f"│ [THINK] Analyzing situation...")
@@ -443,7 +446,8 @@ def node_react_think(state: Dict[str, Any]) -> Dict[str, Any]:
         available_tools=available_tools,
         file_paths=file_paths,
         max_iterations=max_iterations,
-        user_prompt=state.get("user_prompt")
+        user_prompt=state.get("user_prompt"),
+        tool_hint=tool_hint  # 전략 프롬프트 미리 로딩용
     )
 
     think_time = time.time() - start_time
@@ -1254,7 +1258,7 @@ Provide forensic analysis of this extracted file, including risk assessment and 
         # print(f"│ Requesting LLM analysis...")
         response = llm.chat(
             [{"role": "user", "content": analysis_prompt}],
-            timeout=60
+            timeout=180
         )
         analysis = response["choices"][0]["message"]["content"]
         # print(f"│ ")

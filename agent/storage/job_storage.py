@@ -43,6 +43,7 @@ def _print_state_json(state_doc: Dict[str, Any]):
     except Exception:
         pass
 
+
 def _get_client():
     global _client, _db
 
@@ -76,7 +77,7 @@ def save_agent_state(
     stage_id: Optional[int] = None,
     plan: Optional[list] = None,
     status: str = "running",
-    mcp_tools: Optional[list] = None,
+    mcp_tools: Optional[list] = None,  # deprecated
     trigger_id: Optional[str] = None,
     conversation_id: Optional[str] = None
 ) -> bool:

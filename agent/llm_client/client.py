@@ -29,9 +29,12 @@ class LLMClient:
 
         return h
 
-    def _try_openai_chat(self, messages: List[Dict[str, str]], response_format_json: bool, timeout: int) -> Dict[str, Any]:
+    def _try_openai_chat(self, messages: List[Dict[str, str]], response_format_json: bool, timeout: int, max_tokens: int = None) -> Dict[str, Any]:
         url = f"{self.base}/v1/chat/completions"
         payload = {"model": self.model, "messages": messages, "temperature": 0.1}
+
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
 
         if response_format_json:
             payload["response_format"] = {"type": "json_object"}
@@ -43,10 +46,14 @@ class LLMClient:
 
         return r.json()
 
-    def _try_openai_completions(self, messages: List[Dict[str, str]], timeout: int) -> Dict[str, Any]:
+    def _try_openai_completions(self, messages: List[Dict[str, str]], timeout: int, max_tokens: int = None) -> Dict[str, Any]:
         url = f"{self.base}/v1/completions"
         prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
         payload = {"model": self.model, "prompt": prompt, "temperature": 0.1}
+
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+
         r = requests.post(url, json=payload, headers=self._headers(), timeout=timeout, verify=self.verify)
 
         if r.status_code == 404:
@@ -56,7 +63,7 @@ class LLMClient:
 
         return {"choices":[{"message":{"content":text}}]}
 
-    def _try_ollama_chat(self, messages: List[Dict[str, str]], response_format_json: bool, timeout: int) -> Dict[str, Any]:
+    def _try_ollama_chat(self, messages: List[Dict[str, str]], response_format_json: bool, timeout: int, max_tokens: int = None) -> Dict[str, Any]:
         url = f"{self.base}/api/chat"
 
         if response_format_json:
@@ -78,6 +85,10 @@ class LLMClient:
                 "num_ctx": _cfg.llm.context_size
             }
         }
+
+        if max_tokens is not None:
+            payload["options"]["num_predict"] = max_tokens
+
         r = requests.post(url, json=payload, headers=self._headers(), timeout=timeout, verify=self.verify)
 
         if r.status_code == 404:
@@ -87,7 +98,7 @@ class LLMClient:
 
         return {"choices":[{"message":{"content":content}}]}
 
-    def _try_remote_api(self, messages: List[Dict[str, str]], response_format_json: bool, timeout: int) -> Dict[str, Any]:
+    def _try_remote_api(self, messages: List[Dict[str, str]], response_format_json: bool, timeout: int, max_tokens: int = None) -> Dict[str, Any]:
         """원격 커스텀 API 호출 ({"prompt": "..."} 형식)
 
         응답 형식: {"ok": true, "output": "...", "adapter": "..."}
@@ -109,16 +120,10 @@ class LLMClient:
         if not isinstance(prompt, str):
             prompt = str(prompt)
 
-        payload = {"prompt": prompt}
+        payload = {"prompt": prompt, "response_format_json": response_format_json}
 
-        # DEBUG: 요청 데이터 로깅
-        import sys
-        sys.stderr.write(f"\n[DEBUG] Remote API 요청:\n")
-        sys.stderr.write(f"  URL: {self.base}\n")
-        sys.stderr.write(f"  Payload type: {type(payload['prompt'])}\n")
-        sys.stderr.write(f"  Payload length: {len(payload['prompt'])}\n")
-        sys.stderr.write(f"  Payload preview: {payload['prompt'][:200]}...\n")
-        sys.stderr.flush()
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
 
         r = requests.post(self.base, json=payload, headers=self._headers(), timeout=timeout, verify=self.verify)
 
@@ -133,13 +138,14 @@ class LLMClient:
         content = resp_data.get("output", "")
         return {"choices": [{"message": {"content": content}}]}
 
-    def chat(self, messages: List[Dict[str, str]], response_format_json: bool = True, timeout: Optional[int] = None) -> Dict[str, Any]:
+    def chat(self, messages: List[Dict[str, str]], response_format_json: bool = True, timeout: Optional[int] = None, max_tokens: Optional[int] = None) -> Dict[str, Any]:
         """LLM API 호출 (자동 폴백 지원)
 
         Args:
             messages: 메시지 리스트 [{"role": "user", "content": "..."}, ...]
             response_format_json: JSON 응답 형식 요청 여부 (기본값: True)
             timeout: 타임아웃 (초, 기본값: None - 무제한)
+            max_tokens: 최대 생성 토큰 수 (기본값: None - 모델 기본값 사용)
 
         Returns:
             Dict[str, Any]: LLM 응답
@@ -183,11 +189,11 @@ class LLMClient:
 
                 if supports_json:
 
-                    return fn(messages, response_format_json, timeout)
+                    return fn(messages, response_format_json, timeout, max_tokens)
 
                 else:
 
-                    return fn(messages, timeout)
+                    return fn(messages, timeout, max_tokens)
 
             except FileNotFoundError:
                 last_err = "404"

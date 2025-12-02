@@ -309,6 +309,15 @@ def _to_object_id_or_none(val: Any) -> Optional[ObjectId]:
         return ObjectId(val)
     return None
 
+def _to_object_id_or_none(val: Any) -> Optional[ObjectId]:
+    """문자열/ObjectId를 ObjectId로 정규화 (유효하지 않으면 None)"""
+    if isinstance(val, ObjectId):
+        return val
+    if isinstance(val, str) and ObjectId.is_valid(val):
+        return ObjectId(val)
+    return None
+
+
 def log_mcp_execution(
     mcp_name: str,
     tool_name: str,
