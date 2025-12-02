@@ -72,7 +72,8 @@ def _filter_analyzable_files(file_paths: List[str]) -> Dict[str, List[str]]:
 def generate_high_level_plan(
     user_prompt: str,
     file_paths: List[str] = None,
-    file_meta: Dict[str, Any] = None
+    file_meta: Dict[str, Any] = None,
+    is_first_execution: bool = True
 ) -> List[HighLevelTask]:
     """High-level 계획 생성 (Phase 1)
 
@@ -83,6 +84,9 @@ def generate_high_level_plan(
         user_prompt: 사용자 요청
         file_paths: 파일 경로 리스트 (선택)
         file_meta: 파일 메타데이터 (선택)
+        is_first_execution: 해당 conversation에서 첫 번째 실행 여부 (기본값: True)
+            - True: Velociraptor + Elasticsearch를 함께 사용
+            - False: LLM이 적절한 MCP를 판단하여 사용
 
     Returns:
         List[HighLevelTask]: High-level Task 리스트
@@ -467,10 +471,28 @@ def generate_high_level_plan(
     if categorized_files["unknown"]:
         file_info += f"\n- 기타 파일 ({len(categorized_files['unknown'])}개, 무시됨): {', '.join(f for f in categorized_files['unknown'][:3] if f is not None)}"
 
+    # 첫 실행 여부에 따른 MCP 사용 지시
+    first_execution_instruction = ""
+    if is_first_execution:
+        first_execution_instruction = """
+**[중요] 이것은 대화의 첫 번째 실행입니다.**
+첫 번째 실행에서는 종합적인 초기 분석을 위해 반드시 다음 두 가지 Task를 함께 생성해야 합니다:
+1. **Velociraptor**를 사용한 디스크 이미지 아티팩트 수집 (tool_hint: "velociraptor")
+2. **Elasticsearch**를 사용한 로그 검색 및 분석 (tool_hint: "elastic")
+
+두 Task는 독립적으로 실행될 수 있으므로 dependencies는 비워두세요.
+"""
+    else:
+        first_execution_instruction = """
+**[참고] 이것은 대화의 후속 실행입니다.**
+이전 분석 결과를 바탕으로, 사용자 요청에 가장 적합한 MCP 도구를 선택하여 Task를 생성하세요.
+모든 MCP를 사용할 필요는 없으며, 필요한 도구만 선택적으로 사용하면 됩니다.
+"""
+
     user_message = f"""사용자 요청: {user_prompt}
 
 파일 목록:{file_info if file_info else " (없음)"}
-
+{first_execution_instruction}
 위 정보를 바탕으로 High-level 작업 계획을 생성하세요."""
 
     messages = [

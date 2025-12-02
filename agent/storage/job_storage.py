@@ -335,3 +335,34 @@ def get_agent_state(agent_id: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         print(f"[X]  상태 조회 실패: {e}")
         return None
+
+
+def is_first_execution_in_conversation(conversation_id: Optional[str]) -> bool:
+    """해당 conversation에서 첫 번째 실행인지 확인
+
+    conversation_id가 동일한 기존 AGENT_STATES가 있는지 조회하여
+    첫 실행 여부를 판단합니다.
+
+    Args:
+        conversation_id: 대화 ID
+
+    Returns:
+        bool: 첫 실행이면 True, 아니면 False
+    """
+    if not conversation_id:
+        return True  # conversation_id가 없으면 첫 실행으로 간주
+
+    try:
+        db = _get_client()
+        if db is None:
+            return True  # DB 연결 실패 시 첫 실행으로 간주
+
+        # conversation_id를 ObjectId로 변환 (가능한 경우)
+        conv_id = _to_oid_or_keep(conversation_id)
+
+        existing = db.AGENT_STATES.find_one({"conversation_id": conv_id})
+        return existing is None
+
+    except Exception as e:
+        print(f"[X]  첫 실행 여부 확인 실패: {e}")
+        return True  # 오류 시 첫 실행으로 간주

@@ -135,12 +135,13 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
     user_prompt = state["user_prompt"]
     file_paths = state.get("file_paths", [])
     file_meta = state.get("file_meta", {})
+    is_first_execution = state.get("is_first_execution", True)  # 첫 실행 여부
 
     start_time = time.time()
 
     try:
         # print(f"│ Requesting LLM analysis...")
-        high_level_tasks = generate_high_level_plan(user_prompt, file_paths, file_meta)
+        high_level_tasks = generate_high_level_plan(user_prompt, file_paths, file_meta, is_first_execution)
 
         if not high_level_tasks:
             error_msg = "High-level 계획을 생성할 수 없습니다."

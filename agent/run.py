@@ -126,8 +126,14 @@ def create_status_panel(prompt: str, elapsed: float = 0):
         box=box.ROUNDED
     )
 
-def run_with_progress(user_prompt: str, file_paths: list = None, generate_report: bool = False):
+def run_with_progress(user_prompt: str, file_paths: list = None, generate_report: bool = False, conversation_id: str = None):
     """MongoDB 상태 업데이트만 JSON으로 출력 (나머지 모든 출력 억제)
+
+    Args:
+        user_prompt: 사용자 요청
+        file_paths: 파일 경로 리스트
+        generate_report: 리포트 생성 여부
+        conversation_id: 대화 ID (첫 실행 여부 판단에 사용)
 
     Note: MongoDB AGENT_STATES 업데이트는 job_storage.py의 _print_state_json()에서 직접 출력되므로
           별도의 callback 설정 불필요
@@ -161,7 +167,8 @@ def run_with_progress(user_prompt: str, file_paths: list = None, generate_report
         result = run_job(
             user_prompt=user_prompt,
             file_paths=file_paths,
-            generate_report_flag=generate_report
+            generate_report_flag=generate_report,
+            conversation_id=conversation_id
         )
     except Exception as e:
         sys.stdout = original_stdout
@@ -505,7 +512,16 @@ def interactive_mode():
                         file_paths.append(path)
                     console.print(f"[dim]→ {len(file_paths)} file(s) provided[/dim]")
 
-                result = run_with_progress(prompt, file_paths=file_paths)
+                console.print("[dim]Conversation ID (비워두면 새로 생성):[/dim] ", end="")
+                conversation_id = input().strip()
+                if not conversation_id:
+                    import uuid
+                    conversation_id = uuid.uuid4().hex[:24]
+                    console.print(f"[dim]→ New conversation created: {conversation_id}[/dim]")
+                else:
+                    console.print(f"[dim]→ Using existing conversation: {conversation_id}[/dim]")
+
+                result = run_with_progress(prompt, file_paths=file_paths, conversation_id=conversation_id)
 
                 if not result:
                     console.print(Panel(
