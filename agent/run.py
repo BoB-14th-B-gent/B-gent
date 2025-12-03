@@ -9,6 +9,17 @@ import atexit
 import logging
 import json
 
+# Windows cp949 인코딩 문제 해결을 위한 UTF-8 강제 설정
+os.environ["PYTHONIOENCODING"] = "utf-8"
+os.environ["PYTHONUTF8"] = "1"
+if sys.platform == "win32":
+    # Windows 콘솔 출력 인코딩을 UTF-8로 설정
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 os.environ["LOGLEVEL"] = "CRITICAL"
@@ -126,7 +137,7 @@ def create_status_panel(prompt: str, elapsed: float = 0):
         box=box.ROUNDED
     )
 
-def run_with_progress(user_prompt: str, file_paths: list = None, generate_report: bool = False, conversation_id: str = None):
+def run_with_progress(user_prompt: str, file_paths: list = None, generate_report: bool = False, conversation_id: str = None, stage_id: int = None):
     """MongoDB 상태 업데이트만 JSON으로 출력 (나머지 모든 출력 억제)
 
     Args:
@@ -134,6 +145,7 @@ def run_with_progress(user_prompt: str, file_paths: list = None, generate_report
         file_paths: 파일 경로 리스트
         generate_report: 리포트 생성 여부
         conversation_id: 대화 ID (첫 실행 여부 판단에 사용)
+        stage_id: Stage ID (분석 단계 번호)
 
     Note: MongoDB AGENT_STATES 업데이트는 job_storage.py의 _print_state_json()에서 직접 출력되므로
           별도의 callback 설정 불필요
@@ -168,7 +180,8 @@ def run_with_progress(user_prompt: str, file_paths: list = None, generate_report
             user_prompt=user_prompt,
             file_paths=file_paths,
             generate_report_flag=generate_report,
-            conversation_id=conversation_id
+            conversation_id=conversation_id,
+            stage_id=stage_id
         )
     except Exception as e:
         sys.stdout = original_stdout
@@ -521,7 +534,20 @@ def interactive_mode():
                 else:
                     console.print(f"[dim]→ Using existing conversation: {conversation_id}[/dim]")
 
-                result = run_with_progress(prompt, file_paths=file_paths, conversation_id=conversation_id)
+                console.print("[dim]Stage ID (기본값: 1):[/dim] ", end="")
+                stage_input = input().strip()
+                if stage_input:
+                    try:
+                        stage_id = int(stage_input)
+                        console.print(f"[dim]→ Stage ID: {stage_id}[/dim]")
+                    except ValueError:
+                        stage_id = 1
+                        console.print(f"[dim]→ Invalid input, using default Stage ID: 1[/dim]")
+                else:
+                    stage_id = 1
+                    console.print(f"[dim]→ Using default Stage ID: 1[/dim]")
+
+                result = run_with_progress(prompt, file_paths=file_paths, conversation_id=conversation_id, stage_id=stage_id)
 
                 if not result:
                     console.print(Panel(

@@ -9,7 +9,10 @@ import time
 import uuid
 from typing import Dict, Any, Optional, List, Literal
 from .graph import create_workflow
-from ..storage.job_storage import save_agent_state, update_agent_status, is_first_execution_in_conversation
+from ..storage.job_storage import (
+    save_agent_state, update_agent_status, is_first_execution_in_conversation,
+    get_available_resources, update_agent_resources
+)
 from ..schemas.results import JobSummary
 
 WORKFLOW_MODE: Literal["two_stage"] = "two_stage"
@@ -59,12 +62,33 @@ def run_job(
         >>> print(result["summary"]["ok"])
         True
     """
+    import sys
     job_id = uuid.uuid4().hex[:24]
     start_time = time.time()
     file_paths = file_paths or []
 
+    sys.stderr.write(f"\n[DEBUG router.run_job] conversation_id={conversation_id}, stage_id={stage_id}, trigger_id={trigger_id}\n")
+    sys.stderr.write(f"[DEBUG router.run_job] file_paths (input)={file_paths}\n")
+
     # 해당 conversation에서 첫 번째 실행인지 확인
     is_first_execution = is_first_execution_in_conversation(conversation_id)
+    sys.stderr.write(f"[DEBUG router.run_job] is_first_execution_from_db={is_first_execution}\n")
+
+    # file_paths가 비어있으면 이전 Stage의 리소스에서 자동 로드 (AGENT_STATES에서 조회)
+    previous_context = None  # 현재 사용하지 않음
+    if conversation_id:
+        if not file_paths:
+            available_resources = get_available_resources(conversation_id)
+            disk_images = available_resources.get("disk_images", [])
+            if disk_images:
+                file_paths = disk_images
+                is_first_execution = False  # 리소스가 있으면 첫 실행이 아님
+                sys.stderr.write(f"[DEBUG router.run_job] file_paths auto-loaded from AGENT_STATES: {file_paths}\n")
+
+    # stage_id가 명시적으로 2 이상이면 첫 실행이 아님
+    if stage_id is not None and stage_id > 1:
+        is_first_execution = False
+        sys.stderr.write(f"[DEBUG router.run_job] is_first_execution overridden to False (stage_id={stage_id})\n")
 
     if WORKFLOW_MODE == "two_stage":
         initial_state = {
@@ -85,7 +109,11 @@ def run_job(
             },
             "completed": False,
             "error": None,
-            "is_first_execution": is_first_execution  # 첫 실행 여부 플래그
+            "is_first_execution": is_first_execution,  # 첫 실행 여부 플래그
+            "previous_context": previous_context,  # 이전 Stage AI 분석 결과
+            "ioc_analysis_results": [],  # 현재 Stage IoC 분석 결과
+            "conversation_id": conversation_id,  # conversation_id 전달
+            "stage_id": stage_id if stage_id is not None else 1  # Stage ID 추가
         }
     else:
         initial_state = {
@@ -140,6 +168,12 @@ def run_job(
         update_agent_status(
             agent_id=job_id,
             status="done" if fail_count == 0 else "failed"
+        )
+
+        # Stage 완료 시 available_resources 저장 (AGENT_STATES)
+        _save_available_resources_on_complete(
+            final_state=final_state,
+            file_paths=file_paths
         )
 
         result = {
@@ -215,4 +249,41 @@ def run_job(
             },
             "error": error_msg
         }
+
+
+def _save_available_resources_on_complete(
+    final_state: Dict[str, Any],
+    file_paths: Optional[List[str]] = None
+) -> None:
+    """Stage 완료 시 available_resources를 AGENT_STATES에 저장
+
+    Args:
+        final_state: 최종 상태 (job_id 포함)
+        file_paths: 이 Stage에서 사용된 파일 경로 목록
+    """
+    try:
+        job_id = final_state.get("job_id")
+        if not job_id:
+            return
+
+        # available_resources 구성
+        available_resources = {
+            "disk_images": [],
+            "extracted_files": []
+        }
+
+        # 디스크 이미지 파일 경로 저장 (E01, raw, dd 등)
+        if file_paths:
+            disk_image_extensions = {'.e01', '.raw', '.dd', '.img', '.vmdk', '.vhd', '.vhdx'}
+            for path in file_paths:
+                if any(path.lower().endswith(ext) for ext in disk_image_extensions):
+                    available_resources["disk_images"].append(path)
+
+        # AGENT_STATES에 저장
+        if available_resources["disk_images"] or available_resources["extracted_files"]:
+            update_agent_resources(job_id, available_resources)
+
+    except Exception as e:
+        import sys
+        sys.stderr.write(f"[Router] 리소스 저장 실패: {e}\n")
 

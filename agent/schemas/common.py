@@ -18,6 +18,13 @@ class AgentState(TypedDict, total=False):
         - current_task: 현재 처리 중인 Task (dict)
         - completed_tasks: 완료된 Task 목록 (dict list)
         - react_context: ReAct 루프 컨텍스트 (dict)
+
+    Multi-Stage Conversation 필드:
+        - conversation_id: 대화 ID
+        - stage_id: Stage 번호 (1부터 시작)
+        - is_first_execution: 첫 번째 실행 여부
+        - previous_context: 이전 Stage AI 분석 결과
+        - ioc_analysis_results: 현재 Stage IoC 분석 결과
     """
     job_id: str
     user_prompt: str
@@ -37,6 +44,13 @@ class AgentState(TypedDict, total=False):
 
     completed: bool
     error: Optional[str]
+
+    # Multi-Stage Conversation 필드
+    conversation_id: Optional[str]
+    stage_id: int
+    is_first_execution: bool
+    previous_context: Optional[Dict[str, Any]]
+    ioc_analysis_results: List[Dict[str, Any]]
 
 @dataclass
 
