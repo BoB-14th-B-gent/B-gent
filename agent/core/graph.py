@@ -3,12 +3,182 @@
 Hybrid Mode
 - High-level Planning: LLM이 추상적 Task 생성
 - ReAct Execution: 각 Task를 ReAct Agent가 동적으로 실행
+- IoC 분석: Task 완료 시 AI 기반 IoC 분석 및 VirusTotal Task 동적 생성
 """
 from __future__ import annotations
-from typing import Dict, Any, Literal
+import json
+from typing import Dict, Any, Literal, List
 from langgraph.graph import StateGraph, END
 from ..schemas.common import AgentState
 from ..utils.prompt_loader import format_prompt
+from ..llm_client.client import LLMClient
+
+
+# =============================================================================
+# IoC 분석 관련 (Task 완료 시 AI 기반 IoC 분석)
+# =============================================================================
+
+def _analyze_task_result_for_iocs(
+    task_result: str,
+    mcp_name: str,
+    task_description: str
+) -> Dict[str, Any]:
+    """AI가 MCP 실행 결과를 분석하여 의심스러운 IoC 판단
+
+    정규표현식 기반이 아닌 AI 기반으로 컨텍스트를 이해하여
+    의미 있는 IoC만 선별합니다.
+
+    Args:
+        task_result: MCP 실행 결과 텍스트
+        mcp_name: 실행된 MCP 이름 (velociraptor, elasticsearch 등)
+        task_description: Task 설명
+
+    Returns:
+        Dict[str, Any]: IoC 분석 결과
+    """
+    llm = LLMClient()
+
+    truncated_result = task_result[:8000] if len(task_result) > 8000 else task_result
+
+    prompt = f"""당신은 DFIR(Digital Forensics and Incident Response) 전문가입니다.
+아래 MCP 실행 결과를 분석하여 VirusTotal로 조회할 가치가 있는 **의심스러운 IoC**를 판단하세요.
+
+## 분석 대상
+- MCP: {mcp_name}
+- Task: {task_description}
+- 실행 결과:
+```
+{truncated_result}
+```
+
+## 판단 기준
+
+### VirusTotal 조회가 필요한 경우 (should_query_virustotal: true)
+- 의심스러운 경로의 파일 해시 (AppData, Temp, Startup, Downloads, ProgramData 등)
+- 알려지지 않은 외부 IP 통신 (C2 서버 의심)
+- 의심스러운 도메인 (DGA 패턴, 최근 등록 도메인 등)
+- 비정상적인 프로세스의 해시
+- 난독화된 스크립트 파일
+- 비정상적인 시간대 실행 파일
+
+### VirusTotal 조회가 불필요한 경우 (should_query_virustotal: false)
+- Windows 시스템 파일 (notepad.exe, cmd.exe, explorer.exe 등)의 정상 해시
+- 내부 IP (192.168.x.x, 10.x.x.x, 172.16-31.x.x, 127.x.x.x)
+- 알려진 정상 도메인 (microsoft.com, google.com, windows.com 등)
+- 컨텍스트상 정상으로 판단되는 항목
+- 정상 경로의 정상 프로그램 (C:\\Windows\\System32, C:\\Program Files 등)
+
+## 응답 형식 (JSON)
+```json
+{{
+    "should_query_virustotal": true,
+    "reason": "판단 이유 (1-2문장)",
+    "suspicious_iocs": [
+        {{
+            "type": "sha256",
+            "value": "실제 해시값",
+            "context": "왜 의심스러운지 설명",
+            "confidence": "high"
+        }}
+    ],
+    "benign_iocs_excluded": [
+        {{
+            "type": "ip",
+            "value": "192.168.1.1",
+            "reason": "내부 네트워크 IP"
+        }}
+    ]
+}}
+```
+
+**중요**:
+- 단순히 해시/IP가 있다고 조회하지 마세요. **컨텍스트**를 보고 판단하세요.
+- confidence가 high/medium인 IoC만 suspicious_iocs에 포함하세요.
+- 확실히 정상인 항목은 benign_iocs_excluded에 포함하세요.
+- IoC가 발견되지 않으면 should_query_virustotal: false로 설정하세요.
+- suspicious_iocs 배열은 최대 10개까지만 포함하세요 (우선순위 순)."""
+
+    try:
+        response = llm.chat(
+            [{"role": "user", "content": prompt}],
+            response_format_json=True,
+            timeout=60
+        )
+
+        content = response["choices"][0]["message"]["content"]
+        result = json.loads(content)
+
+        return {
+            "should_query_virustotal": result.get("should_query_virustotal", False),
+            "reason": result.get("reason", "분석 완료"),
+            "suspicious_iocs": result.get("suspicious_iocs", [])[:10],
+            "benign_iocs_excluded": result.get("benign_iocs_excluded", [])
+        }
+
+    except json.JSONDecodeError as e:
+        return {
+            "should_query_virustotal": False,
+            "reason": f"JSON 파싱 실패: {str(e)}",
+            "suspicious_iocs": [],
+            "benign_iocs_excluded": []
+        }
+
+    except Exception as e:
+        return {
+            "should_query_virustotal": False,
+            "reason": f"IoC 분석 실패: {str(e)}",
+            "suspicious_iocs": [],
+            "benign_iocs_excluded": []
+        }
+
+
+def _create_virustotal_task(
+    suspicious_iocs: List[Dict[str, Any]],
+    reason: str,
+    task_id_prefix: str = "task_vt"
+) -> Dict[str, Any]:
+    """VirusTotal 조회 Task 동적 생성"""
+    hashes = [ioc for ioc in suspicious_iocs if ioc.get("type") in ["sha256", "md5", "sha1"]]
+    ips = [ioc for ioc in suspicious_iocs if ioc.get("type") == "ip"]
+    domains = [ioc for ioc in suspicious_iocs if ioc.get("type") == "domain"]
+
+    description_parts = []
+    if hashes:
+        hash_values = [h["value"][:16] + "..." for h in hashes[:3]]
+        description_parts.append(f"파일 해시 {len(hashes)}개 ({', '.join(hash_values)})")
+    if ips:
+        ip_values = [ip["value"] for ip in ips[:3]]
+        description_parts.append(f"IP {len(ips)}개 ({', '.join(ip_values)})")
+    if domains:
+        domain_values = [d["value"] for d in domains[:3]]
+        description_parts.append(f"도메인 {len(domains)}개 ({', '.join(domain_values)})")
+
+    description = f"VirusTotal로 의심 IoC 조회: {', '.join(description_parts)}"
+
+    return {
+        "task_id": f"{task_id_prefix}_001",
+        "description": description,
+        "task_type": "file_analysis",
+        "target_files": [],
+        "dependencies": [],
+        "status": "pending",
+        "metadata": {
+            "tool_hint": "virustotal",
+            "priority": "high",
+            "auto_generated": True,
+            "generation_reason": reason,
+            "iocs": {
+                "hashes": [h["value"] for h in hashes],
+                "ips": [ip["value"] for ip in ips],
+                "domains": [d["value"] for d in domains]
+            }
+        }
+    }
+
+
+# =============================================================================
+# LangGraph 워크플로우 정의
+# =============================================================================
 
 def create_workflow(mode: Literal["two_stage"] = "two_stage") -> StateGraph:
     """하이브리드 워크플로우 생성 (모드 고정)
@@ -136,12 +306,15 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
     file_paths = state.get("file_paths", [])
     file_meta = state.get("file_meta", {})
     is_first_execution = state.get("is_first_execution", True)  # 첫 실행 여부
+    previous_context = state.get("previous_context")  # 이전 Stage AI 분석 결과
 
     start_time = time.time()
 
     try:
         # print(f"│ Requesting LLM analysis...")
-        high_level_tasks = generate_high_level_plan(user_prompt, file_paths, file_meta, is_first_execution)
+        high_level_tasks = generate_high_level_plan(
+            user_prompt, file_paths, file_meta, is_first_execution, previous_context
+        )
 
         if not high_level_tasks:
             error_msg = "High-level 계획을 생성할 수 없습니다."
@@ -174,6 +347,7 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
         timing["high_level_planning"] = high_level_planning_time
 
         job_id = state.get("job_id")
+        current_stage_id = state.get("stage_id", 1)  # state에서 stage_id 가져오기
         if job_id:
             plan_list = [
                 {
@@ -187,7 +361,7 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
             ]
             save_agent_state(
                 agent_id=job_id,
-                stage_id=1,
+                stage_id=current_stage_id,  # 동적으로 stage_id 사용
                 plan=plan_list,
                 status="running"
             )
@@ -1428,6 +1602,92 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
         from ..storage.job_storage import update_task_status
         update_task_status(job_id, task_id, "done")
 
+    # Stage 1(첫 실행)에서 AI 기반 IoC 분석
+    ioc_analysis_results = state.get("ioc_analysis_results", [])
+    is_first_execution = state.get("is_first_execution", False)
+
+    if is_first_execution:
+        # VirusTotal Task가 아닌 경우에만 IoC 분석 수행
+        tool_hint = current_task_dict.get("metadata", {}).get("tool_hint", "")
+        if tool_hint != "virustotal":
+            task_result_str = current_task_dict.get("react_answer", "")
+            mcp_name = tool_hint or "unknown"
+
+            try:
+                ioc_analysis = _analyze_task_result_for_iocs(
+                    task_result=task_result_str,
+                    mcp_name=mcp_name,
+                    task_description=current_task_dict.get("description", "")
+                )
+
+                # 분석 결과 저장 (Stage 2+에서 활용)
+                ioc_analysis["source_task_id"] = task_id
+                ioc_analysis["source_mcp"] = mcp_name
+                ioc_analysis_results.append(ioc_analysis)
+
+                # AI가 VirusTotal 조회 필요하다고 판단한 경우
+                if ioc_analysis.get("should_query_virustotal"):
+                    suspicious_iocs = ioc_analysis.get("suspicious_iocs", [])
+
+                    if suspicious_iocs:
+                        # 이미 VirusTotal Task가 큐에 있는지 확인
+                        existing_vt_task = None
+                        for t_id, t_dict in all_tasks_dict.items():
+                            if t_dict.get("metadata", {}).get("tool_hint") == "virustotal":
+                                if t_dict.get("status") == "pending":
+                                    existing_vt_task = t_dict
+                                    break
+
+                        if existing_vt_task:
+                            # 기존 VirusTotal Task에 IoC 추가
+                            existing_iocs = existing_vt_task.get("metadata", {}).get("iocs", {})
+                            for ioc in suspicious_iocs:
+                                ioc_type = ioc.get("type", "")
+                                ioc_value = ioc.get("value", "")
+                                if ioc_type in ["sha256", "md5", "sha1"]:
+                                    if "hashes" not in existing_iocs:
+                                        existing_iocs["hashes"] = []
+                                    if ioc_value not in existing_iocs["hashes"]:
+                                        existing_iocs["hashes"].append(ioc_value)
+                                elif ioc_type == "ip":
+                                    if "ips" not in existing_iocs:
+                                        existing_iocs["ips"] = []
+                                    if ioc_value not in existing_iocs["ips"]:
+                                        existing_iocs["ips"].append(ioc_value)
+                                elif ioc_type == "domain":
+                                    if "domains" not in existing_iocs:
+                                        existing_iocs["domains"] = []
+                                    if ioc_value not in existing_iocs["domains"]:
+                                        existing_iocs["domains"].append(ioc_value)
+                            existing_vt_task["metadata"]["iocs"] = existing_iocs
+                        else:
+                            # 새로운 VirusTotal Task 생성
+                            max_task_num = 0
+                            for t_id in all_tasks_dict.keys():
+                                try:
+                                    num = int(t_id.split("_")[1])
+                                    max_task_num = max(max_task_num, num)
+                                except:
+                                    pass
+
+                            vt_task = _create_virustotal_task(
+                                suspicious_iocs,
+                                ioc_analysis.get("reason", "AI 판단에 의한 IoC 조회")
+                            )
+                            vt_task["task_id"] = f"task_{max_task_num + 1:03d}"
+                            vt_task["status"] = "pending"
+                            all_tasks_dict[vt_task["task_id"]] = vt_task
+
+                            import sys
+                            sys.stderr.write(f"\n[AI IoC 분석] VirusTotal 조회 필요: {ioc_analysis.get('reason')}\n")
+                            sys.stderr.write(f"[AI IoC 분석] 의심 IoC {len(suspicious_iocs)}개 발견 → Task {vt_task['task_id']} 생성\n")
+                            sys.stderr.flush()
+
+            except Exception as e:
+                import sys
+                sys.stderr.write(f"\n[AI IoC 분석] 오류 발생: {str(e)}\n")
+                sys.stderr.flush()
+
     # print(f"│ [✓] Task completed: {len(current_task_dict['execution_results'])} actions, {current_task_dict['react_iterations']} iterations")
 
     return {
@@ -1439,7 +1699,8 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
         },
         "current_task": None,
         "react_context": {},
-        "timing": timing
+        "timing": timing,
+        "ioc_analysis_results": ioc_analysis_results
     }
 
 
