@@ -4,10 +4,104 @@ LLM이 현재 상황을 분석하고 다음 액션을 결정하는 모듈
 """
 from __future__ import annotations
 import json
+import re
 from typing import Dict, Any, List, Optional
 from ..llm_client.client import LLMClient
 from ..llm_client.rag import query_mcp_candidates
 from ..utils.prompt_loader import load_prompt
+
+
+def _repair_json(json_str: str) -> str:
+    """LLM이 생성한 잘못된 JSON을 복구하는 함수
+
+    다양한 일반적인 JSON 오류 패턴을 수정합니다.
+    """
+    if not json_str:
+        return json_str
+
+    original = json_str
+
+    # 1. 줄바꿈 문자를 이스케이프 처리 (문자열 내부의 실제 줄바꿈)
+    # JSON 문자열 값 내부의 줄바꿈을 찾아서 \\n으로 변환
+    def escape_newlines_in_strings(s):
+        result = []
+        in_string = False
+        escape_next = False
+        i = 0
+        while i < len(s):
+            char = s[i]
+            if escape_next:
+                result.append(char)
+                escape_next = False
+            elif char == '\\':
+                result.append(char)
+                escape_next = True
+            elif char == '"':
+                result.append(char)
+                in_string = not in_string
+            elif char == '\n' and in_string:
+                result.append('\\n')
+            elif char == '\r' and in_string:
+                result.append('\\r')
+            elif char == '\t' and in_string:
+                result.append('\\t')
+            else:
+                result.append(char)
+            i += 1
+        return ''.join(result)
+
+    json_str = escape_newlines_in_strings(json_str)
+
+    # 2. 컨트롤 문자 제거 (0x00-0x1F 중 \n, \r, \t 제외)
+    json_str = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', json_str)
+
+    # 3. Trailing comma 수정
+    json_str = re.sub(r',\s*}', '}', json_str)
+    json_str = re.sub(r',\s*]', ']', json_str)
+
+    # 4. 키-값 사이 쉼표 누락 수정 ("key": "value""key2" -> "key": "value", "key2")
+    json_str = re.sub(r'"\s*"\s*"', '", "', json_str)
+    json_str = re.sub(r'}\s*"', '}, "', json_str)
+    json_str = re.sub(r']\s*"', '], "', json_str)
+    json_str = re.sub(r'(true|false|null)\s*"', r'\1, "', json_str)
+    json_str = re.sub(r'(\d)\s*"', r'\1, "', json_str)
+
+    # 5. 문자열 값 뒤 쉼표 누락 ("}  " 또는 "]  " 앞의 값들)
+    json_str = re.sub(r'"([^"]*)"(\s+)"', r'"\1",\2"', json_str)
+
+    # 6. 중괄호/대괄호 불균형 수정
+    open_braces = json_str.count('{')
+    close_braces = json_str.count('}')
+    open_brackets = json_str.count('[')
+    close_brackets = json_str.count(']')
+
+    if open_braces > close_braces:
+        json_str = json_str.rstrip() + '}' * (open_braces - close_braces)
+    if open_brackets > close_brackets:
+        json_str = json_str.rstrip() + ']' * (open_brackets - close_brackets)
+
+    # 7. JSON이 {로 시작하지 않으면 앞의 텍스트 제거
+    first_brace = json_str.find('{')
+    if first_brace > 0:
+        json_str = json_str[first_brace:]
+
+    # 8. JSON 끝에 불필요한 텍스트가 있으면 제거
+    # 마지막 }를 찾아서 그 뒤의 텍스트 제거
+    last_brace = json_str.rfind('}')
+    if last_brace != -1 and last_brace < len(json_str) - 1:
+        json_str = json_str[:last_brace + 1]
+
+    # 9. 이중 쉼표 수정
+    json_str = re.sub(r',\s*,', ',', json_str)
+
+    # 10. 콜론 뒤 쉼표 수정 (빈 값인 경우)
+    json_str = re.sub(r':\s*,', ': null,', json_str)
+    json_str = re.sub(r':\s*}', ': null}', json_str)
+
+    if json_str != original:
+        print(f"│ [JSON REPAIR] Applied fixes to malformed JSON")
+
+    return json_str
 
 
 def generate_react_thought(
@@ -356,36 +450,62 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
         json_str = content.strip()
 
     try:
-        import re
-        json_str = re.sub(r',\s*}', '}', json_str)
-        json_str = re.sub(r',\s*]', ']', json_str)
+        # JSON 복구 함수 적용
+        json_str = _repair_json(json_str)
 
-        # Fix common LLM JSON generation errors
-        # 1. Check if JSON has mismatched braces
-        if json_str:
-            open_braces = json_str.count('{')
-            close_braces = json_str.count('}')
-            if open_braces > close_braces:
-                # Add missing closing braces
-                missing = open_braces - close_braces
-                # Also add "finished" field if missing
-                if '"finished"' not in json_str:
-                    json_str = json_str.rstrip() + ', "finished": false' + '}' * missing
-                else:
-                    json_str = json_str.rstrip() + '}' * missing
-                print(f"│ [FIX] Added {missing} missing brace(s) and finished field")
+        # finished 필드가 없으면 추가
+        if json_str and '"finished"' not in json_str:
+            # JSON 끝에 finished 필드 추가
+            if json_str.rstrip().endswith('}'):
+                json_str = json_str.rstrip()[:-1] + ', "finished": false}'
+                print(f"│ [FIX] Added missing 'finished' field")
+
+        # 첫 번째 파싱 시도
+        parsed = None
+        parse_error = None
 
         try:
             parsed = json.loads(json_str)
         except json.JSONDecodeError as e:
-            print(f"│ [✗] JSON 파싱 실패: {e}")
-            print(f"│ Raw JSON (first 300 chars): {json_str[:300]}")
-            return {
-                "finished": True,
-                "thought": f"Failed to parse LLM response: invalid JSON",
-                "action": None,
-                "answer": f"Analysis failed due to LLM response parsing error: {str(e)}"
-            }
+            parse_error = e
+            print(f"│ [!] 첫 번째 파싱 실패: {e}")
+
+            # 재시도: 더 공격적인 복구 시도
+            try:
+                # 모든 줄바꿈을 공백으로 변환
+                fallback_str = ' '.join(json_str.split())
+                fallback_str = _repair_json(fallback_str)
+                parsed = json.loads(fallback_str)
+                print(f"│ [✓] 재시도 파싱 성공")
+            except json.JSONDecodeError as e2:
+                # 마지막 시도: JSON 객체 재구성
+                try:
+                    # 필수 필드만 추출해서 새 JSON 생성
+                    thought_match = re.search(r'"thought"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', json_str)
+                    finished_match = re.search(r'"finished"\s*:\s*(true|false)', json_str, re.IGNORECASE)
+                    answer_match = re.search(r'"answer"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', json_str)
+
+                    if thought_match or answer_match:
+                        reconstructed = {
+                            "thought": thought_match.group(1) if thought_match else "Parsing recovered",
+                            "finished": finished_match.group(1).lower() == "true" if finished_match else True,
+                            "action": None
+                        }
+                        if answer_match:
+                            reconstructed["answer"] = answer_match.group(1)
+                        parsed = reconstructed
+                        print(f"│ [✓] JSON 재구성 성공")
+                    else:
+                        raise e2
+                except Exception:
+                    print(f"│ [✗] JSON 파싱 최종 실패: {parse_error}")
+                    print(f"│ Raw JSON (first 500 chars): {json_str[:500]}")
+                    return {
+                        "finished": True,
+                        "thought": f"Failed to parse LLM response: invalid JSON",
+                        "action": None,
+                        "answer": f"Analysis failed due to LLM response parsing error: {str(parse_error)}"
+                    }
 
         if not isinstance(parsed, dict):
             print(f"│ [✗] LLM 응답이 dict가 아님: {type(parsed)}")

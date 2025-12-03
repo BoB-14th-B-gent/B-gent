@@ -1,5 +1,10 @@
+"""Job Storage 모듈
+
+Agent 상태 관리
+- AGENT_STATES: 작업 상태 및 available_resources 저장
+"""
 import json
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, Optional, Callable, List
 from datetime import datetime
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
@@ -79,8 +84,22 @@ def save_agent_state(
     status: str = "running",
     mcp_tools: Optional[list] = None,  # deprecated
     trigger_id: Optional[str] = None,
-    conversation_id: Optional[str] = None
+    conversation_id: Optional[str] = None,
+    available_resources: Optional[Dict[str, Any]] = None
 ) -> bool:
+    """Agent 상태 저장
+
+    Args:
+        agent_id: Agent(Job) ID
+        stage_id: Stage 번호
+        plan: Task 계획 목록
+        status: 상태 (running, done, failed)
+        mcp_tools: deprecated
+        trigger_id: 트리거 ID
+        conversation_id: 대화 ID
+        available_resources: 사용 가능한 리소스 (disk_images, extracted_files)
+    """
+    import sys
     try:
         db = _get_client()
         if db is None:
@@ -96,6 +115,8 @@ def save_agent_state(
         trigger_id = _to_oid_or_keep(trigger_id)
         conversation_id = _to_oid_or_keep(conversation_id)
 
+        sys.stderr.write(f"[DEBUG save_agent_state] agent_id={agent_id}, stage_id={stage_id}, conversation_id={conversation_id}, type={type(conversation_id)}\n")
+
         state_doc = {
             "agent_id": agent_id,
             "trigger_id": trigger_id,
@@ -105,6 +126,10 @@ def save_agent_state(
             "plan": plan or [],
             "updated_at": datetime.utcnow()
         }
+
+        # available_resources가 제공된 경우에만 저장
+        if available_resources is not None:
+            state_doc["available_resources"] = available_resources
 
         db.AGENT_STATES.update_one(
             {"agent_id": agent_id},
@@ -161,6 +186,41 @@ def update_agent_status(agent_id: str, status: str) -> bool:
     except Exception as e:
         print(f"[X]  상태 업데이트 실패: {e}")
         return False
+
+
+def update_agent_resources(agent_id: str, available_resources: Dict[str, Any]) -> bool:
+    """Agent의 available_resources 업데이트
+
+    Args:
+        agent_id: Agent(Job) ID
+        available_resources: 사용 가능한 리소스
+            - disk_images: 디스크 이미지 경로 목록
+            - extracted_files: 추출된 파일 정보 목록
+
+    Returns:
+        bool: 업데이트 성공 여부
+    """
+    try:
+        db = _get_client()
+        if db is None:
+            return False
+
+        db.AGENT_STATES.update_one(
+            {"agent_id": agent_id},
+            {
+                "$set": {
+                    "available_resources": available_resources,
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+
+        return True
+
+    except Exception as e:
+        print(f"[X]  리소스 업데이트 실패: {e}")
+        return False
+
 
 def add_mcp_tool(agent_id: str, mcp_name: str, tool_name: str, task_id: Optional[str] = None) -> bool:
     try:
@@ -301,19 +361,107 @@ def get_agent_state(agent_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 def is_first_execution_in_conversation(conversation_id: Optional[str]) -> bool:
+    import sys
+
     if not conversation_id:
+        sys.stderr.write(f"[DEBUG is_first_execution] conversation_id is None or empty\n")
         return True
 
     try:
         db = _get_client()
         if db is None:
+            sys.stderr.write(f"[DEBUG is_first_execution] db is None\n")
             return True
 
         conv_id = _to_oid_or_keep(conversation_id)
+        sys.stderr.write(f"[DEBUG is_first_execution] conversation_id={conversation_id}, conv_id={conv_id}, type={type(conv_id)}\n")
 
         existing = db.AGENT_STATES.find_one({"conversation_id": conv_id})
+        sys.stderr.write(f"[DEBUG is_first_execution] existing={existing is not None}, agent_id={existing.get('agent_id') if existing else None}\n")
+
         return existing is None
 
     except Exception as e:
+        sys.stderr.write(f"[DEBUG is_first_execution] Exception: {e}\n")
         print(f"[X]  첫 실행 여부 확인 실패: {e}")
         return True
+
+
+# =============================================================================
+# Available Resources 관리 (AGENT_STATES 컬렉션에 저장)
+# =============================================================================
+
+def _merge_available_resources(
+    existing: Dict[str, Any],
+    new: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """available_resources 병합 (중복 제거)"""
+    if not new:
+        return existing
+
+    merged = {
+        "disk_images": list(existing.get("disk_images", [])),
+        "extracted_files": list(existing.get("extracted_files", []))
+    }
+
+    # 디스크 이미지 병합 (경로 기준 중복 제거)
+    existing_image_paths = set(merged["disk_images"])
+    for img_path in new.get("disk_images", []):
+        if img_path not in existing_image_paths:
+            merged["disk_images"].append(img_path)
+            existing_image_paths.add(img_path)
+
+    # 추출된 파일 병합 (경로 기준 중복 제거)
+    existing_file_paths = {f.get("path") for f in merged["extracted_files"]}
+    for file_info in new.get("extracted_files", []):
+        if file_info.get("path") not in existing_file_paths:
+            merged["extracted_files"].append(file_info)
+            existing_file_paths.add(file_info.get("path"))
+
+    return merged
+
+
+def get_available_resources(conversation_id: str) -> Dict[str, Any]:
+    """대화에서 사용 가능한 리소스 조회 (AGENT_STATES에서 조회)
+
+    동일 conversation_id를 가진 모든 AGENT_STATES에서 available_resources를 병합하여 반환
+
+    Args:
+        conversation_id: 대화 ID
+
+    Returns:
+        Dict[str, Any]: 사용 가능한 리소스
+            - disk_images: 디스크 이미지 경로 목록
+            - extracted_files: 추출된 파일 정보 목록
+    """
+    default_resources = {
+        "disk_images": [],
+        "extracted_files": []
+    }
+
+    try:
+        db = _get_client()
+        if db is None:
+            return default_resources
+
+        conv_id = _to_oid_or_keep(conversation_id)
+
+        # 해당 conversation의 모든 agent_states 조회
+        agent_states = db.AGENT_STATES.find({"conversation_id": conv_id})
+
+        merged_resources = {
+            "disk_images": [],
+            "extracted_files": []
+        }
+
+        for state in agent_states:
+            resources = state.get("available_resources")
+            if resources:
+                merged_resources = _merge_available_resources(merged_resources, resources)
+
+        return merged_resources if merged_resources["disk_images"] or merged_resources["extracted_files"] else default_resources
+
+    except Exception as e:
+        import sys
+        sys.stderr.write(f"[Storage] 리소스 조회 실패: {e}\n")
+        return default_resources

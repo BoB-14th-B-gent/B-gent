@@ -1,14 +1,332 @@
 """High-Level Planner 모듈
 
 LLM을 사용하여 사용자 프롬프트를 분석하고 상위 계획 생성
+- generate_high_level_plan: Stage 시작 시 Task 계획 생성
+- recommend_next_mcps: Stage 완료 시 다음 MCP 추천
 """
 from __future__ import annotations
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import json
 import os
 from ..schemas.task import HighLevelTask, TaskType
 from ..llm_client.client import LLMClient
 from ..utils.prompt_loader import load_prompt
+
+
+# =============================================================================
+# MCP 추천 관련 (Stage 완료 시 다음 MCP 추천)
+# =============================================================================
+
+MCP_DESCRIPTIONS = {
+    "velociraptor": {
+        "name": "Velociraptor",
+        "description": "디스크 이미지에서 Windows 아티팩트 수집 (레지스트리, 프리페치, 브라우저 히스토리, 이벤트 로그 등)",
+        "use_cases": [
+            "Windows 포렌식 아티팩트 분석",
+            "레지스트리 분석",
+            "프로세스 실행 흔적 조사",
+            "브라우저 히스토리 분석",
+            "이벤트 로그 분석"
+        ]
+    },
+    "elasticsearch": {
+        "name": "Elasticsearch",
+        "description": "SIEM 로그 검색 및 분석",
+        "use_cases": [
+            "보안 이벤트 로그 검색",
+            "네트워크 트래픽 분석",
+            "타임라인 분석",
+            "이상 행위 탐지"
+        ]
+    },
+    "sleuthkit": {
+        "name": "SleuthKit",
+        "description": "디스크 이미지에서 특정 파일 추출",
+        "use_cases": [
+            "의심 파일 추출",
+            "삭제된 파일 복구",
+            "파일 시스템 분석",
+            "특정 경로의 파일 추출"
+        ]
+    },
+    "ghidra": {
+        "name": "Ghidra",
+        "description": "바이너리 리버스 엔지니어링 및 디컴파일",
+        "use_cases": [
+            "악성코드 분석",
+            "PE 파일 디컴파일",
+            "함수 분석",
+            "문자열 분석",
+            "Import/Export 분석"
+        ]
+    },
+    "virustotal": {
+        "name": "VirusTotal",
+        "description": "파일 해시, IP, 도메인의 악성 여부 조회",
+        "use_cases": [
+            "파일 해시 평판 조회",
+            "IP 평판 조회",
+            "도메인 평판 조회",
+            "악성코드 탐지율 확인"
+        ]
+    }
+}
+
+
+def recommend_next_mcps(
+    stage_results: List[Dict[str, Any]],
+    ioc_analysis_results: List[Dict[str, Any]],
+    available_mcps: List[str]
+) -> Dict[str, Any]:
+    """AI가 현재 Stage 분석 결과를 보고 다음 MCP 추천
+
+    Args:
+        stage_results: 현재 Stage에서 완료된 Task 결과 리스트
+        ioc_analysis_results: IoC 분석 결과 리스트
+        available_mcps: 사용 가능한 MCP 목록
+
+    Returns:
+        Dict[str, Any]: MCP 추천 결과
+    """
+    llm = LLMClient()
+
+    analysis_summary = _create_analysis_summary(stage_results, ioc_analysis_results)
+    mcp_descriptions_str = _format_mcp_descriptions(available_mcps)
+
+    prompt = f"""당신은 DFIR(Digital Forensics and Incident Response) 전문가입니다.
+현재 Stage의 분석 결과를 검토하고, 다음 Stage에서 사용할 MCP 도구를 추천해주세요.
+
+## 현재 Stage 분석 결과
+{analysis_summary}
+
+## 사용 가능한 MCP 도구
+{mcp_descriptions_str}
+
+## 추천 규칙
+
+### MCP 선택 기준
+1. **SleuthKit**: 의심 파일의 구체적인 경로가 확인되었고, 해당 파일 추출이 필요한 경우
+2. **Ghidra**: PE 파일(exe, dll)이 추출되었거나 바이너리 분석이 필요한 경우
+3. **VirusTotal**: 추가 IoC(해시, IP, 도메인)가 발견되어 평판 조회가 필요한 경우
+4. **Elasticsearch**: 추가 로그 검색이나 타임라인 분석이 필요한 경우
+5. **Velociraptor**: 추가 아티팩트 수집이 필요한 경우
+
+### 추천하지 않아야 하는 경우
+- 이미 충분한 분석이 완료된 경우
+- 추가 분석이 불필요한 경우
+- IoC가 모두 정상으로 판명된 경우
+
+## 응답 형식 (JSON)
+```json
+{{
+    "recommended_mcps": [
+        {{
+            "mcp": "sleuthkit",
+            "reason": "C:\\Users\\hacker\\AppData\\Roaming\\malware.exe 파일 추출 필요",
+            "priority": "high",
+            "suggested_params": {{
+                "target_path": "C:\\Users\\hacker\\AppData\\Roaming\\malware.exe"
+            }},
+            "depends_on": null
+        }}
+    ],
+    "reasoning": "종합 판단 이유"
+}}
+```
+
+**중요**:
+- 구체적인 파일 경로, 해시값이 있으면 suggested_params에 포함하세요.
+- 의존성이 있는 경우 depends_on에 선행 MCP를 명시하세요.
+- 추천할 MCP가 없으면 recommended_mcps를 빈 배열로 반환하세요.
+- priority는 "high", "medium", "low" 중 하나입니다."""
+
+    try:
+        response = llm.chat(
+            [{"role": "user", "content": prompt}],
+            response_format_json=True,
+            timeout=60
+        )
+
+        content = response["choices"][0]["message"]["content"]
+        result = json.loads(content)
+
+        return {
+            "recommended_mcps": result.get("recommended_mcps", []),
+            "reasoning": result.get("reasoning", "분석 완료")
+        }
+
+    except json.JSONDecodeError as e:
+        return {
+            "recommended_mcps": [],
+            "reasoning": f"JSON 파싱 실패: {str(e)}"
+        }
+
+    except Exception as e:
+        return {
+            "recommended_mcps": [],
+            "reasoning": f"MCP 추천 실패: {str(e)}"
+        }
+
+
+def _create_analysis_summary(
+    stage_results: List[Dict[str, Any]],
+    ioc_analysis_results: List[Dict[str, Any]]
+) -> str:
+    """분석 결과 요약 문자열 생성"""
+    parts = []
+
+    parts.append("### 완료된 Task")
+    for task in stage_results:
+        task_id = task.get("task_id", "unknown")
+        description = task.get("description", "")
+        tool_hint = task.get("metadata", {}).get("tool_hint", "unknown")
+        react_answer = task.get("react_answer", "")
+
+        parts.append(f"\n**{task_id}** ({tool_hint}): {description}")
+
+        if react_answer:
+            answer_preview = react_answer[:500]
+            if len(react_answer) > 500:
+                answer_preview += "..."
+            parts.append(f"결과: {answer_preview}")
+
+    if ioc_analysis_results:
+        parts.append("\n### IoC 분석 결과")
+
+        all_suspicious = []
+        all_benign = []
+
+        for analysis in ioc_analysis_results:
+            all_suspicious.extend(analysis.get("suspicious_iocs", []))
+            all_benign.extend(analysis.get("benign_iocs_excluded", []))
+
+        if all_suspicious:
+            parts.append("\n**의심 IoC:**")
+            for ioc in all_suspicious[:10]:
+                ioc_type = ioc.get("type", "unknown")
+                ioc_value = ioc.get("value", "")
+                ioc_context = ioc.get("context", "")
+                confidence = ioc.get("confidence", "")
+                parts.append(f"- [{ioc_type}] {ioc_value}")
+                if ioc_context:
+                    parts.append(f"  → {ioc_context} (신뢰도: {confidence})")
+
+        if all_benign:
+            parts.append(f"\n**정상 판정된 IoC:** {len(all_benign)}개")
+
+    return "\n".join(parts)
+
+
+def _format_mcp_descriptions(available_mcps: List[str]) -> str:
+    """사용 가능한 MCP 설명 문자열 생성"""
+    parts = []
+
+    for mcp in available_mcps:
+        info = MCP_DESCRIPTIONS.get(mcp, {})
+        if info:
+            name = info.get("name", mcp)
+            description = info.get("description", "")
+            use_cases = info.get("use_cases", [])
+
+            parts.append(f"\n**{name}** ({mcp})")
+            parts.append(f"- 설명: {description}")
+            parts.append(f"- 활용: {', '.join(use_cases[:3])}")
+
+    return "\n".join(parts)
+
+
+# =============================================================================
+# High-Level Planning (Stage 시작 시 Task 계획 생성)
+# =============================================================================
+
+
+def _format_previous_context(previous_context: Dict[str, Any]) -> str:
+    """이전 Stage AI 분석 결과를 프롬프트용 문자열로 변환
+
+    Args:
+        previous_context: 이전 Stage 컨텍스트 (conversation_contexts 문서)
+
+    Returns:
+        str: 프롬프트에 포함할 AI 분석 결과 문자열
+    """
+    if not previous_context:
+        return ""
+
+    parts = ["\n**[이전 Stage AI 분석 결과]**"]
+
+    stage_results = previous_context.get("stage_results", {})
+    if not stage_results:
+        return ""
+
+    # 모든 Stage의 분석 결과 수집
+    all_suspicious_iocs = []
+    all_vt_results = {}
+    latest_recommendations = None
+
+    for stage_id in sorted(stage_results.keys(), key=int):
+        stage_data = stage_results[stage_id]
+
+        # IoC 분석 결과
+        ioc_analysis = stage_data.get("ioc_analysis", {})
+        suspicious_iocs = ioc_analysis.get("suspicious_iocs", [])
+        all_suspicious_iocs.extend(suspicious_iocs)
+
+        vt_results = ioc_analysis.get("virustotal_results", {})
+        if vt_results:
+            all_vt_results.update(vt_results)
+
+        # AI 추천 (최신 것만 사용)
+        recommendations = stage_data.get("ai_recommendations", {})
+        if recommendations:
+            latest_recommendations = recommendations
+
+    # 1. 의심 IoC 목록
+    if all_suspicious_iocs:
+        parts.append("\n1. 발견된 의심 IoC:")
+        for ioc in all_suspicious_iocs[:10]:  # 최대 10개
+            ioc_type = ioc.get("type", "unknown")
+            ioc_value = ioc.get("value", "")
+            ioc_context = ioc.get("context", "")
+            confidence = ioc.get("confidence", "")
+            parts.append(f"   - [{ioc_type}] {ioc_value}")
+            if ioc_context:
+                parts.append(f"     → {ioc_context} (신뢰도: {confidence})")
+
+    # 2. VirusTotal 조회 결과
+    if all_vt_results:
+        parts.append("\n2. VirusTotal 조회 결과:")
+        raw_result = all_vt_results.get("raw_result", "")
+        if raw_result:
+            # 요약만 포함 (너무 길면 truncate)
+            summary = raw_result[:500] + "..." if len(raw_result) > 500 else raw_result
+            parts.append(f"   {summary}")
+
+    # 3. AI 추천
+    if latest_recommendations:
+        parts.append("\n3. AI 추천 다음 단계:")
+        recommended_mcps = latest_recommendations.get("recommended_mcps", [])
+        for rec in recommended_mcps[:5]:  # 최대 5개
+            if isinstance(rec, dict):
+                mcp = rec.get("mcp", "")
+                reason = rec.get("reason", "")
+                priority = rec.get("priority", "")
+                suggested_params = rec.get("suggested_params", {})
+                parts.append(f"   - **{mcp}** (우선순위: {priority}): {reason}")
+                if suggested_params:
+                    params_str = ", ".join([f"{k}={v}" for k, v in suggested_params.items()])
+                    parts.append(f"     파라미터: {params_str}")
+
+        reasoning = latest_recommendations.get("reasoning", "")
+        if reasoning:
+            parts.append(f"\n   종합 판단: {reasoning}")
+
+    if len(parts) <= 1:
+        return ""
+
+    parts.append("\n**위 AI 분석 결과를 참고하여 Task를 생성하세요.**")
+    parts.append("**이전 Stage에서 발견된 구체적인 파일 경로, 해시값을 Task 설명에 포함하세요.**")
+
+    return "\n".join(parts)
 
 
 def _classify_file_type(file_path: str) -> str:
@@ -73,7 +391,8 @@ def generate_high_level_plan(
     user_prompt: str,
     file_paths: List[str] = None,
     file_meta: Dict[str, Any] = None,
-    is_first_execution: bool = True
+    is_first_execution: bool = True,
+    previous_context: Dict[str, Any] = None
 ) -> List[HighLevelTask]:
     """High-level 계획 생성 (Phase 1)
 
@@ -87,6 +406,8 @@ def generate_high_level_plan(
         is_first_execution: 해당 conversation에서 첫 번째 실행 여부 (기본값: True)
             - True: Velociraptor + Elasticsearch를 함께 사용
             - False: LLM이 적절한 MCP를 판단하여 사용
+        previous_context: 이전 Stage의 AI 분석 결과 (선택)
+            - stage_results: Stage별 분석 결과 (ioc_analysis, ai_recommendations 등)
 
     Returns:
         List[HighLevelTask]: High-level Task 리스트
@@ -483,11 +804,34 @@ def generate_high_level_plan(
 두 Task는 독립적으로 실행될 수 있으므로 dependencies는 비워두세요.
 """
     else:
-        first_execution_instruction = """
-**[참고] 이것은 대화의 후속 실행입니다.**
-이전 분석 결과를 바탕으로, 사용자 요청에 가장 적합한 MCP 도구를 선택하여 Task를 생성하세요.
-모든 MCP를 사용할 필요는 없으며, 필요한 도구만 선택적으로 사용하면 됩니다.
-"""
+        # 이전 Stage AI 분석 결과를 프롬프트에 포함
+        ai_context_str = ""
+        if previous_context:
+            ai_context_str = _format_previous_context(previous_context)
+
+        # 사용 가능한 리소스 정보 추가
+        available_resources_str = ""
+        if disk_images:
+            available_resources_str = f"""
+**사용 가능한 디스크 이미지:**
+{chr(10).join(f'- {img}' for img in disk_images)}
+
+→ 파일 추출(SleuthKit) 시 위 디스크 이미지를 target_files에 지정하세요."""
+
+        first_execution_instruction = f"""
+**[중요] 이것은 대화의 후속 실행입니다.**
+
+**최우선: 사용자의 현재 요청을 반드시 처리하세요!**
+- 사용자가 "extract", "추출"을 요청하면 → SleuthKit Task 생성
+- 사용자가 "analyze", "분석", "디컴파일"을 요청하면 → Ghidra Task 생성
+- 사용자가 특정 파일 경로를 언급하면 → 해당 파일을 대상으로 Task 생성
+{available_resources_str}
+
+**참고용: 이전 Stage AI 분석 결과**
+아래 정보는 참고용이며, 사용자의 현재 요청이 우선입니다.
+{ai_context_str}
+
+**주의**: 이전 AI 추천만 따르지 말고, 반드시 사용자의 현재 요청을 분석하여 Task를 생성하세요."""
 
     user_message = f"""사용자 요청: {user_prompt}
 
@@ -501,14 +845,34 @@ def generate_high_level_plan(
     ]
 
     try:
+        # DEBUG: 파일에 로그 기록
+        debug_log_path = "/tmp/high_level_planner_debug.log"
+        with open(debug_log_path, "a") as f:
+            f.write(f"\n{'='*60}\n")
+            f.write(f"[DEBUG] user_message:\n{user_message}\n")
+            f.write(f"\n[DEBUG] is_first_execution: {is_first_execution}\n")
+            f.write(f"[DEBUG] previous_context: {previous_context}\n")
+
         response = llm.chat(messages, response_format_json=True, timeout=30, max_tokens=2048)
 
         content = response["choices"][0]["message"]["content"]
+
+        # DEBUG: LLM 응답 기록
+        with open(debug_log_path, "a") as f:
+            f.write(f"\n[DEBUG] LLM response:\n{content}\n")
+
         data = json.loads(content)
 
         tasks_data = data.get("tasks", [])
 
+        # DEBUG: tasks_data 확인
+        with open(debug_log_path, "a") as f:
+            f.write(f"\n[DEBUG] tasks_data count: {len(tasks_data)}\n")
+            f.write(f"[DEBUG] tasks_data: {tasks_data}\n")
+
         if not tasks_data:
+            with open(debug_log_path, "a") as f:
+                f.write(f"\n[DEBUG] tasks_data is empty, falling back to default\n")
             return _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
 
         tasks = []
