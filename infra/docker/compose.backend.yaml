@@ -1,0 +1,18 @@
+services:
+  backend:
+    build:
+      context: ../..
+      dockerfile: infra/docker/backend.Dockerfile
+    container_name: bgent-backend
+    working_dir: /app/backend
+    env_file:
+      - ../../backend/.env.docker
+    environment:
+      - SLLM_BASE_URL=http://host.docker.internal:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8080:8080"
+
+volumes:
+  bgent-mongo-data:
