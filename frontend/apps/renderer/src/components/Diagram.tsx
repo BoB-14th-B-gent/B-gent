@@ -25,7 +25,7 @@ import { nodeTypes } from '@/components/nodes'
 import { edgeTypes } from '@/components/edges'
 import { useUIStore, type ChatMsg } from '@/store/ui'
 import { graphEvents, GraphEvt, type MCPServer } from '@/graph/events'
-import { makeNode, makeEdge, PALETTE, reportIdOf } from '@/graph/dynamicLayout'
+import { makeNode, makeEdge, PALETTE } from '@/graph/dynamicLayout'
 
 import PromptPanel from '@/components/panels/PromptPanel'
 import AgentPanel from '@/components/panels/AgentPanel'
@@ -163,7 +163,7 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
           (n.type === 'agent' && activeAgentId === n.id) ||
           (n.type === 'mcp' && activeMCPServerId === n.id) ||
           (n.type === 'total' && activeTotalReportId === n.id)
-        return { ...n, data: { ...(n.data ?? {}), isActive } }
+        return { ...n, data: { ...(n.data ?? {}), isActive } } as any
       })
     )
   }, [activePromptId, activeAgentId, activeMCPServerId, activeTotalReportId, setNodes])
@@ -302,7 +302,6 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
     elastic: false,
     sleuthkit: false,
   })
-  const serverEdgeId = (s: MCPServer) => `e-bgent-${s}`
 
   useLayoutEffect(() => {
     fitRaf1.current = requestAnimationFrame(() => {
@@ -685,7 +684,11 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
           if (!repId && currentTriggerId) {
             const trig = await getTrigger(currentTriggerId)
             const raw = trig?.report_id
-            repId = typeof raw === 'string' ? raw : ((raw as any)?.$oid ?? null)
+            if (typeof raw === 'string') {
+              repId = raw
+            } else if (raw && typeof raw === 'object' && '$oid' in raw) {
+              repId = (raw as { $oid: string }).$oid
+            }
           }
 
           if (!repId) {
@@ -778,7 +781,7 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
         padding: 10,
       }}
     >
-      {!promptOpen && !conversationId && !selectedCaseId &&(
+      {!promptOpen && !conversationId && !selectedCaseId && (
         <div
           style={{
             position: 'absolute',

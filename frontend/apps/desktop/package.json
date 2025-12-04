@@ -1,5 +1,8 @@
 {
   "name": "desktop",
+  "version": "0.1.0",
+  "description": "B-GENT Desktop",
+  "author": "Heejung Kim <gimm9567@gmail.com>",
   "private": true,
   "type": "module",
   "main": "dist-electron/main/index.js",
@@ -21,10 +24,25 @@
       "node_modules/**",
       "package.json"
     ],
+    "asarUnpack": [
+      "dist-electron/preload/**"
+    ],
     "extraResources": [
       {
         "from": "../renderer/dist",
         "to": "renderer"
+      },
+      {
+        "from": "../../../infra/docker",
+        "to": "infra/docker"
+      },
+      {
+        "from": "../../../backend",
+        "to": "backend"
+      },
+      {
+        "from": "assets",
+        "to": "assets"
       }
     ],
     "asar": true,
@@ -34,7 +52,7 @@
         "dmg",
         "zip"
       ],
-      "icon": "assets/icon.icns"
+      "icon": "assets/icons/mac/icon.icns"
     },
     "dmg": {
       "iconSize": 128
@@ -42,11 +60,11 @@
   },
   "dependencies": {
     "dotenv": "^17.2.3",
-    "electron": "^39.0.0",
     "vite-plugin-electron": "^0.29.0"
   },
   "devDependencies": {
     "@types/node": "^24.10.0",
+    "electron": "^39.0.0",
     "electron-builder": "^26.0.12",
     "typescript": "~5.9.3",
     "vite": "^7.1.12"

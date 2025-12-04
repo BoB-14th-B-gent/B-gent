@@ -246,7 +246,7 @@ export default function CaseSelectModal() {
                   value={form.analyst ?? ''}
                   onChange={e => setForm(f => ({ ...f, analyst: e.target.value }))}
                   style={inputStyle}
-                  placeholder="담당 분석자 이름 (선택)"
+                  placeholder="담당 분석관 이름"
                 />
               </label>
 

@@ -2,6 +2,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
 import fs from 'node:fs'
 import { promises as fsp } from 'node:fs'
+import { spawn } from 'node:child_process'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -31,6 +32,54 @@ for (const p of tryEnvPaths) {
   }
 }
 
+const isDev = !app.isPackaged
+
+const COMPOSE_FILE = isDev
+  ? path.resolve(__dirname, '..', '..', '..', '..', '..', 'infra', 'docker', 'compose.backend.yaml')
+  : path.join(process.resourcesPath, 'infra', 'docker', 'compose.backend.yaml')
+
+function runDockerCompose(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    console.log('[docker] docker compose -f', COMPOSE_FILE, ...args)
+    const child = spawn('docker', ['compose', '-f', COMPOSE_FILE, ...args], {
+      stdio: 'inherit',
+    })
+
+    child.on('error', (err) => {
+      console.error('[docker] 실행 오류:', err)
+      reject(err)
+    })
+
+    child.on('exit', (code) => {
+      if (code === 0) {
+        console.log('[docker] docker compose', args.join(' '), '성공')
+        resolve()
+      } else {
+        const err = new Error(`docker compose ${args.join(' ')} failed with code ${code}`)
+        console.error(err)
+        reject(err)
+      }
+    })
+  })
+}
+
+async function startBackend() {
+  try {
+    await runDockerCompose(['up', '-d'])
+  } catch (e) {
+    console.error('[backend] docker compose up 실패:', e)
+  }
+}
+
+async function stopBackend() {
+  try {
+    await runDockerCompose(['down'])
+  } catch (e) {
+    console.error('[backend] docker compose down 실패:', e)
+  }
+}
+
+
 function getAssetPath(...p: string[]) {
   return app.isPackaged
     ? path.join(process.resourcesPath, ...p)
@@ -38,6 +87,16 @@ function getAssetPath(...p: string[]) {
 }
 
 function getPreloadPath() {
+  if (app.isPackaged) {
+    return path.join(
+      process.resourcesPath,
+      'app.asar.unpacked',
+      'dist-electron',
+      'preload',
+      'index.mjs',
+    )
+  }
+
   return path.join(__dirname, '../preload/index.mjs')
 }
 
@@ -376,8 +435,13 @@ if (!gotLock) {
     }
   })
 
-  app.whenReady().then(() => {
-    boot()
+  app.whenReady().then(async () => {
+    await startBackend()
+    await boot()
     setupMenu()
+  })
+
+  app.on('before-quit', () => {
+    void stopBackend()
   })
 }

@@ -11,7 +11,14 @@ declare global {
         defaultPath?: string
         filters?: { name: string; extensions: string[] }[]
       }) => Promise<string | undefined> 
-      openReportWindow?: (payload: { reportId?: string }) => Promise<any>
+      openReportWindow?: (payload: { reportId?: string }) => Promise<any> | void
+
+      openCaseWindow?: (payload: {
+        caseId?: string
+        conversationId?: string
+      }) => Promise<any> | void
+
+      quitApp?: () => void
     }
   }
 }
