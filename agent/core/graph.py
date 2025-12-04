@@ -339,7 +339,7 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
 
         high_level_planning_time = time.time() - start_time
 
-        # print(f"[✓] Generated {len(high_level_tasks)} tasks")
+        # print(f"[OK] Generated {len(high_level_tasks)} tasks")
 
         # print(f"\n[Phase 2] Execution\n")
 
@@ -708,7 +708,7 @@ def node_react_execute(state: Dict[str, Any]) -> Dict[str, Any]:
     react_context["current_execution_result"] = result.to_dict()
     react_context["current_execution_time"] = exec_time
 
-    success_marker = "✓" if result.success else "✗"
+    success_marker = "[OK]" if result.success else "[X]"
     # print(f"│ [{success_marker}] Execution time: {exec_time:.2f}s")
 
     return {
@@ -942,7 +942,7 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
                             client_id = match.group(1)
 
                 if client_id:
-                    # print(f"│   [✓] Extracted Client ID: {client_id}")
+                    # print(f"│   [OK] Extracted Client ID: {client_id}")
                     pass
                 else:
                     # print(f"│   [!]  Warning: Could not extract Client ID")
@@ -976,11 +976,11 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
                 "observation": result_str
             })
 
-            # print(f"│   [✓] Success ({len(result_str)} bytes)")
+            # print(f"│   [OK] Success ({len(result_str)} bytes)")
 
         except Exception as e:
             error_msg = f"Tool execution failed: {str(e)}"
-            # print(f"│   [✗] Failed: {str(e)}")
+            # print(f"│   [X] Failed: {str(e)}")
 
             log_mcp_execution(
                 mcp_name="velociraptor",
@@ -1003,7 +1003,7 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
             })
 
     execution_time = time.time() - start_time
-    # print(f"\n│ [✓] Velociraptor collection: {len(observations)} artifacts, {execution_time:.2f}s")
+    # print(f"\n│ [OK] Velociraptor collection: {len(observations)} artifacts, {execution_time:.2f}s")
 
     # print(f"│ ")
     # print(f"│ Analyzing collected artifacts with LLM (this may take 1-2 minutes)...")
@@ -1092,7 +1092,7 @@ Use ACTUAL data values from artifacts. Be specific with timestamps, file paths, 
         )
         analysis = response["choices"][0]["message"]["content"]
         # print(f"│ ")
-        # print(f"│ [✓] Analysis completed!")
+        # print(f"│ [OK] Analysis completed!")
         # print(f"│ ")
 
     except Exception as e:
@@ -1205,7 +1205,7 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
             # print(f"│   [!] Could not parse fs_offset_sectors, using default: {fs_offset_sectors}")
             pass
         else:
-            # print(f"│   [✓] Found fs_offset_sectors: {fs_offset_sectors}")
+            # print(f"│   [OK] Found fs_offset_sectors: {fs_offset_sectors}")
             pass
 
     except Exception as e:
@@ -1284,7 +1284,7 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
 
         if not inode:
             error_msg = f"Could not find inode for file: {target_path}"
-            # print(f"│   [✗] {error_msg}")
+            # print(f"│   [X] {error_msg}")
             return {
                 "observations": observations,
                 "iterations": 2,
@@ -1292,7 +1292,7 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
                 "success": False
             }
 
-        # print(f"│   [✓] Found inode: {inode}")
+        # print(f"│   [OK] Found inode: {inode}")
 
     except Exception as e:
         error_msg = f"search_inode_by_path failed: {str(e)}"
@@ -1354,7 +1354,7 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
                         break
 
         if success:
-            # print(f"│   [✓] File extracted successfully")
+            # print(f"│   [OK] File extracted successfully")
             answer = f"Successfully extracted {target_path} (inode: {inode}) to {out_dir}"
         else:
             # print(f"│   [!] Extraction may have failed - check result")
@@ -1378,7 +1378,7 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
         }
 
     execution_time = time.time() - start_time
-    # print(f"\n│ [✓] SleuthKit extraction pipeline: 3 steps, {execution_time:.2f}s")
+    # print(f"\n│ [OK] SleuthKit extraction pipeline: 3 steps, {execution_time:.2f}s")
 
     from ..llm_client.client import LLMClient
     llm = LLMClient()
@@ -1436,7 +1436,7 @@ Provide forensic analysis of this extracted file, including risk assessment and 
         )
         analysis = response["choices"][0]["message"]["content"]
         # print(f"│ ")
-        # print(f"│ [✓] Analysis completed!")
+        # print(f"│ [OK] Analysis completed!")
         # print(f"│ ")
 
     except Exception as e:
@@ -1688,7 +1688,7 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
                 sys.stderr.write(f"\n[AI IoC 분석] 오류 발생: {str(e)}\n")
                 sys.stderr.flush()
 
-    # print(f"│ [✓] Task completed: {len(current_task_dict['execution_results'])} actions, {current_task_dict['react_iterations']} iterations")
+    # print(f"│ [OK] Task completed: {len(current_task_dict['execution_results'])} actions, {current_task_dict['react_iterations']} iterations")
 
     return {
         **state,

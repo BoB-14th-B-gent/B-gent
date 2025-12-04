@@ -955,7 +955,7 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str,
             metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
         )
 
-        # print(f"\n✓ Ghidra Task 자동 생성 완료:")
+        # print(f"\n[OK] Ghidra Task 자동 생성 완료:")
         # print(f"  1. {task_001.task_id}: {task_001.description}")
         # print(f"  2. {task_002.task_id}: {task_002.description} (의존: {task_002.dependencies})")
 
@@ -1003,7 +1003,7 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str,
         else:
             result = [task_001, task_002]
 
-        # print(f"\n✓ Ghidra Task 자동 수정 완료:")
+        # print(f"\n[OK] Ghidra Task 자동 수정 완료:")
         # print(f"  1. {task_001.task_id}: {task_001.description}")
         # print(f"  2. {task_002.task_id}: {task_002.description} (의존: {task_002.dependencies})")
 

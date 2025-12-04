@@ -356,7 +356,7 @@ def _build_conversation_context(
             tried_actions[action_name]["iterations"].append(obs.get("iteration", 0))
 
         for action_name, stats in tried_actions.items():
-            status_icon = "✓" if stats["success"] > 0 else "✗"
+            status_icon = "[OK]" if stats["success"] > 0 else "[X]"
             user_message += f"- {status_icon} {action_name}: {stats['success']} successful, {stats['failed']} failed (iterations: {', '.join(map(str, stats['iterations']))})\n"
 
         user_message += "\n**Previous Observations:**\n\n"
@@ -476,7 +476,7 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
                 fallback_str = ' '.join(json_str.split())
                 fallback_str = _repair_json(fallback_str)
                 parsed = json.loads(fallback_str)
-                print(f"│ [✓] 재시도 파싱 성공")
+                print(f"│ [OK] 재시도 파싱 성공")
             except json.JSONDecodeError as e2:
                 # 마지막 시도: JSON 객체 재구성
                 try:
@@ -494,11 +494,11 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
                         if answer_match:
                             reconstructed["answer"] = answer_match.group(1)
                         parsed = reconstructed
-                        print(f"│ [✓] JSON 재구성 성공")
+                        print(f"│ [OK] JSON 재구성 성공")
                     else:
                         raise e2
                 except Exception:
-                    print(f"│ [✗] JSON 파싱 최종 실패: {parse_error}")
+                    print(f"│ [X] JSON 파싱 최종 실패: {parse_error}")
                     print(f"│ Raw JSON (first 500 chars): {json_str[:500]}")
                     return {
                         "finished": True,
@@ -508,7 +508,7 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
                     }
 
         if not isinstance(parsed, dict):
-            print(f"│ [✗] LLM 응답이 dict가 아님: {type(parsed)}")
+            print(f"│ [X] LLM 응답이 dict가 아님: {type(parsed)}")
             return {
                 "finished": True,
                 "thought": "Invalid response format",
