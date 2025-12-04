@@ -142,6 +142,9 @@ class MCPClientManager:
                 if config.env:
                     env_merged.update(config.env)
                 env_merged["PYTHONUNBUFFERED"] = "1"
+                # Windows cp949 인코딩 문제 해결을 위한 UTF-8 강제 설정
+                env_merged["PYTHONIOENCODING"] = "utf-8"
+                env_merged["PYTHONUTF8"] = "1"
 
                 # # debug mode
                 # if os.getenv("MCP_DEBUG") != "1":
@@ -158,7 +161,7 @@ class MCPClientManager:
                 client_context = stdio_client(params, errlog=errlog)
                 read, write = await self._exit_stack.enter_async_context(client_context)
                 if verbose:
-                    print(f"  [✓] stdio 스트림 연결 완료")
+                    print(f"  [OK] stdio 스트림 연결 완료")
 
             else:
                 raise ValueError(f"MCP 서버 설정에 url 또는 command가 필요합니다: {config.name}")
@@ -300,10 +303,10 @@ class MCPClientManager:
         """모든 MCP 서버 연결 종료"""
         try:
             await self._exit_stack.aclose()
-            print(f"✓ 모든 MCP 서버 연결 종료 완료")
+            print(f"[OK] 모든 MCP 서버 연결 종료 완료")
 
         except Exception as e:
-            print(f"[✗] MCP 서버 종료 중 오류: {e}")
+            print(f"[FAIL] MCP 서버 종료 중 오류: {e}")
         self.sessions.clear()
         self._initialized = False
 

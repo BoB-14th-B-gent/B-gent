@@ -270,7 +270,14 @@ def get_config() -> AppConfig:
     mcp_servers = []
 
     if mcp_enabled:
-        mcp_config_file = os.getenv("MCP_CONFIG_FILE", os.path.join(os.path.dirname(__file__), "mcp_servers.json"))
+        # OS에 따라 기본 MCP 설정 파일 선택 (Windows: mcp_servers_win.json, Linux/WSL: mcp_servers.json)
+        import sys
+        if sys.platform == "win32":
+            default_mcp_config = "mcp_servers_win.json"
+        else:
+            default_mcp_config = "mcp_servers.json"
+        mcp_config_file = os.getenv("MCP_CONFIG_FILE", os.path.join(os.path.dirname(__file__), default_mcp_config))
+        print(f"[DEBUG] Platform: {sys.platform}, MCP config file: {mcp_config_file}")
 
         if os.path.exists(mcp_config_file):
 
@@ -313,7 +320,7 @@ def get_config() -> AppConfig:
                         ))
 
             except Exception as e:
-                print(f"⚠️  MCP 설정 파일 로드 실패: {e}")
+                print(f"[!] MCP 설정 파일 로드 실패: {e}")
     mcp = MCPConfig(enabled=mcp_enabled, servers=mcp_servers)
 
     return AppConfig(
