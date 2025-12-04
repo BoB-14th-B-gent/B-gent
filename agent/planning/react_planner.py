@@ -171,7 +171,7 @@ def generate_react_thought(
 
     except TimeoutError as e:
         import sys
-        sys.stderr.write(f"│ [✗] ReAct Think 타임아웃 (순환 참조 가능성) → 작업 종료\n")
+        sys.stderr.write(f"│ [[X]] ReAct Think 타임아웃 (순환 참조 가능성) → 작업 종료\n")
         sys.stderr.flush()
         return {
             "finished": True,
@@ -184,9 +184,9 @@ def generate_react_thought(
         import sys
         error_str = str(e).lower()
         if "timeout" in error_str or "recursion" in error_str or "connection" in error_str:
-            sys.stderr.write(f"│ [✗] ReAct Think 연결 실패 (순환 참조/타임아웃): {e}\n")
+            sys.stderr.write(f"│ [[X]] ReAct Think 연결 실패 (순환 참조/타임아웃): {e}\n")
         else:
-            sys.stderr.write(f"│ [✗] ReAct Think 실패: {e}\n")
+            sys.stderr.write(f"│ [[X]] ReAct Think 실패: {e}\n")
         sys.stderr.flush()
         return {
             "finished": True,
@@ -531,14 +531,14 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
 
         if not parsed.get('finished', False):
             if 'action' not in parsed or parsed['action'] is None:
-                print(f"│ [✗] finished=False이지만 action이 없음")
+                print(f"│ [[X]] finished=False이지만 action이 없음")
                 parsed['finished'] = True
                 if 'answer' not in parsed:
                     parsed['answer'] = "No action provided - task cannot continue"
 
             elif isinstance(parsed['action'], dict):
                 if 'tool' not in parsed['action'] or 'operation' not in parsed['action']:
-                    print(f"│ [✗] Action에 tool 또는 operation 필드 없음. Keys: {list(parsed['action'].keys())}")
+                    print(f"│ [[X]] Action에 tool 또는 operation 필드 없음. Keys: {list(parsed['action'].keys())}")
                     parsed['finished'] = True
                     parsed['answer'] = "Invalid action format: missing tool or operation"
                     parsed['action'] = None
@@ -547,6 +547,11 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
         finished = parsed.get("finished", False)
 
         if current_iteration >= max_iterations:
+            # import sys
+            # sys.__stdout__.write(
+            #     f"[ReAct] Max iterations reached ({max_iterations}). Forcing finish.\n"
+            # )
+            # sys.__stdout__.flush()
             return {
                 "finished": True,
                 "thought": thought or "Maximum iterations reached",
@@ -555,16 +560,38 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
             }
 
         if finished:
+            # import sys
+            answer = parsed.get("answer", "No answer provided")
+            # # LLM이 첫 iteration에서 finished=True를 반환한 경우 상세 로깅
+            # if current_iteration == 1:
+            #     sys.__stdout__.write(
+            #         f"\n[ReAct First-Iteration Finish] LLM decided to finish immediately\n"
+            #         f"  Iteration: {current_iteration}\n"
+            #         f"  Thought: {thought[:200] if thought else 'None'}...\n"
+            #         f"  Answer: {answer[:300] if answer else 'None'}...\n\n"
+            #     )
+            # else:
+            #     sys.__stdout__.write(
+            #         f"[ReAct Finish] LLM finished at iteration {current_iteration}\n"
+            #         f"  Thought: {thought[:100] if thought else 'None'}...\n"
+            #     )
+            # sys.__stdout__.flush()
             return {
                 "finished": True,
                 "thought": thought,
                 "action": None,
-                "answer": parsed.get("answer", "No answer provided")
+                "answer": answer
             }
 
         action = parsed.get("action")
 
         if not action:
+            # import sys
+            # sys.__stdout__.write(
+            #     f"[ReAct No Action] LLM returned no action at iteration {current_iteration}\n"
+            #     f"  Thought: {thought[:100] if thought else 'None'}...\n"
+            # )
+            # sys.__stdout__.flush()
             return {
                 "finished": True,
                 "thought": thought or "No action generated",
@@ -573,7 +600,7 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
             }
 
         if not isinstance(action, dict):
-            print(f"│ [✗] Action is not a dict: {type(action)}")
+            print(f"│ [[X]] Action is not a dict: {type(action)}")
             return {
                 "finished": True,
                 "thought": thought,
@@ -582,7 +609,7 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
             }
 
         if "tool" not in action or "operation" not in action:
-            print(f"│ [✗] Action missing fields. Keys: {list(action.keys())}")
+            print(f"│ [[X]] Action missing fields. Keys: {list(action.keys())}")
             return {
                 "finished": True,
                 "thought": thought,
@@ -598,7 +625,7 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
         }
 
     except json.JSONDecodeError as e:
-        print(f"│ [✗] JSON 파싱 실패: {e}")
+        print(f"│ [[X]] JSON 파싱 실패: {e}")
         print(f"│ Raw content (first 500 chars): {content[:500]}")
         print(f"│ Attempted to parse: {json_str[:200] if json_str else 'None'}")
 
