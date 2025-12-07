@@ -2,7 +2,7 @@
   "servers": [
     {
       "name": "elastic",
-      "command": "uv",
+      "command": "C:\\Users\\user\\AppData\\Local\\Microsoft\\WinGet\\Links\\uv.exe",
       "args": [
         "--directory",
         "C:\\Users\\user\\Desktop\\elasticsearch-mcp-server-2.0.17",
@@ -38,11 +38,8 @@
     },
     {
       "name": "ghidra",
-      "command": "cmd",
-      "args": [
-        "/c",
-        "cd %USERPROFILE% && rmdir /s /q pyghidra_mcp_projects 2>nul & uvx pyghidra-mcp"
-      ],
+      "command": "C:\\Users\\user\\AppData\\Local\\Microsoft\\WinGet\\Links\\uvx.exe",
+      "args": ["pyghidra-mcp"],
       "env": {
         "GHIDRA_INSTALL_DIR": "C:\\Users\\user\\Desktop\\ghidra_11.3.2_PUBLIC"
       },
