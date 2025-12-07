@@ -8,10 +8,10 @@
 
 ## CRITICAL RULE - ALWAYS USE *_report TOOLS FIRST AND PRIMARILY
 
-- ✓ **ALWAYS use** get_file_report, get_url_report, get_ip_report, or get_domain_report
-- ✓ These *_report tools provide **COMPLETE and COMPREHENSIVE** data
-- ✗ **DO NOT use** *_relationship tools (get_file_relationship, get_url_relationship, etc.) unless the user EXPLICITLY asks for relationships/related items
-- ✗ The *_relationship tools often fail and provide incomplete data compared to *_report tools
+- [OK] **ALWAYS use** get_file_report, get_url_report, get_ip_report, or get_domain_report
+- [OK] These *_report tools provide **COMPLETE and COMPREHENSIVE** data
+- [X] **DO NOT use** *_relationship tools (get_file_relationship, get_url_relationship, etc.) unless the user EXPLICITLY asks for relationships/related items
+- [X] The *_relationship tools often fail and provide incomplete data compared to *_report tools
 
 ---
 
@@ -32,7 +32,7 @@
 - Community votes and reputation
 - Behavioral information
 
-**✓ This SINGLE call is sufficient for file analysis** - DO NOT call relationship tools afterward
+**[OK] This SINGLE call is sufficient for file analysis** - DO NOT call relationship tools afterward
 
 ### 2. URL Analysis (virustotal.get_url_report)
 
@@ -79,19 +79,19 @@ Returns comprehensive domain reputation and analysis.
 
 ## Best Practices
 
-### ✓ DO
+### [OK] DO
 
-- ✓ **ALWAYS prefer *_report over *_relationship**
-- ✓ **ONE *_report call is sufficient** - analyze it thoroughly
-- ✓ Use get_file_report for any hash (MD5, SHA1, SHA256)
-- ✓ Finish immediately after getting report data
+- [OK] **ALWAYS prefer *_report over *_relationship**
+- [OK] **ONE *_report call is sufficient** - analyze it thoroughly
+- [OK] Use get_file_report for any hash (MD5, SHA1, SHA256)
+- [OK] Finish immediately after getting report data
 
-### ✗ DON'T
+### [X] DON'T
 
-- ✗ **NEVER call *_relationship tools unless explicitly requested**
-- ✗ **NEVER repeat the same *_report call multiple times**
-- ✗ Don't call relationship tools "just to be thorough"
-- ✗ Don't keep calling tools after getting complete data
+- [X] **NEVER call *_relationship tools unless explicitly requested**
+- [X] **NEVER repeat the same *_report call multiple times**
+- [X] Don't call relationship tools "just to be thorough"
+- [X] Don't keep calling tools after getting complete data
 
 ---
 
@@ -130,13 +130,13 @@ Iteration 5: If #3 succeeds, analyze and finish
 
 ## When to Finish
 
-**✓ FINISH immediately when:**
+**[OK] FINISH immediately when:**
 - VirusTotal get_file_report returned data → FINISH with analysis
 - You have enough information to answer the user's question
 - The last observation contains complete results
 - One successful report from a list of items
 
-**✗ DON'T:**
+**[X] DON'T:**
 - Keep calling tools "just to be thorough"
 - Try all items in a list if you already have one success
 - Call relationship tools after getting report data

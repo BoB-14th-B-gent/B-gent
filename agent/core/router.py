@@ -145,9 +145,17 @@ def run_job(
         execution_time = time.time() - start_time
 
         completed_tasks = final_state.get("completed_tasks", [])
+
+        # # DEBUG: completed_tasks 상태 로깅
+        # sys.stderr.write(f"[DEBUG router] completed_tasks count: {len(completed_tasks)}\n")
+        # if not completed_tasks:
+        #     sys.stderr.write(f"[DEBUG router] final_state keys: {list(final_state.keys())}\n")
+
         all_results = []
         for task in completed_tasks:
             task_results = task.get("execution_results", [])
+            # task_id = task.get("task_id", "unknown")
+            # sys.stderr.write(f"[DEBUG router] Task {task_id}: {len(task_results)} execution_results\n")
             all_results.extend(task_results)
 
         results = all_results
@@ -155,6 +163,9 @@ def run_job(
         total_steps = len(results)
         success_count = sum(1 for r in results if r.get("success"))
         fail_count = total_steps - success_count
+
+        # # DEBUG: Steps 집계 결과
+        # sys.stderr.write(f"[DEBUG router] Total steps: {total_steps}, success: {success_count}, fail: {fail_count}\n")
         summary = JobSummary(
             job_id=job_id,
             user_prompt=user_prompt,
@@ -229,7 +240,7 @@ def run_job(
                 "state": initial_state
             }
 
-        # print(f"\n[✗] Error: {error_msg}")
+        # print(f"\n[[X]] Error: {error_msg}")
 
         save_agent_state(
             agent_id=job_id,

@@ -8,13 +8,13 @@
 
 ## When to Use Velociraptor
 
-**✓ USE Velociraptor for:**
+**[OK] USE Velociraptor for:**
 - Collecting artifacts from live endpoints (registry, prefetch, browser history, etc.)
 - Endpoint forensics and artifact collection
 - Live system investigation
 - Retrieving data directly from endpoints
 
-**✗ DO NOT use Velociraptor for:**
+**[X] DO NOT use Velociraptor for:**
 - Analyzing logs that are already stored in a SIEM system
 - SIEM log analysis (use Elasticsearch instead)
 - Searching existing security events

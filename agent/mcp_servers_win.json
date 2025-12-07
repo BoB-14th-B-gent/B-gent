@@ -1,0 +1,58 @@
+{
+  "servers": [
+    {
+      "name": "elastic",
+      "command": "C:\\Users\\user\\AppData\\Local\\Microsoft\\WinGet\\Links\\uv.exe",
+      "args": [
+        "--directory",
+        "C:\\Users\\user\\Desktop\\elasticsearch-mcp-server-2.0.17",
+        "run",
+        "elasticsearch-mcp-server"
+      ],
+      "env": {
+        "ELASTICSEARCH_HOSTS": "https://localhost:9200",
+        "ELASTICSEARCH_USERNAME": "elastic",
+        "ELASTICSEARCH_PASSWORD": "test123",
+        "ELASTICSEARCH_VERIFY_CERTS": "false"
+      },
+      "enabled": true
+    },
+    {
+      "name": "velociraptor",
+      "command": "C:\\Users\\user\\Desktop\\velociraptor_win\\mcp-velociraptor\\.venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\velociraptor_win\\mcp-velociraptor\\mcp_velociraptor_bridge.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "sleuthkit",
+      "command": "C:\\Users\\user\\Desktop\\sleuthkit-mcp-server\\.venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\sleuthkit-mcp-server\\sleuthkit_mcp_server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Program Files\\Sleuth Kit\\bin;%PATH%"
+      },
+      "enabled": true
+    },
+    {
+      "name": "ghidra",
+      "command": "C:\\Users\\user\\AppData\\Local\\Microsoft\\WinGet\\Links\\uvx.exe",
+      "args": ["pyghidra-mcp"],
+      "env": {
+        "GHIDRA_INSTALL_DIR": "C:\\Users\\user\\Desktop\\ghidra_11.3.2_PUBLIC"
+      },
+      "enabled": true
+    },
+    {
+      "name": "virustotal",
+      "command": "npx",
+      "args": ["@burtthecoder/mcp-virustotal"],
+      "env": {
+        "VIRUSTOTAL_API_KEY": "${VIRUSTOTAL_API_KEY}"
+      },
+      "enabled": true
+    }
+  ]
+}

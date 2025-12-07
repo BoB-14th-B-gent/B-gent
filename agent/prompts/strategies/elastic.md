@@ -119,22 +119,22 @@ If you try to use a tool that doesn't exist, you will receive an "Unknown tool" 
 ## COMMON ERRORS TO AVOID
 
 **1. Index parameter must be STRING (not array)**
-- ✗ WRONG: `"index": ["firewall-logs", "sysmon-logs"]`
-- ✓ FIX: `"index": "firewall-logs,sysmon-logs"`
+- [X] WRONG: `"index": ["firewall-logs", "sysmon-logs"]`
+- [OK] FIX: `"index": "firewall-logs,sysmon-logs"`
 
 **2. size goes OUTSIDE query (MOST COMMON ERROR!)**
-- ✗ WRONG: `{"body": {"query": {"match_all": {}, "size": 50}}}`
-- ✓ FIX: `{"body": {"query": {"match_all": {}}, "size": 50}}`
+- [X] WRONG: `{"body": {"query": {"match_all": {}, "size": 50}}}`
+- [OK] FIX: `{"body": {"query": {"match_all": {}}, "size": 50}}`
 - Error if wrong: `[match_all] malformed query, expected [END_OBJECT]`
 - **This applies to ALL queries including complex bool queries!**
 
 **3. Body must have "query" wrapper**
-- ✗ WRONG: `{"body": {"term": {"field": "value"}}}`
-- ✓ FIX: `{"body": {"query": {"term": {"field": "value"}}}}`
+- [X] WRONG: `{"body": {"term": {"field": "value"}}}`
+- [OK] FIX: `{"body": {"query": {"term": {"field": "value"}}}}`
 
 **4. Don't use forbidden parameters**
-- ✗ WRONG: Adding collapse, version, track_total_hits at params level
-- ✓ FIX: Only use "index" and "body" parameters
+- [X] WRONG: Adding collapse, version, track_total_hits at params level
+- [OK] FIX: Only use "index" and "body" parameters
 
 ---
 
@@ -218,7 +218,7 @@ If you try to use a tool that doesn't exist, you will receive an "Unknown tool" 
 
 1. **ALWAYS call list_indices first, then search_documents** - Both required!
 2. **"index" is a string** - Use `"firewall-logs,sysmon-logs"` not array
-3. **size goes OUTSIDE query** - `{"query": {...}, "size": 50}` ✓ NOT `{"query": {..., "size": 50}}` ✗
+3. **size goes OUTSIDE query** - `{"query": {...}, "size": 50}` [OK] NOT `{"query": {..., "size": 50}}` [X]
 4. **This applies to ALL queries** - Simple, complex bool, anything!
 
 ---

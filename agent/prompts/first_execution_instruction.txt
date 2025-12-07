@@ -1,0 +1,56 @@
+**[중요] 이것은 대화의 첫 번째 실행입니다.**
+
+첫 번째 실행에서는 종합적인 초기 분석을 위해 **반드시 다음 세 가지 Task를 모두 생성**해야 합니다:
+
+1. **Velociraptor** - 디스크 이미지 아티팩트 수집 (tool_hint: "velociraptor")
+   - Windows 레지스트리, 프리페치, 브라우저 히스토리, 이벤트 로그 등 포렌식 아티팩트 분석
+
+2. **Elasticsearch** - SIEM 로그 검색 및 분석 (tool_hint: "elastic")
+   - 보안 이벤트, 네트워크 트래픽, 이상 행위 탐지
+
+3. **VirusTotal** - IoC(파일 해시, IP, 도메인) 평판 조회 (tool_hint: "virustotal")
+   - 악성코드 탐지율 확인, 위협 인텔리전스 조회
+   - Velociraptor/Elasticsearch 분석 중 발견되는 의심 해시값을 동적으로 조사
+
+**Task 생성 규칙:**
+- 세 Task는 모두 **독립적으로 병렬 실행** 가능
+- Velociraptor (task_001): dependencies: []
+- Elasticsearch (task_002): dependencies: []
+- VirusTotal (task_003): dependencies: []
+
+**필수 확인사항:**
+- 반드시 3개의 Task를 생성해야 합니다
+- task_001은 Velociraptor, task_002는 Elasticsearch, task_003은 VirusTotal
+- 모든 Task의 dependencies는 빈 배열 []
+
+**예시 출력:**
+```json
+{
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "description": "Velociraptor로 디스크 이미지 아티팩트 수집 및 분석",
+      "task_type": "artifact_collection",
+      "target_files": ["Image.E01"],
+      "dependencies": [],
+      "metadata": {"tool_hint": "velociraptor", "priority": "high"}
+    },
+    {
+      "task_id": "task_002",
+      "description": "Elasticsearch에서 관련 보안 이벤트 로그 검색 및 분석",
+      "task_type": "log_collection",
+      "target_files": [],
+      "dependencies": [],
+      "metadata": {"tool_hint": "elastic", "priority": "high"}
+    },
+    {
+      "task_id": "task_003",
+      "description": "VirusTotal로 의심 파일 해시 및 IoC 평판 조회",
+      "task_type": "file_analysis",
+      "target_files": [],
+      "dependencies": [],
+      "metadata": {"tool_hint": "virustotal", "priority": "high"}
+    }
+  ]
+}
+```

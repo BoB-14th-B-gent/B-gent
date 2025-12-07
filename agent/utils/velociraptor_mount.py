@@ -340,12 +340,12 @@ def stop_velociraptor_client(process: subprocess.Popen, timeout: int = 10) -> No
     try:
         process.terminate()
         process.wait(timeout=timeout)
-        logger.info("[✓] 클라이언트 정상 종료")
+        logger.info("[OK] 클라이언트 정상 종료")
     except subprocess.TimeoutExpired:
         logger.warning("클라이언트가 종료되지 않아 강제 종료합니다")
         process.kill()
         process.wait()
-        logger.info("[✓] 클라이언트 강제 종료")
+        logger.info("[OK] 클라이언트 강제 종료")
 
 
 if __name__ == "__main__":
