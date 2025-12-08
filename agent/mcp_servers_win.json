@@ -53,6 +53,54 @@
         "VIRUSTOTAL_API_KEY": "${VIRUSTOTAL_API_KEY}"
       },
       "enabled": true
+    },
+    {
+      "name": "browser-db-parser",
+      "command": "C:\\Users\\user\\Desktop\\BrowerDBParser_MCP\\.venv-win\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\BrowerDBParser_MCP\\mcp_server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "consolehost-history",
+      "command": "C:\\Users\\user\\Desktop\\ConsoleHost_History-Parser-MCP\\.venv-win\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\ConsoleHost_History-Parser-MCP\\mcp_server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "ez-tools",
+      "command": "C:\\Users\\user\\Desktop\\EZ-tools-mcp-server\\.venv-win\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\EZ-tools-mcp-server\\EZ_tools_mcp_server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "windows-notification",
+      "command": "C:\\Users\\user\\Desktop\\Windows-Notification-Analysis-MCP-Server\\.venv-win\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\Windows-Notification-Analysis-MCP-Server\\server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "jumplist",
+      "command": "C:\\Users\\user\\Desktop\\jumplist-mcp\\.venv-win\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\jumplist-mcp\\jumplist_mcp_server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "lnk-parser",
+      "command": "C:\\Users\\user\\Desktop\\lnk_mcp_server\\.venv-win\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\lnk_mcp_server\\e01_lnk_mcp_server.py"
+      ],
+      "enabled": true
     }
   ]
 }
