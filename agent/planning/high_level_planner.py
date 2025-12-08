@@ -792,21 +792,9 @@ def generate_high_level_plan(
     if categorized_files["unknown"]:
         file_info += f"\n- 기타 파일 ({len(categorized_files['unknown'])}개, 무시됨): {', '.join(f for f in categorized_files['unknown'][:3] if f is not None)}"
 
-    # 첫 실행 여부에 따른 MCP 사용 지시
-    first_execution_instruction = ""
-    if is_first_execution:
-        try:
-            first_execution_instruction = load_prompt("first_execution_instruction.txt")
-        except FileNotFoundError:
-            first_execution_instruction = """
-**[중요] 이것은 대화의 첫 번째 실행입니다.**
-첫 번째 실행에서는 종합적인 초기 분석을 위해 반드시 다음 세 가지 Task를 함께 생성해야 합니다:
-1. **Velociraptor**를 사용한 디스크 이미지 아티팩트 수집 (tool_hint: "velociraptor")
-2. **Elasticsearch**를 사용한 로그 검색 및 분석 (tool_hint: "elastic")
-3. **VirusTotal**를 사용한 IoC 평판 조회 (tool_hint: "virustotal", dependencies: ["task_001"])
-"""
-    else:
-        # 이전 Stage AI 분석 결과를 프롬프트에 포함
+    # 이전 Stage AI 분석 결과를 프롬프트에 포함
+    additional_context = ""
+    if not is_first_execution:
         ai_context_str = ""
         if previous_context:
             ai_context_str = _format_previous_context(previous_context)
@@ -820,32 +808,16 @@ def generate_high_level_plan(
 
 → 파일 추출(SleuthKit) 시 위 디스크 이미지를 target_files에 지정하세요."""
 
-        try:
-            first_execution_instruction = format_prompt(
-                "subsequent_execution_instruction.txt",
-                available_resources=available_resources_str,
-                previous_context=ai_context_str
-            )
-        except FileNotFoundError:
-            first_execution_instruction = f"""
-**[중요] 이것은 대화의 후속 실행입니다.**
-
-**최우선: 사용자의 현재 요청을 반드시 처리하세요!**
-- 사용자가 "extract", "추출"을 요청하면 → SleuthKit Task 생성
-- 사용자가 "analyze", "분석", "디컴파일"을 요청하면 → Ghidra Task 생성
-- 사용자가 특정 파일 경로를 언급하면 → 해당 파일을 대상으로 Task 생성
-{available_resources_str}
-
-**참고용: 이전 Stage AI 분석 결과**
-아래 정보는 참고용이며, 사용자의 현재 요청이 우선입니다.
+        additional_context = f"""
+**참고: 이전 Stage AI 분석 결과**
 {ai_context_str}
-
-**주의**: 이전 AI 추천만 따르지 말고, 반드시 사용자의 현재 요청을 분석하여 Task를 생성하세요."""
+{available_resources_str}
+"""
 
     user_message = f"""사용자 요청: {user_prompt}
 
 파일 목록:{file_info if file_info else " (없음)"}
-{first_execution_instruction}
+{additional_context}
 위 정보를 바탕으로 High-level 작업 계획을 생성하세요."""
 
     messages = [
@@ -885,36 +857,18 @@ def generate_high_level_plan(
 
         tasks = _validate_and_fix_ghidra_tasks(tasks, user_prompt, file_paths)
 
-        # 첫 실행 시 필수 도구(Velociraptor, Elasticsearch, VirusTotal) 검증
-        import sys
-        sys.stderr.write(f"\n[DEBUG] is_first_execution={is_first_execution}, tasks_count={len(tasks)}\n")
-        sys.stderr.flush()
-
-        if is_first_execution:
-            sys.stderr.write(f"[DEBUG] Calling _validate_and_fix_first_execution_tasks\n")
-            sys.stderr.flush()
-            tasks = _validate_and_fix_first_execution_tasks(tasks, disk_images)
-            sys.stderr.write(f"[DEBUG] After validation: tasks_count={len(tasks)}\n")
-            sys.stderr.flush()
-
         return tasks
 
     except json.JSONDecodeError:
         tasks = _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
-        if is_first_execution:
-            tasks = _validate_and_fix_first_execution_tasks(tasks, disk_images)
         return tasks
 
     except TimeoutError:
         tasks = _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
-        if is_first_execution:
-            tasks = _validate_and_fix_first_execution_tasks(tasks, disk_images)
         return tasks
 
     except Exception:
         tasks = _generate_default_high_level_plan(user_prompt, disk_images, pe_files)
-        if is_first_execution:
-            tasks = _validate_and_fix_first_execution_tasks(tasks, disk_images)
         return tasks
 
 
@@ -1019,93 +973,6 @@ def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str,
         # print(f"  2. {task_002.task_id}: {task_002.description} (의존: {task_002.dependencies})")
 
         return result
-
-    return tasks
-
-
-def _validate_and_fix_first_execution_tasks(
-    tasks: List[HighLevelTask],
-    disk_images: List[str] = None
-) -> List[HighLevelTask]:
-    """첫 실행 시 필수 Task 검증 및 자동 추가
-
-    첫 실행에서는 Velociraptor, Elasticsearch, VirusTotal 3개 Task가 필요.
-    LLM이 일부만 생성한 경우 누락된 Task를 자동으로 추가.
-
-    Args:
-        tasks: LLM이 생성한 Task 리스트
-        disk_images: 디스크 이미지 파일 리스트
-
-    Returns:
-        List[HighLevelTask]: 검증 및 수정된 Task 리스트
-    """
-    import sys
-    sys.stderr.write(f"[DEBUG _validate] Entering with {len(tasks)} tasks\n")
-    sys.stderr.flush()
-
-    # 현재 생성된 Task의 tool_hint 확인
-    existing_tools = set()
-    for task in tasks:
-        tool_hint = task.metadata.get("tool_hint", "")
-        sys.stderr.write(f"[DEBUG _validate] Task {task.task_id}: tool_hint={tool_hint}\n")
-        sys.stderr.flush()
-        if tool_hint:
-            existing_tools.add(tool_hint)
-
-    # 필수 도구 목록
-    required_tools = {
-        "velociraptor": {
-            "description": "Velociraptor로 디스크 이미지 아티팩트 수집 및 분석",
-            "task_type": TaskType.ARTIFACT_COLLECTION,
-            "target_files": disk_images or []
-        },
-        "elastic": {
-            "description": "Elasticsearch에서 관련 보안 이벤트 로그 검색 및 분석",
-            "task_type": TaskType.LOG_COLLECTION,
-            "target_files": []
-        },
-        "virustotal": {
-            "description": "VirusTotal로 의심 파일 해시 및 IoC 평판 조회",
-            "task_type": TaskType.FILE_ANALYSIS,
-            "target_files": []
-        }
-    }
-
-    # 누락된 도구 확인 및 추가
-    missing_tools = set(required_tools.keys()) - existing_tools
-
-    if missing_tools:
-        sys.stderr.write(f"\n[!] 첫 실행 검증: 누락된 도구 감지 - {missing_tools}\n")
-        sys.stderr.write(f"    자동 추가 중...\n")
-        sys.stderr.flush()
-
-        # 현재 최대 task_id 찾기
-        max_id = 0
-        for task in tasks:
-            try:
-                task_num = int(task.task_id.split("_")[1])
-                if task_num > max_id:
-                    max_id = task_num
-            except (IndexError, ValueError):
-                pass
-
-        # 누락된 도구에 대한 Task 추가
-        for tool in sorted(missing_tools):
-            max_id += 1
-            tool_info = required_tools[tool]
-
-            new_task = HighLevelTask(
-                task_id=f"task_{max_id:03d}",
-                description=tool_info["description"],
-                task_type=tool_info["task_type"],
-                target_files=tool_info["target_files"],
-                dependencies=[],
-                metadata={"tool_hint": tool, "priority": "high"}
-            )
-            tasks.append(new_task)
-            sys.stderr.write(f"    + {new_task.task_id}: {new_task.description}\n")
-
-        sys.stderr.flush()
 
     return tasks
 
