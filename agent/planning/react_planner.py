@@ -185,15 +185,15 @@ def generate_react_thought(
 
 
 def _build_system_prompt(available_tools: List[Dict[str, Any]], observations: List[Dict[str, Any]] = None, tool_hint: str = "") -> str:
-    """시스템 프롬프트 생성 (동적 전략 로딩)
+    """시스템 프롬프트 생성
 
     Args:
         available_tools: 사용 가능한 MCP 도구 목록
-        observations: 이전 관찰 결과 리스트 (사용된 도구 감지용)
-        tool_hint: 사전에 결정된 MCP 서버 힌트 (예: "elastic", "ghidra") - 첫 iteration부터 전략 로딩용
+        observations: 이전 관찰 결과 리스트
+        tool_hint: MCP 서버 힌트 (미사용, 호환성 유지)
 
     Returns:
-        완전한 시스템 프롬프트 (base + strategies + tools)
+        완전한 시스템 프롬프트 (base + tools)
     """
     tools_desc_list = []
     for tool in available_tools[:15]:
@@ -228,67 +228,10 @@ def _build_system_prompt(available_tools: List[Dict[str, Any]], observations: Li
 
     tools_desc = "\n".join(tools_desc_list) if tools_desc_list else "No tools available"
 
-    used_tools = set()
-
-    if tool_hint:
-        used_tools.add(tool_hint)
-
-    if observations:
-        for obs in observations:
-            action = obs.get("action", {})
-            tool = action.get("tool")
-            if tool:
-                used_tools.add(tool)
-
-    strategies = _load_tool_strategies(used_tools)
-
     from ..utils.prompt_loader import format_prompt
     base_prompt = format_prompt("react_think_system.txt", tools_description=tools_desc)
 
-    if strategies:
-        full_prompt = base_prompt + "\n\n" + "="*80 + "\n"
-        full_prompt += "TOOL-SPECIFIC STRATEGIES (Loaded dynamically based on your actions)\n"
-        full_prompt += "="*80 + "\n\n"
-        full_prompt += strategies
-    else:
-        full_prompt = base_prompt
-
-    return full_prompt
-
-
-def _load_tool_strategies(used_tools: set) -> str:
-    """사용된 도구의 전략 파일을 로드
-
-    Args:
-        used_tools: 사용된 도구 이름 set (예: {"elastic", "ghidra"})
-
-    Returns:
-        조합된 전략 텍스트
-    """
-    if not used_tools:
-        return ""
-
-    import os
-    strategies = []
-
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    strategies_dir = os.path.join(current_dir, "..", "prompts", "strategies")
-
-    for tool in used_tools:
-        strategy_file = os.path.join(strategies_dir, f"{tool}.md")
-
-        if os.path.exists(strategy_file):
-            try:
-                with open(strategy_file, 'r', encoding='utf-8') as f:
-                    strategy_content = f.read()
-                    strategies.append(strategy_content)
-            except Exception as e:
-                import sys
-                sys.stderr.write(f"[WARNING] Failed to load strategy for {tool}: {e}\n")
-        else:
-            pass
-
-    return "\n\n".join(strategies) if strategies else ""
+    return base_prompt
 
 
 def _build_conversation_context(

@@ -119,8 +119,7 @@ def _basic_type_validation(params: Dict[str, Any], schema: Dict[str, Any], actio
                 f"VALIDATION ERROR: Missing required parameter '{req_field}'\n\n"
                 f"Action: {action.tool}.{action.operation}\n"
                 f"Your params: {params}\n"
-                f"Required params: {required}\n\n"
-                f"See: agent/prompts/strategies/{action.tool}.md for correct schema"
+                f"Required params: {required}"
             )
 
     for param_name, param_value in params.items():
@@ -139,24 +138,21 @@ def _basic_type_validation(params: Dict[str, Any], schema: Dict[str, Any], actio
                     f"Expected: string\n"
                     f"Got: {type(param_value).__name__} = {param_value}\n\n"
                     f"Fix:\n"
-                    f"  WRONG: \"{param_name}\": {param_value}{example_fix}\n\n"
-                    f"See: agent/prompts/strategies/{action.tool}.md"
+                    f"  WRONG: \"{param_name}\": {param_value}{example_fix}"
                 )
             elif expected_type == 'object' and not isinstance(param_value, dict):
                 return (
                     f"TYPE ERROR: Parameter '{param_name}' must be an OBJECT (dict)\n\n"
                     f"Action: {action.tool}.{action.operation}\n"
                     f"Expected: object/dict\n"
-                    f"Got: {type(param_value).__name__}\n\n"
-                    f"See: agent/prompts/strategies/{action.tool}.md"
+                    f"Got: {type(param_value).__name__}"
                 )
             elif expected_type == 'array' and not isinstance(param_value, list):
                 return (
                     f"TYPE ERROR: Parameter '{param_name}' must be an ARRAY (list)\n\n"
                     f"Action: {action.tool}.{action.operation}\n"
                     f"Expected: array/list\n"
-                    f"Got: {type(param_value).__name__}\n\n"
-                    f"See: agent/prompts/strategies/{action.tool}.md"
+                    f"Got: {type(param_value).__name__}"
                 )
 
     return None
@@ -195,8 +191,7 @@ def _format_jsonschema_error(error: 'jsonschema.ValidationError', action: Action
         f"Common fixes:\n"
         f"  1. Check parameter types (string vs list, object vs string)\n"
         f"  2. Ensure all required fields are present\n"
-        f"  3. Remove unexpected/unsupported parameters\n\n"
-        f"See: agent/prompts/strategies/{action.tool}.md for correct examples"
+        f"  3. Remove unexpected/unsupported parameters"
     )
 
 
@@ -222,8 +217,7 @@ def _enhance_mcp_error_message(error_msg: str, action: Action) -> str:
             f"Common issues:\n"
             f"  - Wrong parameter type (e.g., list instead of string)\n"
             f"  - Missing required parameters\n"
-            f"  - Unsupported parameters\n\n"
-            f"Check: agent/prompts/strategies/{action.tool}.md for correct schema"
+            f"  - Unsupported parameters"
         )
 
     if "missing required" in error_lower or "required argument" in error_lower:
@@ -231,8 +225,7 @@ def _enhance_mcp_error_message(error_msg: str, action: Action) -> str:
             f"MISSING REQUIRED PARAMETER\n\n"
             f"Action: {action.tool}.{action.operation}\n"
             f"Your params:\n{json_module.dumps(action.params, indent=2, ensure_ascii=False)}\n\n"
-            f"Error: {error_msg}\n\n"
-            f"See: agent/prompts/strategies/{action.tool}.md for required parameters"
+            f"Error: {error_msg}"
         )
 
     if "unexpected keyword" in error_lower:
@@ -241,15 +234,13 @@ def _enhance_mcp_error_message(error_msg: str, action: Action) -> str:
             f"Action: {action.tool}.{action.operation}\n"
             f"Your params:\n{json_module.dumps(action.params, indent=2, ensure_ascii=False)}\n\n"
             f"Error: {error_msg}\n\n"
-            f"One or more parameters are not supported by this tool.\n\n"
-            f"See: agent/prompts/strategies/{action.tool}.md for supported parameters"
+            f"One or more parameters are not supported by this tool."
         )
 
     return (
         f"MCP TOOL ERROR\n\n"
         f"Action: {action.tool}.{action.operation}\n"
-        f"Error: {error_msg}\n\n"
-        f"See: agent/prompts/strategies/{action.tool}.md for usage guide"
+        f"Error: {error_msg}"
     )
 
 def execute_action(action: Action, job_id: Optional[str] = None, task_id: Optional[str] = None) -> ActionResult:
