@@ -43,12 +43,40 @@ Collect active network connections and listening ports
 
 ---
 
+## CRITICAL: client_id Workflow (MUST FOLLOW)
+
+**⚠️ ALL Velociraptor artifact tools require a `client_id` parameter.**
+
+### Step 1: Get client_id FIRST
+```json
+{
+  "tool": "velociraptor",
+  "operation": "client_info",
+  "params": {"hostname": "DESKTOP-XXXXXX"}
+}
+```
+This returns the `client_id` (e.g., "C.321a73e41bec2516")
+
+### Step 2: Use client_id in ALL subsequent calls
+```json
+{
+  "tool": "velociraptor",
+  "operation": "windows_execution_prefetch",
+  "params": {"client_id": "C.321a73e41bec2516"}
+}
+```
+
+**⚠️ NEVER call artifact tools without client_id - they will FAIL!**
+
+---
+
 ## Best Practices
 
-1. **Target specific endpoints** - Use hostname or client ID
-2. **Select appropriate artifacts** - Choose VQL artifacts based on investigation needs
-3. **Consider performance impact** - Some artifact collections are resource-intensive
-4. **Verify client connectivity** - Ensure endpoint is online before collection
+1. **ALWAYS get client_id first** - Call `client_info` before any other Velociraptor tool
+2. **Target specific endpoints** - Use hostname or client ID
+3. **Select appropriate artifacts** - Choose VQL artifacts based on investigation needs
+4. **Consider performance impact** - Some artifact collections are resource-intensive
+5. **Verify client connectivity** - Ensure endpoint is online before collection
 
 ---
 
