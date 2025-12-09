@@ -21,8 +21,6 @@ def _repair_json(json_str: str) -> str:
 
     original = json_str
 
-    # 1. 줄바꿈 문자를 이스케이프 처리 (문자열 내부의 실제 줄바꿈)
-    # JSON 문자열 값 내부의 줄바꿈을 찾아서 \\n으로 변환
     def escape_newlines_in_strings(s):
         result = []
         in_string = False
@@ -52,24 +50,19 @@ def _repair_json(json_str: str) -> str:
 
     json_str = escape_newlines_in_strings(json_str)
 
-    # 2. 컨트롤 문자 제거 (0x00-0x1F 중 \n, \r, \t 제외)
     json_str = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', json_str)
 
-    # 3. Trailing comma 수정
     json_str = re.sub(r',\s*}', '}', json_str)
     json_str = re.sub(r',\s*]', ']', json_str)
 
-    # 4. 키-값 사이 쉼표 누락 수정 ("key": "value""key2" -> "key": "value", "key2")
     json_str = re.sub(r'"\s*"\s*"', '", "', json_str)
     json_str = re.sub(r'}\s*"', '}, "', json_str)
     json_str = re.sub(r']\s*"', '], "', json_str)
     json_str = re.sub(r'(true|false|null)\s*"', r'\1, "', json_str)
     json_str = re.sub(r'(\d)\s*"', r'\1, "', json_str)
 
-    # 5. 문자열 값 뒤 쉼표 누락 ("}  " 또는 "]  " 앞의 값들)
     json_str = re.sub(r'"([^"]*)"(\s+)"', r'"\1",\2"', json_str)
 
-    # 6. 중괄호/대괄호 불균형 수정
     open_braces = json_str.count('{')
     close_braces = json_str.count('}')
     open_brackets = json_str.count('[')
@@ -80,21 +73,16 @@ def _repair_json(json_str: str) -> str:
     if open_brackets > close_brackets:
         json_str = json_str.rstrip() + ']' * (open_brackets - close_brackets)
 
-    # 7. JSON이 {로 시작하지 않으면 앞의 텍스트 제거
     first_brace = json_str.find('{')
     if first_brace > 0:
         json_str = json_str[first_brace:]
 
-    # 8. JSON 끝에 불필요한 텍스트가 있으면 제거
-    # 마지막 }를 찾아서 그 뒤의 텍스트 제거
     last_brace = json_str.rfind('}')
     if last_brace != -1 and last_brace < len(json_str) - 1:
         json_str = json_str[:last_brace + 1]
 
-    # 9. 이중 쉼표 수정
     json_str = re.sub(r',\s*,', ',', json_str)
 
-    # 10. 콜론 뒤 쉼표 수정 (빈 값인 경우)
     json_str = re.sub(r':\s*,', ': null,', json_str)
     json_str = re.sub(r':\s*}', ': null}', json_str)
 
@@ -207,7 +195,6 @@ def _build_system_prompt(available_tools: List[Dict[str, Any]], observations: Li
     Returns:
         완전한 시스템 프롬프트 (base + strategies + tools)
     """
-    # 1. Tools description 생성
     tools_desc_list = []
     for tool in available_tools[:15]:
         server = tool['server']
@@ -226,12 +213,10 @@ def _build_system_prompt(available_tools: List[Dict[str, Any]], observations: Li
 
         param_desc = ""
         if properties:
-            # Show ALL parameters with full schema details
             import json as json_module
             schema_json = json_module.dumps(schema, ensure_ascii=False, separators=(',', ':'))
             param_desc = f"\n  Schema: {schema_json}"
         elif required_params:
-            # Fallback: show only required params if schema is incomplete
             param_list = []
             for param in required_params:
                 param_info = properties.get(param, {})
@@ -243,14 +228,11 @@ def _build_system_prompt(available_tools: List[Dict[str, Any]], observations: Li
 
     tools_desc = "\n".join(tools_desc_list) if tools_desc_list else "No tools available"
 
-    # 2. 사용된 도구 감지 (observations에서 추출 + tool_hint 활용)
     used_tools = set()
 
-    # 2-1. tool_hint가 있으면 첫 번째 iteration부터 전략 로딩
     if tool_hint:
         used_tools.add(tool_hint)
 
-    # 2-2. observations에서 실제 사용된 도구 추가
     if observations:
         for obs in observations:
             action = obs.get("action", {})
@@ -258,14 +240,11 @@ def _build_system_prompt(available_tools: List[Dict[str, Any]], observations: Li
             if tool:
                 used_tools.add(tool)
 
-    # 3. 동적으로 전략 로드
     strategies = _load_tool_strategies(used_tools)
 
-    # 4. Base prompt 로드
     from ..utils.prompt_loader import format_prompt
     base_prompt = format_prompt("react_think_system.txt", tools_description=tools_desc)
 
-    # 5. Base + Strategies 조합
     if strategies:
         full_prompt = base_prompt + "\n\n" + "="*80 + "\n"
         full_prompt += "TOOL-SPECIFIC STRATEGIES (Loaded dynamically based on your actions)\n"
@@ -292,7 +271,6 @@ def _load_tool_strategies(used_tools: set) -> str:
     import os
     strategies = []
 
-    # 전략 파일 경로
     current_dir = os.path.dirname(os.path.abspath(__file__))
     strategies_dir = os.path.join(current_dir, "..", "prompts", "strategies")
 
@@ -308,7 +286,6 @@ def _load_tool_strategies(used_tools: set) -> str:
                 import sys
                 sys.stderr.write(f"[WARNING] Failed to load strategy for {tool}: {e}\n")
         else:
-            # 전략 파일이 없으면 기본 시스템 프롬프트에 의존
             pass
 
     return "\n\n".join(strategies) if strategies else ""
@@ -333,7 +310,8 @@ def _build_conversation_context(
     user_message += f"**Task:** {task_description}\n\n"
 
     if file_paths:
-        user_message += f"**Files:** {', '.join(f for f in file_paths if f is not None)}\n\n"
+        file_list = '\n'.join(f'  - "{f}"' for f in file_paths if f is not None)
+        user_message += f"**Files (use these EXACT paths without any trailing commas or modifications):**\n{file_list}\n\n"
 
     user_message += f"**Iteration:** {current_iteration}/{max_iterations}\n\n"
 
@@ -374,7 +352,6 @@ def _build_conversation_context(
             user_message += f"- Action: {action_name}\n"
             user_message += f"- Result: {observation[:5000]}{'...' if len(observation) > 5000 else ''}\n\n"
 
-            # DEBUG: observation 확인
             if iteration == 1 and action.get('operation') == 'import_binary':
                 import sys
                 import os
@@ -450,17 +427,13 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
         json_str = content.strip()
 
     try:
-        # JSON 복구 함수 적용
         json_str = _repair_json(json_str)
 
-        # finished 필드가 없으면 추가
         if json_str and '"finished"' not in json_str:
-            # JSON 끝에 finished 필드 추가
             if json_str.rstrip().endswith('}'):
                 json_str = json_str.rstrip()[:-1] + ', "finished": false}'
                 print(f"│ [FIX] Added missing 'finished' field")
 
-        # 첫 번째 파싱 시도
         parsed = None
         parse_error = None
 
@@ -470,17 +443,13 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
             parse_error = e
             print(f"│ [!] 첫 번째 파싱 실패: {e}")
 
-            # 재시도: 더 공격적인 복구 시도
             try:
-                # 모든 줄바꿈을 공백으로 변환
                 fallback_str = ' '.join(json_str.split())
                 fallback_str = _repair_json(fallback_str)
                 parsed = json.loads(fallback_str)
                 print(f"│ [OK] 재시도 파싱 성공")
             except json.JSONDecodeError as e2:
-                # 마지막 시도: JSON 객체 재구성
                 try:
-                    # 필수 필드만 추출해서 새 JSON 생성
                     thought_match = re.search(r'"thought"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', json_str)
                     finished_match = re.search(r'"finished"\s*:\s*(true|false)', json_str, re.IGNORECASE)
                     answer_match = re.search(r'"answer"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', json_str)
@@ -562,7 +531,6 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
         if finished:
             # import sys
             answer = parsed.get("answer", "No answer provided")
-            # # LLM이 첫 iteration에서 finished=True를 반환한 경우 상세 로깅
             # if current_iteration == 1:
             #     sys.__stdout__.write(
             #         f"\n[ReAct First-Iteration Finish] LLM decided to finish immediately\n"
@@ -638,7 +606,10 @@ def _parse_llm_response(content: str, current_iteration: int, max_iterations: in
 
 
 def get_available_tools_for_task(task_description: str, file_meta: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-    """Task에 맞는 MCP 도구 검색 (RAG)
+    """Task에 맞는 MCP 도구 검색
+
+    RAG_ENABLED=true (기본값): ChromaDB 벡터 검색으로 관련 도구 검색
+    RAG_ENABLED=false: MCP 클라이언트에서 직접 모든 도구 목록 가져옴
 
     Args:
         task_description: Task 설명
@@ -647,6 +618,14 @@ def get_available_tools_for_task(task_description: str, file_meta: Dict[str, Any
     Returns:
         List[Dict]: 도구 목록
     """
+    from ..config import get_config
+    cfg = get_config()
+
+    # RAG 비활성화 시 MCP 클라이언트에서 직접 도구 가져오기
+    if not cfg.chroma.rag_enabled:
+        return _get_tools_from_mcp_client()
+
+    # RAG 활성화 시 기존 벡터 검색 사용
     candidates = query_mcp_candidates(task_description, file_meta, top_k=10)
 
     tools = []
@@ -662,3 +641,51 @@ def get_available_tools_for_task(task_description: str, file_meta: Dict[str, Any
             })
 
     return tools
+
+
+def _get_tools_from_mcp_client() -> List[Dict[str, Any]]:
+    """MCP 클라이언트에서 직접 모든 도구 목록 가져오기 (RAG 비활성화 시 사용)
+
+    Returns:
+        List[Dict]: 도구 목록 (server, tool_name, description, input_schema)
+    """
+    import sys
+    from ..config import get_config
+    from ..mcp_client.lazy_loader import get_mcp_clients_for_servers
+
+    cfg = get_config()
+
+    if not cfg.mcp.enabled:
+        print("[!]  MCP가 비활성화되어 있습니다.")
+        return []
+
+    enabled_servers = [srv.name for srv in cfg.mcp.servers if srv.enabled]
+
+    if not enabled_servers:
+        print("[!]  활성화된 MCP 서버가 없습니다.")
+        return []
+
+    try:
+        client = get_mcp_clients_for_servers(enabled_servers)
+        all_tools = client.get_all_tools()
+
+        tools = []
+        for tool in all_tools:
+            tools.append({
+                "server": tool.get("server", ""),
+                "tool_name": tool.get("name", ""),
+                "description": tool.get("description", ""),
+                "input_schema": tool.get("input_schema", {})
+            })
+
+        sys.__stdout__.write(f"│ [MCP Direct] {len(tools)}개 도구 로드 (RAG 비활성화)\n")
+        sys.__stdout__.flush()
+
+        return tools
+
+    except Exception as e:
+        import traceback
+        sys.__stderr__.write(f"│ [!] MCP 도구 로드 실패: {e}\n")
+        sys.__stderr__.write(traceback.format_exc())
+        sys.__stderr__.flush()
+        return []

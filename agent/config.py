@@ -67,8 +67,11 @@ class ChromaConfig:
 
     Attributes:
         dir: ChromaDB 데이터 저장 디렉터리 경로
+        rag_enabled: RAG(벡터 검색) 활성화 여부
+                     False면 MCP 클라이언트에서 직접 도구 목록을 가져옴
     """
     dir: str = "./data/chroma"
+    rag_enabled: bool = True
 
 @dataclass
 
@@ -232,7 +235,11 @@ def get_config() -> AppConfig:
     chroma_dir = os.getenv("CHROMA_DIR", "./data/chroma")
     if not os.path.isabs(chroma_dir):
         chroma_dir = os.path.normpath(os.path.join(PROJECT_ROOT, chroma_dir))
-    chroma = ChromaConfig(dir=chroma_dir)
+
+    # RAG_ENABLED 환경 변수로 RAG 활성화 여부 결정 (기본값: true)
+    # false로 설정하면 MCP 클라이언트에서 직접 도구 목록을 가져옴
+    rag_enabled = os.getenv("RAG_ENABLED", "true").lower() == "true"
+    chroma = ChromaConfig(dir=chroma_dir, rag_enabled=rag_enabled)
     profile = os.getenv("LLM_PROFILE", "local").lower()
 
     if profile == "gpu":
@@ -270,7 +277,6 @@ def get_config() -> AppConfig:
     mcp_servers = []
 
     if mcp_enabled:
-        # OS에 따라 기본 MCP 설정 파일 선택 (Windows: mcp_servers_win.json, Linux/WSL: mcp_servers.json)
         import sys
         if sys.platform == "win32":
             default_mcp_config = "mcp_servers_win.json"
