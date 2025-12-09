@@ -34,7 +34,7 @@
       "env": {
         "PATH": "/usr/bin:/usr/local/bin:/bin"
       },
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "ghidra",
@@ -103,6 +103,23 @@
       "args": [
         "/mnt/c/Users/user/Desktop/lnk_mcp_server/e01_lnk_mcp_server.py"
       ],
+      "enabled": true
+    },
+    {
+      "name": "dissect",
+      "command": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/.venv/bin/python",
+      "args": [
+        "/mnt/c/Users/user/Desktop/Dissect-mcp-server/dissect_mcp_server.py"
+      ],
+      "env": {
+        "DISSECT_TARGET_QUERY": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/.venv/bin/target-query",
+        "DISSECT_RDUMP": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/.venv/bin/rdump",
+        "DISSECT_TARGET_FS": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/.venv/bin/target-fs",
+        "DISSECT_ACQUIRE_BIN": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/.venv/bin/acquire",
+        "DISSECT_ACQUIRE_DIR": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/acquire_output",
+        "DISSECT_EXTRACT_DIR": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/dissect_extracts",
+        "PATH": "/usr/bin:/usr/local/bin:/bin"
+      },
       "enabled": true
     }
   ]
