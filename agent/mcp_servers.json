@@ -34,7 +34,7 @@
       "env": {
         "PATH": "/usr/bin:/usr/local/bin:/bin"
       },
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "ghidra",
@@ -54,6 +54,71 @@
       "args": ["@burtthecoder/mcp-virustotal"],
       "env": {
         "VIRUSTOTAL_API_KEY": "${VIRUSTOTAL_API_KEY}"
+      },
+      "enabled": true
+    },
+    {
+      "name": "browser-db-parser",
+      "command": "/mnt/c/Users/user/Desktop/BrowerDBParser_MCP/.venv/bin/python",
+      "args": [
+        "/mnt/c/Users/user/Desktop/BrowerDBParser_MCP/mcp_server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "consolehost-history",
+      "command": "/mnt/c/Users/user/Desktop/ConsoleHost_History-Parser-MCP/.venv/bin/python",
+      "args": [
+        "/mnt/c/Users/user/Desktop/ConsoleHost_History-Parser-MCP/mcp_server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "ez-tools",
+      "command": "/mnt/c/Users/user/Desktop/EZ-tools-mcp-server/.venv/bin/python",
+      "args": [
+        "/mnt/c/Users/user/Desktop/EZ-tools-mcp-server/EZ_tools_mcp_server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "windows-notification",
+      "command": "/mnt/c/Users/user/Desktop/Windows-Notification-Analysis-MCP-Server/.venv/bin/python",
+      "args": [
+        "/mnt/c/Users/user/Desktop/Windows-Notification-Analysis-MCP-Server/server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "jumplist",
+      "command": "/mnt/c/Users/user/Desktop/jumplist-mcp/.venv/bin/python",
+      "args": [
+        "/mnt/c/Users/user/Desktop/jumplist-mcp/jumplist_mcp_server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "lnk-parser",
+      "command": "/mnt/c/Users/user/Desktop/lnk_mcp_server/.venv/bin/python",
+      "args": [
+        "/mnt/c/Users/user/Desktop/lnk_mcp_server/e01_lnk_mcp_server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "dissect",
+      "command": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/.venv/bin/python",
+      "args": [
+        "/mnt/c/Users/user/Desktop/Dissect-mcp-server/dissect_mcp_server.py"
+      ],
+      "env": {
+        "DISSECT_TARGET_QUERY": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/.venv/bin/target-query",
+        "DISSECT_RDUMP": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/.venv/bin/rdump",
+        "DISSECT_TARGET_FS": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/.venv/bin/target-fs",
+        "DISSECT_ACQUIRE_BIN": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/.venv/bin/acquire",
+        "DISSECT_ACQUIRE_DIR": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/acquire_output",
+        "DISSECT_EXTRACT_DIR": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/dissect_extracts",
+        "PATH": "/usr/bin:/usr/local/bin:/bin"
       },
       "enabled": true
     }

@@ -53,6 +53,75 @@
         "VIRUSTOTAL_API_KEY": "${VIRUSTOTAL_API_KEY}"
       },
       "enabled": true
+    },
+    {
+      "name": "browser-db-parser",
+      "command": "C:\\Users\\user\\Desktop\\BrowerDBParser_MCP\\.venv-win\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\BrowerDBParser_MCP\\mcp_server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "consolehost-history",
+      "command": "C:\\Users\\user\\Desktop\\ConsoleHost_History-Parser-MCP\\.venv-win\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\ConsoleHost_History-Parser-MCP\\mcp_server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "ez-tools",
+      "command": "C:\\Users\\user\\Desktop\\EZ-tools-mcp-server\\.venv-win\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\EZ-tools-mcp-server\\EZ_tools_mcp_server.py"
+      ],
+      "env": {
+        "PECMD_EXE": "C:\\Users\\user\\Desktop\\EZ-tools-mcp-server\\tools\\PECmd.exe",
+        "EVTX_EXE": "C:\\Users\\user\\Desktop\\EZ-tools-mcp-server\\tools\\EvtxeCmd\\EvtxECmd.exe",
+        "RECMD_EXE": "C:\\Users\\user\\Desktop\\EZ-tools-mcp-server\\tools\\RECmd\\RECmd.exe"
+      },
+      "enabled": true
+    },
+    {
+      "name": "windows-notification",
+      "command": "C:\\Users\\user\\Desktop\\Windows-Notification-Analysis-MCP-Server\\.venv-win\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\Windows-Notification-Analysis-MCP-Server\\server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "jumplist",
+      "command": "C:\\Users\\user\\Desktop\\jumplist-mcp\\.venv-win\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\jumplist-mcp\\jumplist_mcp_server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "lnk-parser",
+      "command": "C:\\Users\\user\\Desktop\\lnk_mcp_server\\.venv-win\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\lnk_mcp_server\\e01_lnk_mcp_server.py"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "dissect",
+      "command": "C:\\Users\\user\\Desktop\\Dissect-mcp-server\\.venv-win\\Scripts\\python.exe",
+      "args": [
+        "C:\\Users\\user\\Desktop\\Dissect-mcp-server\\dissect_mcp_server.py"
+      ],
+      "env": {
+        "DISSECT_TARGET_QUERY": "C:\\Users\\user\\Desktop\\Dissect-mcp-server\\.venv-win\\Scripts\\target-query.exe",
+        "DISSECT_RDUMP": "C:\\Users\\user\\Desktop\\Dissect-mcp-server\\.venv-win\\Scripts\\rdump.exe",
+        "DISSECT_TARGET_FS": "C:\\Users\\user\\Desktop\\Dissect-mcp-server\\.venv-win\\Scripts\\target-fs.exe",
+        "DISSECT_ACQUIRE_BIN": "C:\\Users\\user\\Desktop\\Dissect-mcp-server\\.venv-win\\Scripts\\acquire.exe",
+        "DISSECT_ACQUIRE_DIR": "C:\\Users\\user\\Desktop\\Dissect-mcp-server\\acquire_output",
+        "DISSECT_EXTRACT_DIR": "C:\\Users\\user\\Desktop\\Dissect-mcp-server\\dissect_extracts"
+      },
+      "enabled": true
     }
   ]
 }

@@ -8,14 +8,83 @@ from __future__ import annotations
 from typing import List, Dict, Any, Optional
 import json
 import os
+import sys
 from ..schemas.task import HighLevelTask, TaskType
 from ..llm_client.client import LLMClient
 from ..utils.prompt_loader import load_prompt, format_prompt
 
 
-# =============================================================================
-# MCP 추천 관련 (Stage 완료 시 다음 MCP 추천)
-# =============================================================================
+def _get_available_mcp_tools() -> List[Dict[str, Any]]:
+    """MCP 클라이언트에서 동적으로 사용 가능한 도구 목록 가져오기
+
+    Returns:
+        List[Dict]: 도구 목록 (server, tool_name, description)
+    """
+    from ..config import get_config
+    from ..mcp_client.lazy_loader import get_mcp_clients_for_servers
+
+    cfg = get_config()
+
+    if not cfg.mcp.enabled:
+        return []
+
+    enabled_servers = [srv.name for srv in cfg.mcp.servers if srv.enabled]
+
+    if not enabled_servers:
+        return []
+
+    try:
+        client = get_mcp_clients_for_servers(enabled_servers)
+        all_tools = client.get_all_tools()
+
+        tools = []
+        for tool in all_tools:
+            tools.append({
+                "server": tool.get("server", ""),
+                "tool_name": tool.get("name", ""),
+                "description": tool.get("description", ""),
+            })
+
+        return tools
+
+    except Exception as e:
+        sys.stderr.write(f"[WARNING] MCP 도구 로드 실패: {e}\n")
+        return []
+
+
+def _format_mcp_tools_for_prompt(tools: List[Dict[str, Any]]) -> str:
+    """MCP 도구 목록을 프롬프트용 문자열로 변환
+
+    Args:
+        tools: MCP 도구 목록
+
+    Returns:
+        str: 서버별로 그룹화된 도구 설명 문자열
+    """
+    if not tools:
+        return "No MCP tools available."
+
+    servers = {}
+    for tool in tools:
+        server = tool.get("server", "unknown")
+        if server not in servers:
+            servers[server] = []
+        servers[server].append(tool)
+
+    parts = []
+    for server, server_tools in sorted(servers.items()):
+        parts.append(f"\n**{server}** (MCP Server):")
+        for tool in server_tools[:5]:
+            name = tool.get("tool_name", "")
+            desc = tool.get("description", "No description")
+            if len(desc) > 150:
+                desc = desc[:150] + "..."
+            parts.append(f"  - {name}: {desc}")
+        if len(server_tools) > 5:
+            parts.append(f"  - ... and {len(server_tools) - 5} more tools")
+
+    return "\n".join(parts)
+
 
 MCP_DESCRIPTIONS = {
     "velociraptor": {
@@ -235,11 +304,6 @@ def _format_mcp_descriptions(available_mcps: List[str]) -> str:
     return "\n".join(parts)
 
 
-# =============================================================================
-# High-Level Planning (Stage 시작 시 Task 계획 생성)
-# =============================================================================
-
-
 def _format_previous_context(previous_context: Dict[str, Any]) -> str:
     """이전 Stage AI 분석 결과를 프롬프트용 문자열로 변환
 
@@ -258,7 +322,6 @@ def _format_previous_context(previous_context: Dict[str, Any]) -> str:
     if not stage_results:
         return ""
 
-    # 모든 Stage의 분석 결과 수집
     all_suspicious_iocs = []
     all_vt_results = {}
     latest_recommendations = None
@@ -266,7 +329,6 @@ def _format_previous_context(previous_context: Dict[str, Any]) -> str:
     for stage_id in sorted(stage_results.keys(), key=int):
         stage_data = stage_results[stage_id]
 
-        # IoC 분석 결과
         ioc_analysis = stage_data.get("ioc_analysis", {})
         suspicious_iocs = ioc_analysis.get("suspicious_iocs", [])
         all_suspicious_iocs.extend(suspicious_iocs)
@@ -275,15 +337,13 @@ def _format_previous_context(previous_context: Dict[str, Any]) -> str:
         if vt_results:
             all_vt_results.update(vt_results)
 
-        # AI 추천 (최신 것만 사용)
         recommendations = stage_data.get("ai_recommendations", {})
         if recommendations:
             latest_recommendations = recommendations
 
-    # 1. 의심 IoC 목록
     if all_suspicious_iocs:
         parts.append("\n1. 발견된 의심 IoC:")
-        for ioc in all_suspicious_iocs[:10]:  # 최대 10개
+        for ioc in all_suspicious_iocs[:10]:
             ioc_type = ioc.get("type", "unknown")
             ioc_value = ioc.get("value", "")
             ioc_context = ioc.get("context", "")
@@ -292,20 +352,17 @@ def _format_previous_context(previous_context: Dict[str, Any]) -> str:
             if ioc_context:
                 parts.append(f"     → {ioc_context} (신뢰도: {confidence})")
 
-    # 2. VirusTotal 조회 결과
     if all_vt_results:
         parts.append("\n2. VirusTotal 조회 결과:")
         raw_result = all_vt_results.get("raw_result", "")
         if raw_result:
-            # 요약만 포함 (너무 길면 truncate)
             summary = raw_result[:500] + "..." if len(raw_result) > 500 else raw_result
             parts.append(f"   {summary}")
 
-    # 3. AI 추천
     if latest_recommendations:
         parts.append("\n3. AI 추천 다음 단계:")
         recommended_mcps = latest_recommendations.get("recommended_mcps", [])
-        for rec in recommended_mcps[:5]:  # 최대 5개
+        for rec in recommended_mcps[:5]:
             if isinstance(rec, dict):
                 mcp = rec.get("mcp", "")
                 reason = rec.get("reason", "")
@@ -786,25 +843,27 @@ def generate_high_level_plan(
 
     file_info = ""
     if disk_images:
-        file_info += f"\n- 디스크 이미지 ({len(disk_images)}개): {', '.join(f for f in disk_images if f is not None)}"
+        disk_list = '\n'.join(f'    - "{f}"' for f in disk_images if f is not None)
+        file_info += f"\n- 디스크 이미지 ({len(disk_images)}개, use EXACT paths below):\n{disk_list}"
     if pe_files:
-        file_info += f"\n- PE 파일 ({len(pe_files)}개): {', '.join(f for f in pe_files if f is not None)}"
+        pe_list = '\n'.join(f'    - "{f}"' for f in pe_files if f is not None)
+        file_info += f"\n- PE 파일 ({len(pe_files)}개, use EXACT paths below):\n{pe_list}"
     if categorized_files["unknown"]:
-        file_info += f"\n- 기타 파일 ({len(categorized_files['unknown'])}개, 무시됨): {', '.join(f for f in categorized_files['unknown'][:3] if f is not None)}"
+        unknown_list = '\n'.join(f'    - "{f}"' for f in categorized_files['unknown'][:3] if f is not None)
+        file_info += f"\n- 기타 파일 ({len(categorized_files['unknown'])}개, 무시됨):\n{unknown_list}"
 
-    # 이전 Stage AI 분석 결과를 프롬프트에 포함
     additional_context = ""
     if not is_first_execution:
         ai_context_str = ""
         if previous_context:
             ai_context_str = _format_previous_context(previous_context)
 
-        # 사용 가능한 리소스 정보 추가
         available_resources_str = ""
         if disk_images:
+            disk_resources = chr(10).join(f'- "{img}"' for img in disk_images)
             available_resources_str = f"""
-**사용 가능한 디스크 이미지:**
-{chr(10).join(f'- {img}' for img in disk_images)}
+**사용 가능한 디스크 이미지 (use EXACT paths without trailing commas):**
+{disk_resources}
 
 → 파일 추출(SleuthKit) 시 위 디스크 이미지를 target_files에 지정하세요."""
 
@@ -814,11 +873,22 @@ def generate_high_level_plan(
 {available_resources_str}
 """
 
+    available_tools = _get_available_mcp_tools()
+    tools_description = _format_mcp_tools_for_prompt(available_tools)
+
+    available_servers = list(set(t.get("server", "") for t in available_tools if t.get("server")))
+
     user_message = f"""사용자 요청: {user_prompt}
 
 파일 목록:{file_info if file_info else " (없음)"}
+
+**사용 가능한 MCP 도구:**
+{tools_description}
+
+**사용 가능한 서버 목록 (tool_hint에 사용):** {', '.join(available_servers) if available_servers else 'None'}
 {additional_context}
-위 정보를 바탕으로 High-level 작업 계획을 생성하세요."""
+위 정보와 사용 가능한 MCP 도구를 바탕으로 High-level 작업 계획을 생성하세요.
+각 task의 tool_hint는 반드시 사용 가능한 서버 목록에서 선택하세요."""
 
     messages = [
         {"role": "system", "content": system_prompt},

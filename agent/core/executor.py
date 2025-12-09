@@ -20,7 +20,35 @@ from ..constants import (
 )
 
 _ghidra_import_cache: Dict[str, bool] = {}
-_validation_error_cache: Dict[str, int] = {}  # Track validation errors by action signature
+_validation_error_cache: Dict[str, int] = {}
+
+
+def _sanitize_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    """파라미터 값에서 trailing 콤마/공백 제거
+
+    LLM이 파일 경로 등을 생성할 때 trailing 콤마나 공백이 포함되는 경우가 있음.
+    MCP 도구 호출 전에 이를 정제하여 오류 방지.
+
+    Args:
+        params: 원본 파라미터 딕셔너리
+
+    Returns:
+        Dict[str, Any]: 정제된 파라미터 딕셔너리
+    """
+    if not params:
+        return params
+
+    sanitized = {}
+    for key, value in params.items():
+        if isinstance(value, str):
+            value = value.strip().rstrip(',').strip()
+        elif isinstance(value, list):
+            value = [
+                v.strip().rstrip(',').strip() if isinstance(v, str) else v
+                for v in value
+            ]
+        sanitized[key] = value
+    return sanitized
 
 
 def _get_tool_schema(client, server_name: str, tool_name: str) -> Optional[Dict[str, Any]]:
@@ -57,14 +85,13 @@ def _validate_params_against_schema(params: Dict[str, Any], schema: Dict[str, An
         Optional[str]: 에러 메시지 (검증 실패 시), None (검증 성공 시)
     """
     if not schema:
-        return None  # 스키마 없으면 검증 생략
+        return None
 
     try:
         import jsonschema
         jsonschema.validate(params, schema)
-        return None  # 검증 성공
+        return None 
     except ImportError:
-        # jsonschema 없으면 기본 타입 검증만
         return _basic_type_validation(params, schema, action)
     except jsonschema.ValidationError as e:
         return _format_jsonschema_error(e, action, schema)
@@ -86,7 +113,6 @@ def _basic_type_validation(params: Dict[str, Any], schema: Dict[str, Any], actio
     properties = schema.get('properties', {})
     required = schema.get('required', [])
 
-    # Required 필드 확인
     for req_field in required:
         if req_field not in params:
             return (
@@ -97,7 +123,6 @@ def _basic_type_validation(params: Dict[str, Any], schema: Dict[str, Any], actio
                 f"See: agent/prompts/strategies/{action.tool}.md for correct schema"
             )
 
-    # 기본 타입 확인
     for param_name, param_value in params.items():
         if param_name in properties:
             prop_schema = properties[param_name]
@@ -150,19 +175,16 @@ def _format_jsonschema_error(error: 'jsonschema.ValidationError', action: Action
     """
     import json as json_module
 
-    # Extract error details
     field_path = ".".join(str(p) for p in error.path) if error.path else "root"
     error_msg = error.message
     validator = error.validator
 
-    # Get expected type/format from schema
     expected = ""
     if validator == "type":
         expected = f"Expected type: {error.validator_value}"
     elif validator == "required":
         expected = f"Required fields: {error.validator_value}"
 
-    # Format readable error message
     return (
         f"SCHEMA VALIDATION ERROR\n\n"
         f"Action: {action.tool}.{action.operation}\n"
@@ -191,7 +213,6 @@ def _enhance_mcp_error_message(error_msg: str, action: Action) -> str:
     import json as json_module
     error_lower = error_msg.lower()
 
-    # Pattern 1: Pydantic validation errors
     if "validation error" in error_lower or "type=" in error_lower:
         return (
             f"PARAMETER VALIDATION FAILED\n\n"
@@ -205,7 +226,6 @@ def _enhance_mcp_error_message(error_msg: str, action: Action) -> str:
             f"Check: agent/prompts/strategies/{action.tool}.md for correct schema"
         )
 
-    # Pattern 2: Missing required argument
     if "missing required" in error_lower or "required argument" in error_lower:
         return (
             f"MISSING REQUIRED PARAMETER\n\n"
@@ -215,7 +235,6 @@ def _enhance_mcp_error_message(error_msg: str, action: Action) -> str:
             f"See: agent/prompts/strategies/{action.tool}.md for required parameters"
         )
 
-    # Pattern 3: Unexpected keyword
     if "unexpected keyword" in error_lower:
         return (
             f"UNSUPPORTED PARAMETER\n\n"
@@ -226,7 +245,6 @@ def _enhance_mcp_error_message(error_msg: str, action: Action) -> str:
             f"See: agent/prompts/strategies/{action.tool}.md for supported parameters"
         )
 
-    # Default: add context
     return (
         f"MCP TOOL ERROR\n\n"
         f"Action: {action.tool}.{action.operation}\n"
@@ -277,7 +295,6 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
     timeout = action.timeout_seconds
     last_error = None
 
-    # Check for repeated validation errors
     import json as json_module
     action_signature = f"{action.tool}.{action.operation}:{json_module.dumps(action.params, sort_keys=True)}"
 
@@ -340,14 +357,12 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
                 # print(f"   실행 중: {action.tool}.{action.operation}")
                 # print(f"   이유: {action.reason}")
 
-                # PRE-VALIDATION: Check schema before MCP call (only on first attempt)
                 client = get_mcp_client_for_server(action.tool)
                 tool_schema = _get_tool_schema(client, action.tool, action.operation)
 
                 if tool_schema:
                     validation_error = _validate_params_against_schema(action.params, tool_schema, action)
                     if validation_error:
-                        # Schema validation failed BEFORE MCP call
                         return ActionResult(
                             action=action,
                             success=False,
@@ -361,7 +376,6 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
             if result.get("success"):
                 result_data = result.get("result", "")
 
-                # DEBUG: MongoDB 저장 확인
                 import sys
                 import os
                 if os.getenv("DEBUG") == "1":
@@ -440,7 +454,6 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
                 error_msg = result.get("error", "Unknown error")
                 last_error = error_msg
 
-                # Track validation errors
                 validation_errors = ['validation error', 'unexpected keyword argument', 'missing required argument',
                                     'input should be a valid', 'type=dict_type', 'type=unexpected_keyword_argument']
                 if any(err_pattern.lower() in error_msg.lower() for err_pattern in validation_errors):
@@ -451,7 +464,6 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
                         sys.__stdout__.write(f"[DEBUG] Validation error detected for {action_signature}, count: {_validation_error_cache[action_signature]}\n")
                         sys.__stdout__.flush()
 
-                    # Enhance validation error message
                     error_msg = _enhance_mcp_error_message(error_msg, action)
                     last_error = error_msg
 
@@ -549,12 +561,14 @@ def _call_mcp_tool_with_timeout(action: Action, timeout: float) -> Dict[str, Any
     """
     client = get_mcp_client_for_server(action.tool)
 
+    sanitized_params = _sanitize_params(action.params)
+
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
             client.call_tool,
             server_name=action.tool,
             tool_name=action.operation,
-            arguments=action.params,
+            arguments=sanitized_params,
             timeout=None
         )
 
@@ -580,10 +594,12 @@ def _call_mcp_tool(action: Action) -> Dict[str, Any]:
     """
     client = get_mcp_client_for_server(action.tool)
 
+    sanitized_params = _sanitize_params(action.params)
+
     return client.call_tool(
         server_name=action.tool,
         tool_name=action.operation,
-        arguments=action.params
+        arguments=sanitized_params
     )
 
 def _is_retryable_error(error_msg: str) -> bool:
@@ -627,7 +643,7 @@ def _wait_for_ghidra_analysis(
     from ..mcp_client.lazy_loader import get_mcp_client_for_server
 
     start_time = time.time()
-    wait_intervals = [2, 3, 5, 8, 10, 15, 20]  # Exponential backoff (seconds)
+    wait_intervals = [2, 3, 5, 8, 10, 15, 20]
     check_count = 0
     max_timeout = time.time() + timeout
 
