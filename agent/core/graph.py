@@ -493,15 +493,101 @@ def node_react_init(state: Dict[str, Any]) -> Dict[str, Any]:
 
     dependency_context = ""
     if task.dependencies:
-        dependency_context = "\n\n**Previous Task Results:**\n"
+        dependency_context = "\n\n**Previous Task Results (IMPORTANT - use these outputs):**\n"
         for dep_id in task.dependencies:
             for completed in completed_tasks:
                 if completed.get("task_id") == dep_id:
                     dep_desc = completed.get("description", "")
                     dep_results = completed.get("execution_results", [])
+                    react_answer = completed.get("react_answer", "")
+                    dep_tool_hint = completed.get("metadata", {}).get("tool_hint", "")
                     success_count = sum(1 for r in dep_results if r.get("success"))
-                    dependency_context += f"\n- {dep_id}: {dep_desc} ({success_count}/{len(dep_results)} successful)\n"
+
+                    dependency_context += f"\n### {dep_id}: {dep_desc}\n"
+                    dependency_context += f"- Tool: {dep_tool_hint}\n"
+                    dependency_context += f"- Status: {success_count}/{len(dep_results)} successful\n"
+
+                    # 추출된 파일 경로 파싱 (sleuthkit 결과에서)
+                    if dep_tool_hint == "sleuthkit" and react_answer:
+                        dependency_context += f"\n**Extracted Files (use these paths for analysis):**\n"
+                        # react_answer에서 파일 경로 추출 시도
+                        import re
+                        # 일반적인 추출 경로 패턴 (예: /tmp/extracted/..., ./output/...)
+                        extracted_paths = re.findall(r'(?:extracted|output|saved)[^\n]*?([/\\.][^\s\n"\']+\.[a-zA-Z0-9]+)', react_answer, re.IGNORECASE)
+                        if extracted_paths:
+                            for path in extracted_paths[:5]:  # 최대 5개
+                                dependency_context += f"  - {path}\n"
+                        else:
+                            # 경로를 찾지 못한 경우 react_answer 일부 포함
+                            answer_preview = react_answer[:500] if len(react_answer) > 500 else react_answer
+                            dependency_context += f"```\n{answer_preview}\n```\n"
+
+                    # velociraptor 아티팩트 결과에서 의심 파일 경로 추출
+                    elif dep_tool_hint == "velociraptor" and react_answer:
+                        dependency_context += f"\n**Artifact Analysis Results:**\n"
+                        # 의심 파일 경로 패턴
+                        import re
+                        suspicious_paths = re.findall(r'[A-Za-z]:\\[^\s\n"\'<>|*?]+\.[a-zA-Z0-9]{2,5}', react_answer)
+                        if suspicious_paths:
+                            unique_paths = list(set(suspicious_paths))[:10]  # 최대 10개
+                            dependency_context += f"**Suspicious file paths found (extract these using SleuthKit):**\n"
+                            for path in unique_paths:
+                                dependency_context += f"  - {path}\n"
+                        # react_answer 요약 포함
+                        answer_preview = react_answer[:800] if len(react_answer) > 800 else react_answer
+                        dependency_context += f"\n**Summary:**\n```\n{answer_preview}\n```\n"
+
+                    # 기타 도구 결과
+                    elif react_answer:
+                        answer_preview = react_answer[:500] if len(react_answer) > 500 else react_answer
+                        dependency_context += f"\n**Result:**\n```\n{answer_preview}\n```\n"
+
                     break
+
+    # depends_on_output 처리: 선행 Task에서 추출된 파일 경로를 target_files에 추가
+    depends_on_output = task.metadata.get("depends_on_output", "")
+    extracted_file_paths = []
+
+    if depends_on_output and task.dependencies:
+        for dep_id in task.dependencies:
+            for completed in completed_tasks:
+                if completed.get("task_id") == dep_id:
+                    react_answer = completed.get("react_answer", "")
+                    dep_tool_hint = completed.get("metadata", {}).get("tool_hint", "")
+
+                    if depends_on_output == "extracted_file_path" and dep_tool_hint == "sleuthkit":
+                        # SleuthKit 결과에서 추출된 파일 경로 파싱
+                        import re
+                        # 다양한 추출 경로 패턴
+                        patterns = [
+                            r'(?:extracted|output|saved|written)[^\n]*?([/\\][^\s\n"\'<>|*?]+\.[a-zA-Z0-9]+)',
+                            r'(?:File saved to|Extracted to|Output:)\s*["\']?([^\s\n"\']+)["\']?',
+                            r'(/tmp/[^\s\n"\']+)',
+                            r'(\./output/[^\s\n"\']+)',
+                        ]
+                        for pattern in patterns:
+                            paths = re.findall(pattern, react_answer, re.IGNORECASE)
+                            if paths:
+                                extracted_file_paths.extend(paths)
+                                break
+
+                    elif depends_on_output == "suspicious_file_paths" and dep_tool_hint == "velociraptor":
+                        # Velociraptor 결과에서 의심 파일 경로 파싱
+                        import re
+                        suspicious_paths = re.findall(r'[A-Za-z]:\\[^\s\n"\'<>|*?]+\.[a-zA-Z0-9]{2,5}', react_answer)
+                        if suspicious_paths:
+                            extracted_file_paths.extend(list(set(suspicious_paths))[:10])
+
+                    break
+
+    # target_files 업데이트 (추출된 파일 경로 추가)
+    if extracted_file_paths:
+        task.target_files = list(set(task.target_files + extracted_file_paths))
+        # current_task_dict도 업데이트
+        current_task_dict["target_files"] = task.target_files
+        dependency_context += f"\n**Files to analyze (from previous task):**\n"
+        for path in extracted_file_paths[:5]:
+            dependency_context += f"  - {path}\n"
 
     try:
         task_prompt = format_prompt(
@@ -1631,6 +1717,9 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
 
         task_timing.pop("start_time", None)
         task_timing.pop("exec_start", None)
+
+    # Task 상태를 'done'으로 업데이트 (의존성 해결에 필수)
+    current_task_dict["status"] = "done"
 
     completed_tasks = state.get("completed_tasks", [])
     completed_tasks.append(current_task_dict)
