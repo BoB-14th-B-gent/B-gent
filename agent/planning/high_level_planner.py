@@ -86,60 +86,6 @@ def _format_mcp_tools_for_prompt(tools: List[Dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-MCP_DESCRIPTIONS = {
-    "velociraptor": {
-        "name": "Velociraptor",
-        "description": "디스크 이미지에서 Windows 아티팩트 수집 (레지스트리, 프리페치, 브라우저 히스토리, 이벤트 로그 등)",
-        "use_cases": [
-            "Windows 포렌식 아티팩트 분석",
-            "레지스트리 분석",
-            "프로세스 실행 흔적 조사",
-            "브라우저 히스토리 분석",
-            "이벤트 로그 분석"
-        ]
-    },
-    "elasticsearch": {
-        "name": "Elasticsearch",
-        "description": "SIEM 로그 검색 및 분석",
-        "use_cases": [
-            "보안 이벤트 로그 검색",
-            "네트워크 트래픽 분석",
-            "타임라인 분석",
-            "이상 행위 탐지"
-        ]
-    },
-    "sleuthkit": {
-        "name": "SleuthKit",
-        "description": "디스크 이미지에서 특정 파일 추출",
-        "use_cases": [
-            "의심 파일 추출",
-            "삭제된 파일 복구",
-            "파일 시스템 분석",
-            "특정 경로의 파일 추출"
-        ]
-    },
-    "ghidra": {
-        "name": "Ghidra",
-        "description": "바이너리 리버스 엔지니어링 및 디컴파일",
-        "use_cases": [
-            "악성코드 분석",
-            "PE 파일 디컴파일",
-            "함수 분석",
-            "문자열 분석",
-            "Import/Export 분석"
-        ]
-    },
-    "virustotal": {
-        "name": "VirusTotal",
-        "description": "파일 해시, IP, 도메인의 악성 여부 조회",
-        "use_cases": [
-            "파일 해시 평판 조회",
-            "IP 평판 조회",
-            "도메인 평판 조회",
-            "악성코드 탐지율 확인"
-        ]
-    }
-}
 
 
 def recommend_next_mcps(
@@ -162,52 +108,24 @@ def recommend_next_mcps(
     analysis_summary = _create_analysis_summary(stage_results, ioc_analysis_results)
     mcp_descriptions_str = _format_mcp_descriptions(available_mcps)
 
-    prompt = f"""당신은 DFIR(Digital Forensics and Incident Response) 전문가입니다.
-현재 Stage의 분석 결과를 검토하고, 다음 Stage에서 사용할 MCP 도구를 추천해주세요.
+    try:
+        prompt = format_prompt(
+            "mcp_recommendation_system.txt",
+            analysis_summary=analysis_summary,
+            mcp_descriptions=mcp_descriptions_str
+        )
+    except FileNotFoundError:
+        import sys
+        sys.stderr.write("[WARNING] mcp_recommendation_system.txt not found, using inline fallback\n")
+        prompt = f"""You are a DFIR expert. Review the analysis results and recommend next MCP tools.
 
-## 현재 Stage 분석 결과
+## Analysis Results
 {analysis_summary}
 
-## 사용 가능한 MCP 도구
+## Available MCP Tools
 {mcp_descriptions_str}
 
-## 추천 규칙
-
-### MCP 선택 기준
-1. **SleuthKit**: 의심 파일의 구체적인 경로가 확인되었고, 해당 파일 추출이 필요한 경우
-2. **Ghidra**: PE 파일(exe, dll)이 추출되었거나 바이너리 분석이 필요한 경우
-3. **VirusTotal**: 추가 IoC(해시, IP, 도메인)가 발견되어 평판 조회가 필요한 경우
-4. **Elasticsearch**: 추가 로그 검색이나 타임라인 분석이 필요한 경우
-5. **Velociraptor**: 추가 아티팩트 수집이 필요한 경우
-
-### 추천하지 않아야 하는 경우
-- 이미 충분한 분석이 완료된 경우
-- 추가 분석이 불필요한 경우
-- IoC가 모두 정상으로 판명된 경우
-
-## 응답 형식 (JSON)
-```json
-{{
-    "recommended_mcps": [
-        {{
-            "mcp": "sleuthkit",
-            "reason": "C:\\Users\\hacker\\AppData\\Roaming\\malware.exe 파일 추출 필요",
-            "priority": "high",
-            "suggested_params": {{
-                "target_path": "C:\\Users\\hacker\\AppData\\Roaming\\malware.exe"
-            }},
-            "depends_on": null
-        }}
-    ],
-    "reasoning": "종합 판단 이유"
-}}
-```
-
-**중요**:
-- 구체적인 파일 경로, 해시값이 있으면 suggested_params에 포함하세요.
-- 의존성이 있는 경우 depends_on에 선행 MCP를 명시하세요.
-- 추천할 MCP가 없으면 recommended_mcps를 빈 배열로 반환하세요.
-- priority는 "high", "medium", "low" 중 하나입니다."""
+Respond in JSON format with recommended_mcps array and reasoning."""
 
     try:
         response = llm.chat(
@@ -287,19 +205,38 @@ def _create_analysis_summary(
 
 
 def _format_mcp_descriptions(available_mcps: List[str]) -> str:
-    """사용 가능한 MCP 설명 문자열 생성"""
+    """사용 가능한 MCP 설명 문자열 생성 (동적으로 MCP 서버에서 가져옴)"""
+    tools = _get_available_mcp_tools()
+
+    if not tools:
+        return "No MCP tools available."
+
+    # available_mcps에 해당하는 도구만 필터링
+    filtered_tools = [t for t in tools if t.get("server") in available_mcps]
+
+    if not filtered_tools:
+        # 필터링 결과가 없으면 모든 도구 사용
+        filtered_tools = tools
+
+    # 서버별로 그룹화
+    servers = {}
+    for tool in filtered_tools:
+        server = tool.get("server", "unknown")
+        if server not in servers:
+            servers[server] = []
+        servers[server].append(tool)
+
     parts = []
-
-    for mcp in available_mcps:
-        info = MCP_DESCRIPTIONS.get(mcp, {})
-        if info:
-            name = info.get("name", mcp)
-            description = info.get("description", "")
-            use_cases = info.get("use_cases", [])
-
-            parts.append(f"\n**{name}** ({mcp})")
-            parts.append(f"- 설명: {description}")
-            parts.append(f"- 활용: {', '.join(use_cases[:3])}")
+    for server, server_tools in sorted(servers.items()):
+        parts.append(f"\n**{server}** (MCP Server):")
+        for tool in server_tools[:5]:
+            name = tool.get("tool_name", "")
+            desc = tool.get("description", "No description")
+            if len(desc) > 100:
+                desc = desc[:100] + "..."
+            parts.append(f"  - {name}: {desc}")
+        if len(server_tools) > 5:
+            parts.append(f"  - ... and {len(server_tools) - 5} more tools")
 
     return "\n".join(parts)
 
@@ -517,328 +454,39 @@ def generate_high_level_plan(
         system_prompt = load_prompt("high_level_planning_system.txt")
     except FileNotFoundError:
         import sys
-        sys.stderr.write("[WARNING] Prompt file not found, using inline fallback\n")
-        system_prompt = """당신은 DFIR(Digital Forensics and Incident Response) 분석 전문가입니다.
-사용자의 요청과 파일 목록을 분석하여 *High-level 작업 계획*을 생성하세요.
+        sys.stderr.write("[WARNING] high_level_planning_system.txt not found, trying fallback\n")
+        try:
+            system_prompt = load_prompt("high_level_planning_fallback.txt")
+        except FileNotFoundError:
+            sys.stderr.write("[WARNING] Fallback prompt not found, using minimal inline fallback\n")
+            system_prompt = """You are a DFIR analysis expert. Create a high-level work plan.
 
-*중요: 도구 선택 우선순위*:
-1. 사용자가 "VirusTotal", "바이러스토탈", "virustotal", "vt", "SHA256", "해시" 등을 명시하거나 파일 해시 조사를 요청하면 → 무조건 tool_hint: "virustotal"
-2. 사용자가 "Ghidra"를 명시하거나, **파일이 제공된 상태에서** 바이너리/실행 파일 디컴파일, 리버스 엔지니어링, 함수 분석을 요청하면 → tool_hint: "ghidra"
-3. 사용자가 "Elasticsearch", "인덱스", "로그" 등을 명시하면 → tool_hint: "elastic"
-4. **사용자가 "디스크 이미지 분석", "아티팩트 분석", "포렌식 분석"을 요청하면 → tool_hint: "velociraptor"** (기본값)
-5. **사용자가 명시적으로 "파일 추출", "특정 파일 찾기", "파일 복사"를 요청할 때만 → tool_hint: "sleuthkit"**
+**IMPORTANT**: Select tools based on the available MCP tool descriptions provided in the user message.
+The tool_hint must be selected from the available server list.
 
-**주의: "disk image"만으로는 SleuthKit을 선택하지 마세요!**
-- "analyze disk image" → velociraptor (아티팩트 분석)
-- "extract file from disk image" → sleuthkit (파일 추출)
-- "analyze artifacts" → velociraptor (아티팩트 분석)
-
-*출력 형식* (반드시 JSON):
+Output format (JSON):
 ```json
 {
   "tasks": [
     {
       "task_id": "task_001",
-      "description": "작업 설명 (구체적으로)",
+      "description": "Task description (be specific)",
       "task_type": "log_collection | file_extract | artifact_collection | file_analysis | custom",
-      "target_files": ["파일 경로1", "파일 경로2"],
-      "dependencies": ["task_000"],
+      "target_files": ["file path"],
+      "dependencies": [],
       "metadata": {
-        "tool_hint": "elastic | sleuthkit | velociraptor | ghidra",
-        "priority": "high | medium | low",
-        "target_path": "추출할 파일 경로 (file_extract 태스크인 경우 필수)"
+        "tool_hint": "server_name_from_available_tools",
+        "priority": "high | medium | low"
       }
     }
   ]
 }
 ```
 
-*Task 생성 규칙*:
-1. *Task 설명에 구체적인 정보 포함 (매우 중요):*
-   - *사용자 요청에 파일 경로/이름/해시가 명시되어 있으면, Task 설명에도 반드시 포함*
-   - 예: "C:\\Users\\hacker\\file.exe 파일을 추출해줘" → "SleuthKit으로 C:\\Users\\hacker\\file.exe 추출"
-   - 예: "SHA256 abc123... 조사해줘" → "VirusTotal get_file_report로 SHA256 abc123... 조사"
-   - *잘못된 예*: "의심 파일(exe, dll) 추출" (너무 추상적)
-   - *잘못된 예*: "VirusTotal로 파일 해시 조사" (해시값 누락, 도구명 누락)
-   - *올바른 예*: "SleuthKit으로 C:\\Users\\hacker\\Downloads\\Report_2025.pdf.exe 추출"
-   - *올바른 예*: "VirusTotal get_file_report로 SHA256 ec5d14ca...625dfcf6 조사"
-
-2. *적절한 Task 크기 유지*:
-   - *너무 세분화하지 마세요* 하나의 도구로 처리 가능한 작업은 하나의 Task로 통합
-   - 예: "브라우저 히스토리, 레지스트리, 이벤트 로그 수집" → 1개 Task (Velociraptor 아티팩트 수집)
-   - 예외: 서로 다른 도구가 필요하거나, 명확히 순차 의존성이 있는 경우에만 분리
-
-3. *분석 대상별* Task 분리:
-   - **파일 해시 조사 (SHA256, MD5 등)** → task_type: "file_analysis", tool_hint: "virustotal"
-   - **디스크 이미지 아티팩트 분석** → task_type: "artifact_collection", tool_hint: "velociraptor" (기본값)
-   - **디스크 이미지에서 특정 파일 추출** → task_type: "file_extract", tool_hint: "sleuthkit" (명시적 요청 시에만)
-   - PE 파일 디컴파일/리버스 엔지니어링 → task_type: "file_analysis", tool_hint: "ghidra"
-   - 로그 수집/검색/분석 → task_type: "log_collection", tool_hint: "elastic"
-
-4. *도구별* tool_hint 필수 지정:
-   - **VirusTotal** (파일 해시 조사, 악성코드 분석, 평판 조회) → tool_hint: "virustotal"
-   - **Velociraptor** (아티팩트 수집, 디스크 이미지 분석, 레지스트리/프리페치/브라우저 히스토리 등) → tool_hint: "velociraptor" *기본값*
-   - **SleuthKit** (특정 파일 추출만) → tool_hint: "sleuthkit" *명시적 요청 시에만*
-   - Elasticsearch (로그 수집/검색/분석) → tool_hint: "elastic"
-   - Ghidra (바이너리 리버스 엔지니어링, 디컴파일) → tool_hint: "ghidra"
-   - tool_hint를 반드시 지정하세요. 없으면 도구 검색이 실패할 수 있습니다.
-
-5. *의존성 설정*:
-   - 이전 Task의 결과가 *반드시* 필요한 경우에만 dependencies에 추가
-   - 예: 파일 추출(task_001) → PE 분석(task_002) → 로그 검색(task_003)
-   - 독립적인 Task는 dependencies: []
-
-*MCP 도구 제약사항*:
-- 디스크 이미지: .e01, .dd, .raw, .img만 지원 (SleuthKit 사용)
-- PE 파일: .exe, .dll, .sys만 지원
-- 로그 파일: 전처리기가 처리하므로 무시
-- **Elasticsearch (elastic): READ-ONLY MODE** - create, delete, update, insert, modify 등 쓰기 작업 금지. 오직 search, query, get, list, count 등 읽기 작업만 허용
-
-*예시 1* (구체적인 파일 경로 포함):
-입력: "디스크 이미지에서 C:\\Users\\hacker\\Downloads\\Report_2025.pdf.exe 파일을 추출해줘"
-출력:
-```json
-{
-  "tasks": [
-    {
-      "task_id": "task_001",
-      "description": "SleuthKit으로 C:\\Users\\hacker\\Downloads\\Report_2025.pdf.exe 추출",
-      "task_type": "file_extract",
-      "target_files": ["data/Image.E01"],
-      "dependencies": [],
-      "metadata": {
-        "tool_hint": "sleuthkit",
-        "priority": "high",
-        "target_path": "C:\\Users\\hacker\\Downloads\\Report_2025.pdf.exe"
-      }
-    }
-  ]
-}
-```
-
-*예시 1-2* (디스크 이미지 아티팩트 분석 - Velociraptor 기본값):
-입력: "디스크 이미지에서 악성 행위 분석"
-입력: "디스크 이미지 아티팩트 분석"
-입력: "analyze disk image"
-출력:
-```json
-{
-  "tasks": [
-    {
-      "task_id": "task_001",
-      "description": "Velociraptor로 디스크 이미지 아티팩트 수집 (레지스트리, 프리페치, 브라우저 히스토리 등)",
-      "task_type": "artifact_collection",
-      "target_files": ["data/Image.E01"],
-      "dependencies": [],
-      "metadata": {"tool_hint": "velociraptor", "priority": "high"}
-    }
-  ]
-}
-```
-
-*예시 1-3* (명시적 파일 추출 요청 - SleuthKit):
-입력: "디스크 이미지에서 C:\\Users\\hacker\\suspicious.exe 파일을 추출해줘"
-출력:
-```json
-{
-  "tasks": [
-    {
-      "task_id": "task_001",
-      "description": "SleuthKit으로 디스크 이미지에서 C:\\Users\\hacker\\suspicious.exe 파일 추출",
-      "task_type": "file_extract",
-      "target_files": ["data/Image.E01"],
-      "dependencies": [],
-      "metadata": {
-        "tool_hint": "sleuthkit",
-        "priority": "high",
-        "target_path": "C:\\Users\\hacker\\suspicious.exe"
-      }
-    }
-  ]
-}
-```
-
-*예시 2* (Task 통합 - 같은 도구 사용):
-입력: "디스크 이미지에서 브라우저 히스토리, 레지스트리, 이벤트 로그를 포함해서 기본적인 포렌식 아티팩트를 수집해줘"
-���력:
-```json
-{
-  "tasks": [
-    {
-      "task_id": "task_001",
-      "description": "Velociraptor로 브라우저 히스토리, 레지스트리, 이벤트 로그 등 기본 포렌식 아티팩트 수집",
-      "task_type": "artifact_collection",
-      "target_files": ["data/Image.E01"],
-      "dependencies": [],
-      "metadata": {"tool_hint": "velociraptor", "priority": "high"}
-    }
-  ]
-}
-```
-
-*예시 3*:
-입력: "elasticsearch에서 인덱스 목록을 조회해준 후에, 최근 데이터 10개에 대해 분석해줘"
-출력:
-```json
-{
-  "tasks": [
-    {
-      "task_id": "task_001",
-      "description": "Elasticsearch 인덱스 목록 조회",
-      "task_type": "log_collection",
-      "target_files": [],
-      "dependencies": [],
-      "metadata": {"tool_hint": "elastic", "priority": "high"}
-    },
-    {
-      "task_id": "task_002",
-      "description": "Elasticsearch에서 최근 10개 데이터 분석",
-      "task_type": "log_collection",
-      "target_files": [],
-      "dependencies": ["task_001"],
-      "metadata": {"tool_hint": "elastic", "priority": "high"}
-    }
-  ]
-}
-```
-
-*예시 4* (VirusTotal 파일 해시 조사):
-입력: "virustotal mcp를 사용하여 SHA256 ec5d14ca011ba8c12f4d51b0d463cf51051feaf1655c7f709dce3ffa625dfcf6인 바이너리에 대해서 조사해줘"
-입력: "이 파일의 SHA256 해시를 VirusTotal에서 조회해줘"
-출력:
-```json
-{
-  "tasks": [
-    {
-      "task_id": "task_001",
-      "description": "VirusTotal로 파일 해시 조사 (SHA256: ec5d14ca011ba8c12f4d51b0d463cf51051feaf1655c7f709dce3ffa625dfcf6)",
-      "task_type": "file_analysis",
-      "target_files": [],
-      "dependencies": [],
-      "metadata": {"tool_hint": "virustotal", "priority": "high", "file_hash": "ec5d14ca011ba8c12f4d51b0d463cf51051feaf1655c7f709dce3ffa625dfcf6"}
-    }
-  ]
-}
-```
-
-*예시 5* (VirusTotal 파일 해시 조사 - **가장 간단하고 효율적**):
-입력: "SHA256 ec5d14ca011ba8c12f4d51b0d463cf51051feaf1655c7f709dce3ffa625dfcf6 조사해줘"
-입력: "virustotal로 해시 abc123... 분석"
-출력:
-```json
-{
-  "tasks": [
-    {
-      "task_id": "task_001",
-      "description": "VirusTotal get_file_report로 SHA256 ec5d14ca011ba8c12f4d51b0d463cf51051feaf1655c7f709dce3ffa625dfcf6 조사",
-      "task_type": "file_analysis",
-      "target_files": [],
-      "dependencies": [],
-      "metadata": {"tool_hint": "virustotal", "priority": "high"}
-    }
-  ]
-}
-```
-*중요*: Task 설명에 **실제 해시값과 도구명(get_file_report)**을 반드시 포함하세요!
-
-*예시 6* (바이너리 리버스 엔지니어링):
-입력: "Ghidra로 suspicious.exe의 main 함수를 디컴파일해줘"
-출력:
-```json
-{
-  "tasks": [
-    {
-      "task_id": "task_001",
-      "description": "Ghidra로 suspicious.exe의 main 함수 디컴파일",
-      "task_type": "file_analysis",
-      "target_files": ["suspicious.exe"],
-      "dependencies": [],
-      "metadata": {"tool_hint": "ghidra", "priority": "high"}
-    }
-  ]
-}
-```
-
-*예시 7* (Ghidra 바이너리 분석 - **최소 2단계, 복잡한 경우 3단계 이상**):
-
-**간단한 분석 요청 (2-Task)**:
-입력: "Ghidra로 바이너리를 분석해줘"
-입력: "실행 파일 디컴파일"
-
-출력:
-```json
-{
-  "tasks": [
-    {
-      "task_id": "task_001",
-      "description": "Ghidra로 바이너리 메타데이터 수집 (함수 목록, Import/Export, 세그먼트, 문자열)",
-      "task_type": "file_analysis",
-      "target_files": [],
-      "dependencies": [],
-      "metadata": {"tool_hint": "ghidra", "priority": "high", "analysis_phase": "metadata"}
-    },
-    {
-      "task_id": "task_002",
-      "description": "Ghidra로 주요 함수 디컴파일 (entry, main, 핵심 로직)",
-      "task_type": "file_analysis",
-      "target_files": [],
-      "dependencies": ["task_001"],
-      "metadata": {"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
-    }
-  ]
-}
-```
-
-**복잡한 분석 요청 (3-Task 이상)**:
-입력: "Ghidra로 사용자에게 숫자를 받아 정해진 방법으로 입력값을 검증하여 correct 또는 wrong을 출력하는 프로그램을 분석하고 있어"
-입력: "바이너리에서 'Correct!' 문자열을 참조하는 함수를 찾고, entry부터 해당 함수까지의 호출 체인을 분석해줘"
-
-출력:
-```json
-{
-  "tasks": [
-    {
-      "task_id": "task_001",
-      "description": "Ghidra로 바이너리 메타데이터 수집 (함수 목록, Import/Export, 세그먼트, 문자열)",
-      "task_type": "file_analysis",
-      "target_files": [],
-      "dependencies": [],
-      "metadata": {"tool_hint": "ghidra", "priority": "high", "analysis_phase": "metadata"}
-    },
-    {
-      "task_id": "task_002",
-      "description": "Ghidra로 entry 함수 디컴파일하여 호출하는 함수 확인",
-      "task_type": "file_analysis",
-      "target_files": [],
-      "dependencies": ["task_001"],
-      "metadata": {"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
-    },
-    {
-      "task_id": "task_003",
-      "description": "Ghidra로 entry가 호출하는 주요 함수들 디컴파일 (call chain 추적)",
-      "task_type": "file_analysis",
-      "target_files": [],
-      "dependencies": ["task_002"],
-      "metadata": {"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
-    }
-  ]
-}
-```
-
-*Ghidra Task 생성 규칙*:
-1. **첫 번째 Task는 항상 "metadata" 수집**: 함수 목록, 문자열, Import/Export 등
-2. **분석 복잡도에 따라 Task 개수 결정**:
-   - *간단*: "바이너리 분석", "파일 디컴파일" → 2개 Task (metadata + decompile)
-   - *복잡*: "특정 문자열 찾기", "호출 체인 분석", "검증 로직 찾기" → 3개 이상 Task
-3. **복잡한 경우 Task 분리 예시**:
-   - Task 1: 메타데이터 수집 (전체 함수 목록, 문자열 목록)
-   - Task 2: entry 함수 디컴파일 (어떤 함수를 호출하는지 파악)
-   - Task 3: entry가 호출하는 함수들 디컴파일 (실제 로직 분석)
-   - Task 4 (선택): 특정 조건 검증 (필요시)
-4. **analysis_phase**:
-   - 첫 번째 Task: "metadata"
-   - 나머지 Task: "decompile"
-5. **dependencies**: 각 Task는 이전 Task의 결과를 활용하므로 순차적 의존성 설정
+Rules:
+1. Include specific file paths, names, or hashes from user request in task description
+2. tool_hint must be selected from the available server list provided in user message
+3. Set dependencies only when previous task result is strictly required
 """
 
     file_info = ""
