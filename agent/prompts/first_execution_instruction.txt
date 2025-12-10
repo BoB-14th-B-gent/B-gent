@@ -1,20 +1,6 @@
 **[참고] 이것은 대화의 첫 번째 실행입니다.**
 
-사용자의 요청에 따라 적절한 Task를 생성하세요. 사용 가능한 도구들:
-
-- **Velociraptor** - 디스크 이미지 아티팩트 수집 (tool_hint: "velociraptor")
-  - Windows 레지스트리, 프리페치, 브라우저 히스토리, 이벤트 로그 등 포렌식 아티팩트 분석
-
-- **Elasticsearch** - SIEM 로그 검색 및 분석 (tool_hint: "elastic")
-  - 보안 이벤트, 네트워크 트래픽, 이상 행위 탐지
-
-- **VirusTotal** - IoC(파일 해시, IP, 도메인) 평판 조회 (tool_hint: "virustotal")
-  - 악성코드 탐지율 확인, 위협 인텔리전스 조회
-
-- **SleuthKit** - 디스크 이미지에서 파일 추출 (tool_hint: "sleuthkit")
-  - 파일 시스템 분석, 삭제된 파일 복구
-
-- **Ghidra** - 바이너리 분석 (tool_hint: "ghidra")
-  - 리버스 엔지니어링, 디컴파일
+사용자의 요청에 따라 적절한 Task를 생성하세요.
+사용 가능한 MCP 도구는 시스템에서 동적으로 제공됩니다.
 
 사용자의 요청을 분석하여 필요한 Task만 생성하세요.

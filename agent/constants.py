@@ -45,23 +45,6 @@ RETRYABLE_ERROR_PATTERNS = [
     "reset",
 ]
 
-# Velociraptor 관련 상수
-VELOCIRAPTOR_DEFAULT_ARTIFACTS = [
-    "Windows.EventLogs.EvtxHunter",
-    "Windows.System.Powershell.PSReadline",
-    "Windows.Registry.RecentDocs",
-    "Windows.Timeline.Registry",
-    "Windows.NTFS.MFT",
-    "Windows.Registry.UserAssist",
-    "Windows.Search.FileFinder",
-    "Windows.System.TaskScheduler",
-    "Windows.Persistence.PermanentWMIEvents",
-    "Windows.Registry.Sysinternals.Eulacheck",
-    "Windows.Network.NetstatEnriched",
-    "Windows.EventLogs.PowershellScriptblock",
-    "Windows.Registry.NTUser",
-]
-
 # 작업 타입 관련
 DISK_IMAGE_EXTENSIONS = [".dd", ".raw", ".img", ".e01", ".aff"]
 PE_FILE_EXTENSIONS = [".exe", ".dll", ".sys"]

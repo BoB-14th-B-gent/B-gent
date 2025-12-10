@@ -98,8 +98,7 @@ def generate_react_thought(
     available_tools: List[Dict[str, Any]],
     file_paths: List[str] = None,
     max_iterations: int = 30,
-    user_prompt: str = None,
-    tool_hint: str = ""
+    user_prompt: str = None
 ) -> Dict[str, Any]:
     """ReAct Think 단계: LLM이 다음 행동 결정
 
@@ -110,7 +109,6 @@ def generate_react_thought(
         file_paths: 파일 경로 리스트
         max_iterations: 최대 반복 횟수
         user_prompt: 원본 사용자 쿼리 (선택)
-        tool_hint: MCP 전략 힌트 (예: "elastic", "ghidra") - 첫 iteration부터 전략 로딩용
 
     Returns:
         Dict:
@@ -122,7 +120,7 @@ def generate_react_thought(
     llm = LLMClient()
     current_iteration = len(observations) + 1
 
-    system_prompt = _build_system_prompt(available_tools, observations, tool_hint)
+    system_prompt = _build_system_prompt(available_tools, observations)
 
     messages = _build_conversation_context(
         task_description,
@@ -184,13 +182,12 @@ def generate_react_thought(
         }
 
 
-def _build_system_prompt(available_tools: List[Dict[str, Any]], observations: List[Dict[str, Any]] = None, tool_hint: str = "") -> str:
+def _build_system_prompt(available_tools: List[Dict[str, Any]], observations: List[Dict[str, Any]] = None) -> str:
     """시스템 프롬프트 생성
 
     Args:
         available_tools: 사용 가능한 MCP 도구 목록
         observations: 이전 관찰 결과 리스트
-        tool_hint: MCP 서버 힌트 (미사용, 호환성 유지)
 
     Returns:
         완전한 시스템 프롬프트 (base + tools)
@@ -201,12 +198,6 @@ def _build_system_prompt(available_tools: List[Dict[str, Any]], observations: Li
         tool_name = tool['tool_name']
         desc = tool.get('description', 'No description')
         schema = tool.get('input_schema', {})
-
-        if server == 'elastic':
-            tool_lower = tool_name.lower()
-            forbidden_operations = ['create', 'delete', 'update', 'insert', 'remove', 'put', 'post', 'modify', 'write']
-            if any(op in tool_lower for op in forbidden_operations):
-                continue
 
         required_params = schema.get('required', []) if isinstance(schema, dict) else []
         properties = schema.get('properties', {}) if isinstance(schema, dict) else {}

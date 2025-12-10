@@ -71,7 +71,7 @@ You MUST select tools based on:
    * Example: file extraction (task_001) → file analysis (task_002)
    * Independent tasks should have dependencies: []
 
-*MCP tool constraints*:
+*File type constraints*:
 
 * Disk images: only .e01, .dd, .raw, .img are supported
 * PE files: only .exe, .dll, .sys are supported

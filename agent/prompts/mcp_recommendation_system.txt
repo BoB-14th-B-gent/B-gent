@@ -45,3 +45,4 @@ Review the current Stage analysis results and recommend MCP tools for the next S
 - Specify depends_on when there are dependencies between recommendations
 - Return empty recommended_mcps array if no additional analysis is needed
 - priority must be one of: "high", "medium", "low"
+- mcp server name must be selected from the available MCP tools list

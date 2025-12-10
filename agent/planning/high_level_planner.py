@@ -573,8 +573,6 @@ Rules:
             )
             tasks.append(task)
 
-        tasks = _validate_and_fix_ghidra_tasks(tasks, user_prompt, file_paths)
-
         return tasks
 
     except json.JSONDecodeError:
@@ -590,109 +588,6 @@ Rules:
         return tasks
 
 
-def _validate_and_fix_ghidra_tasks(tasks: List[HighLevelTask], user_prompt: str, file_paths: List[str] = None) -> List[HighLevelTask]:
-    """Ghidra Task 검증 및 자동 수정
-
-    LLM이 Ghidra 분석을 1개 Task로 통합한 경우 자동으로 2개로 분리
-
-    Args:
-        tasks: LLM이 생성한 Task 리스트
-        user_prompt: 사용자 요청
-        file_paths: 분석 대상 파일 경로 리스트
-
-    Returns:
-        List[HighLevelTask]: 검증 및 수정된 Task 리스트
-    """
-    import sys
-
-    prompt_lower = user_prompt.lower()
-    virustotal_keywords = ["virustotal", "바이러스토탈", "vt", "sha256", "sha1", "md5", "해시", "hash"]
-    if any(kw in prompt_lower for kw in virustotal_keywords):
-        return tasks
-
-    ghidra_keywords = ["ghidra", "바이너리", "리버스", "디컴파일", "reverse", "binary", "decompile"]
-    is_ghidra_request = any(kw in prompt_lower for kw in ghidra_keywords)
-
-    ghidra_tasks = [t for t in tasks if t.metadata.get("tool_hint") == "ghidra"]
-
-    if is_ghidra_request and not ghidra_tasks:
-        # print("\n[!]  Ghidra 요청이지만 LLM이 잘못된 도구를 선택했습니다!")
-        # print(f"   LLM 선택: {[t.metadata.get('tool_hint') for t in tasks]}")
-        # print(f"   자동 수정: Ghidra 2단계 구조로 교체")
-
-        task_001 = HighLevelTask(
-            task_id="task_001",
-            description="Ghidra로 바이너리 메타데이터 수집 (함수 목록, Import/Export, 세그먼트, 문자열)",
-            task_type=TaskType.FILE_ANALYSIS,
-            target_files=file_paths if file_paths else [],
-            dependencies=[],
-            metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "metadata"}
-        )
-
-        task_002 = HighLevelTask(
-            task_id="task_002",
-            description="Ghidra로 주요 함수 디컴파일 (entry, main, 핵심 로직)",
-            task_type=TaskType.FILE_ANALYSIS,
-            target_files=file_paths if file_paths else [],
-            dependencies=["task_001"],
-            metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
-        )
-
-        # print(f"\n[OK] Ghidra Task 자동 생성 완료:")
-        # print(f"  1. {task_001.task_id}: {task_001.description}")
-        # print(f"  2. {task_002.task_id}: {task_002.description} (의존: {task_002.dependencies})")
-
-        return [task_001, task_002]
-
-    if len(ghidra_tasks) >= 2:
-        has_metadata = any(t.metadata.get("analysis_phase") == "metadata" for t in ghidra_tasks)
-        has_decompile = any(t.metadata.get("analysis_phase") == "decompile" for t in ghidra_tasks)
-
-        if has_metadata and has_decompile:
-            # print("Ghidra Task 검증 통과 (2단계 구조 확인)")
-            return tasks
-
-    if len(ghidra_tasks) > 0:
-        # print("\nGhidra Task 구조 오류 감지!")
-        # print(f"   현재: {len(ghidra_tasks)}개 Ghidra Task")
-        # print(f"   자동 수정: 2단계 구조로 분리")
-
-        non_ghidra_tasks = [t for t in tasks if t.metadata.get("tool_hint") != "ghidra"]
-        task_001 = HighLevelTask(
-            task_id="task_001",
-            description="Ghidra로 바이너리 메타데이터 수집 (함수 목록, Import/Export, 세그먼트, 문자열)",
-            task_type=TaskType.FILE_ANALYSIS,
-            target_files=file_paths if file_paths else [],
-            dependencies=[],
-            metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "metadata"}
-        )
-
-        task_002 = HighLevelTask(
-            task_id="task_002",
-            description="Ghidra로 주요 함수 디컴파일 (entry, main, 핵심 로직)",
-            task_type=TaskType.FILE_ANALYSIS,
-            target_files=file_paths if file_paths else [],
-            dependencies=["task_001"],
-            metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
-        )
-
-        if non_ghidra_tasks:
-            max_id = max([int(t.task_id.split("_")[1]) for t in non_ghidra_tasks])
-            task_001.task_id = f"task_{max_id + 1:03d}"
-            task_002.task_id = f"task_{max_id + 2:03d}"
-            task_002.dependencies = [task_001.task_id]
-
-            result = non_ghidra_tasks + [task_001, task_002]
-        else:
-            result = [task_001, task_002]
-
-        # print(f"\n[OK] Ghidra Task 자동 수정 완료:")
-        # print(f"  1. {task_001.task_id}: {task_001.description}")
-        # print(f"  2. {task_002.task_id}: {task_002.description} (의존: {task_002.dependencies})")
-
-        return result
-
-    return tasks
 
 
 def _generate_default_high_level_plan(
@@ -702,7 +597,7 @@ def _generate_default_high_level_plan(
 ) -> List[HighLevelTask]:
     """기본 High-level 계획 생성 (폴백)
 
-    LLM 실패 시 규칙 기반으로 Task 생성
+    LLM 실패 시 파일 타입 기반으로 Task 생성
 
     Args:
         user_prompt: 사용자 요청
@@ -712,137 +607,40 @@ def _generate_default_high_level_plan(
     Returns:
         List[HighLevelTask]: 기본 Task 리스트
     """
-    import sys
-    # sys.stderr.write("\n[!] 기본 High-level 계획을 사용합니다 (LLM 폴백)\n")
-    # sys.stderr.flush()
-
     tasks = []
-    prompt_lower = user_prompt.lower()
 
-    virustotal_keywords = ["virustotal", "바이러스토탈", "vt", "sha256", "sha1", "md5", "해시", "hash"]
-    if any(kw in prompt_lower for kw in virustotal_keywords):
-        import re
-        hash_pattern = r'\b[a-fA-F0-9]{32,64}\b'
-        hash_matches = re.findall(hash_pattern, user_prompt)
-        file_hash = hash_matches[0] if hash_matches else ""
-
-        return [
-            HighLevelTask(
-                task_id="task_001",
-                description=f"VirusTotal로 파일 해시 조사{' (해시: ' + file_hash + ')' if file_hash else ''}",
-                task_type=TaskType.FILE_ANALYSIS,
-                target_files=[],
-                dependencies=[],
-                metadata={"tool_hint": "virustotal", "priority": "high", "file_hash": file_hash}
-            )
-        ]
-
-    ghidra_keywords = ["ghidra", "바이너리", "리버스", "디컴파일", "reverse", "binary", "decompile"]
-    if any(kw in prompt_lower for kw in ghidra_keywords):
-        # sys.stderr.write("[!] Ghidra 키워드 감지 → Ghidra 2-Task 구조 생성 (기본)\n")
-        # sys.stderr.flush()
-        return [
-            HighLevelTask(
-                task_id="task_001",
-                description="Ghidra로 바이너리 메타데이터 수집 (함수 목록, Import/Export, 세그먼트, 문자열)",
-                task_type=TaskType.FILE_ANALYSIS,
-                target_files=pe_files if pe_files else [],
-                dependencies=[],
-                metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "metadata"}
-            ),
-            HighLevelTask(
-                task_id="task_002",
-                description="Ghidra로 주요 함수 디컴파일 (entry, main, 핵심 로직)",
-                task_type=TaskType.FILE_ANALYSIS,
-                target_files=pe_files if pe_files else [],
-                dependencies=["task_001"],
-                metadata={"tool_hint": "ghidra", "priority": "high", "analysis_phase": "decompile"}
-            )
-        ]
-
-    if disk_images or any(kw in prompt_lower for kw in ["디스크", "이미지", "disk", "image"]):
-        if any(kw in prompt_lower for kw in ["추출", "extract", "찾기", "find", "파일", "file"]):
-            import re
-
-            win_path_pattern = r'[A-Za-z]:\\[^"\s]+'
-            unix_path_pattern = r'/[^\s"]+'
-            filename_pattern = r'\b[\w\-]+\.[a-zA-Z0-9]{2,5}\b'
-
-            target_path = None
-
-            win_matches = re.findall(win_path_pattern, user_prompt)
-            if win_matches:
-                target_path = win_matches[0]
-            elif re.search(unix_path_pattern, user_prompt):
-                unix_matches = re.findall(unix_path_pattern, user_prompt)
-                target_path = unix_matches[0] if unix_matches else None
-            elif re.search(filename_pattern, user_prompt):
-                filename_matches = re.findall(filename_pattern, user_prompt)
-                target_path = filename_matches[0] if filename_matches else None
-
-            if target_path:
-                description = f"SleuthKit으로 디스크 이미지에서 파일 추출: {target_path}"
-            else:
-                description = f"SleuthKit으로 디스크 이미지에서 파일 추출 (프롬프트: {user_prompt[:100]})"
-
-            tasks.append(HighLevelTask(
-                task_id="task_001",
-                description=description,
-                task_type=TaskType.FILE_EXTRACT,
-                target_files=disk_images,
-                dependencies=[],
-                metadata={
-                    "tool_hint": "sleuthkit",
-                    "priority": "high",
-                    "target_path": target_path,
-                    "user_prompt": user_prompt
-                }
-            ))
-        else:
-            tasks.append(HighLevelTask(
-                task_id="task_001",
-                description="Velociraptor로 디스크 이미지 아티팩트 수집 및 분석",
-                task_type=TaskType.ARTIFACT_COLLECTION,
-                target_files=disk_images,
-                dependencies=[],
-                metadata={"tool_hint": "velociraptor", "priority": "high"}
-            ))
-
-    if any(kw in prompt_lower for kw in ["로그", "log", "이벤트", "event", "검색", "search", "elastic", "siem"]):
-        dependencies = []
-        task_id = f"task_{len(tasks)+1:03d}"
-
+    # 디스크 이미지가 있으면 아티팩트 수집 Task 생성
+    if disk_images:
         tasks.append(HighLevelTask(
-            task_id=task_id,
-            description="Elasticsearch 로그 검색 및 분석",
-            task_type=TaskType.LOG_COLLECTION,
-            target_files=[],
-            dependencies=dependencies,
-            metadata={"tool_hint": "elastic", "priority": "high"}
-        ))
-
-    if any(kw in prompt_lower for kw in ["아티팩트", "artifact", "수집", "collect", "velociraptor", "prefetch", "프로세스"]):
-        dependencies = [tasks[-1].task_id] if tasks else []
-        task_id = f"task_{len(tasks)+1:03d}"
-
-        tasks.append(HighLevelTask(
-            task_id=task_id,
-            description="Velociraptor로 아티팩트 수집",
+            task_id="task_001",
+            description=f"디스크 이미지 분석: {user_prompt[:100]}",
             task_type=TaskType.ARTIFACT_COLLECTION,
-            target_files=[],
-            dependencies=dependencies,
-            metadata={"tool_hint": "velociraptor", "priority": "medium"}
+            target_files=disk_images,
+            dependencies=[],
+            metadata={"priority": "high"}
         ))
 
+    # PE 파일이 있으면 파일 분석 Task 생성
+    if pe_files:
+        task_id = f"task_{len(tasks)+1:03d}"
+        tasks.append(HighLevelTask(
+            task_id=task_id,
+            description=f"PE 파일 분석: {user_prompt[:100]}",
+            task_type=TaskType.FILE_ANALYSIS,
+            target_files=pe_files,
+            dependencies=[],
+            metadata={"priority": "high"}
+        ))
+
+    # 파일이 없으면 일반 분석 Task 생성
     if not tasks:
         tasks.append(HighLevelTask(
             task_id="task_001",
-            description="Elasticsearch 로그 검색",
-            task_type=TaskType.LOG_COLLECTION,
+            description=f"분석 수행: {user_prompt[:100]}",
+            task_type=TaskType.CUSTOM,
             target_files=[],
             dependencies=[],
-            metadata={"tool_hint": "elastic", "priority": "medium"}
+            metadata={"priority": "medium"}
         ))
 
-    # print(f"  기본 계획 생성 완료: {len(tasks)}개 Task")
     return tasks
