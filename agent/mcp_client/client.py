@@ -303,8 +303,13 @@ class MCPClientManager:
         """모든 MCP 서버 연결 종료"""
         try:
             await self._exit_stack.aclose()
-            print(f"[OK] 모든 MCP 서버 연결 종료 완료")
-
+        except RuntimeError as e:
+            # anyio의 cancel scope 관련 에러는 무시 (다른 태스크에서 종료 시도 시 발생)
+            # 프로세스 종료 직전에 발생하므로 기능적 영향 없음
+            if "cancel scope" in str(e).lower():
+                pass
+            else:
+                print(f"[FAIL] MCP 서버 종료 중 오류: {e}")
         except Exception as e:
             print(f"[FAIL] MCP 서버 종료 중 오류: {e}")
         self.sessions.clear()
@@ -312,40 +317,57 @@ class MCPClientManager:
 
 class MCPClientManagerSync:
     """동기 방식 래퍼 (기존 코드 호환용)"""
-    
+
     def __init__(self, server_configs: List[MCPServerConfig]):
+        import threading
         self.manager = MCPClientManager(server_configs)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop_thread_id: Optional[int] = None  # 이벤트 루프가 생성된 스레드 ID
         self._initialized = False
 
     def _get_or_create_loop(self) -> asyncio.AbstractEventLoop:
-        """이벤트 루프 가져오기 또는 생성"""
-        if self._loop is not None and not self._loop.is_closed():
+        """이벤트 루프 가져오기 또는 생성
 
+        중요: asyncio 이벤트 루프는 스레드 바운드입니다.
+        다른 스레드에서 호출되면 새 이벤트 루프를 생성해야 합니다.
+        (ThreadPoolExecutor에서 호출 시 데드락 방지)
+        """
+        import threading
+        current_thread_id = threading.current_thread().ident
+
+        # 기존 루프가 있고, 같은 스레드에서 호출된 경우에만 재사용
+        if (self._loop is not None
+            and not self._loop.is_closed()
+            and self._loop_thread_id == current_thread_id):
             return self._loop
 
+        # 다른 스레드에서 호출되었거나 루프가 없는 경우 새로 생성
         try:
             running_loop = asyncio.get_running_loop()
             print("[!]  Warning: 실행 중인 이벤트 루프가 감지되었습니다. 새 루프를 생성합니다.")
-
         except RuntimeError:
             pass
 
         try:
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+
+            # 메인 스레드인 경우에만 캐시 (다른 스레드는 일회성 루프 사용)
+            if threading.current_thread() is threading.main_thread():
+                self._loop = new_loop
+                self._loop_thread_id = current_thread_id
+
+            return new_loop
 
         except Exception as e:
             print(f"[!]  이벤트 루프 생성 실패, 기본 루프 사용: {e}")
 
             try:
-                self._loop = asyncio.get_event_loop()
-
+                return asyncio.get_event_loop()
             except RuntimeError:
-                self._loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self._loop)
-
-        return self._loop
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                return new_loop
 
     def initialize(self):
         """동기 방식 초기화"""
