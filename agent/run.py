@@ -149,32 +149,48 @@ def run_with_progress(user_prompt: str, file_paths: list = None, generate_report
 
     Note: MongoDB AGENT_STATES 업데이트는 job_storage.py의 _print_state_json()에서 직접 출력되므로
           별도의 callback 설정 불필요
+
+    환경변수:
+        DEBUG=1: 디버그 모드 - 출력을 억제하지 않고 모든 로그 표시
     """
+    # DEBUG 모드 확인
+    debug_mode = os.getenv("DEBUG") == "1"
+
     original_log_levels = {}
 
     root_logger = logging.getLogger()
     original_log_levels['root'] = root_logger.level
-    root_logger.setLevel(logging.CRITICAL)
 
-    for logger_name in list(logging.root.manager.loggerDict.keys()):
-        logger = logging.getLogger(logger_name)
-        original_log_levels[logger_name] = logger.level
-        logger.setLevel(logging.CRITICAL)
+    if not debug_mode:
+        root_logger.setLevel(logging.CRITICAL)
 
-    for logger_name in ['mcp', 'mcp.server', 'mcp.server.lowlevel.server', 'pyghidra_mcp',
-                        'src.server', 'FastMCP', 'root']:
-        logger = logging.getLogger(logger_name)
-        logger.disabled = True
-        logger.propagate = False
+        for logger_name in list(logging.root.manager.loggerDict.keys()):
+            logger = logging.getLogger(logger_name)
+            original_log_levels[logger_name] = logger.level
+            logger.setLevel(logging.CRITICAL)
+
+        for logger_name in ['mcp', 'mcp.server', 'mcp.server.lowlevel.server', 'pyghidra_mcp',
+                            'src.server', 'FastMCP', 'root']:
+            logger = logging.getLogger(logger_name)
+            logger.disabled = True
+            logger.propagate = False
 
     original_stdout = sys.stdout
     original_stderr = sys.stderr
-    devnull = open(os.devnull, 'w')
 
     result = None
+    devnull = None
+
     try:
-        sys.stdout = devnull
-        sys.stderr = devnull
+        if not debug_mode:
+            devnull = open(os.devnull, 'w')
+            sys.stdout = devnull
+            sys.stderr = devnull
+        else:
+            sys.__stdout__.write(f"\n[DEBUG MODE] Running with full output\n")
+            sys.__stdout__.write(f"[DEBUG] Prompt: {user_prompt[:100]}...\n")
+            sys.__stdout__.write(f"[DEBUG] Files: {file_paths}\n")
+            sys.__stdout__.flush()
 
         result = run_job(
             user_prompt=user_prompt,
@@ -200,10 +216,12 @@ def run_with_progress(user_prompt: str, file_paths: list = None, generate_report
     finally:
         sys.stdout = original_stdout
         sys.stderr = original_stderr
-        devnull.close()
+        if devnull:
+            devnull.close()
 
-        for logger_name, level in original_log_levels.items():
-            logging.getLogger(logger_name).setLevel(level)
+        if not debug_mode:
+            for logger_name, level in original_log_levels.items():
+                logging.getLogger(logger_name).setLevel(level)
 
     return result
 
@@ -512,18 +530,56 @@ def interactive_mode():
                 if file_input:
                     import os
                     file_paths = []
+                    missing_files = []
                     for path in file_input.split(','):
-                        path = path.strip()
+                        # 공백 및 trailing 쉼표 제거
+                        path = path.strip().rstrip(',').strip()
                         if not path:
                             continue
-                        if not os.path.isabs(path):
-                            data_path = os.path.join(os.getcwd(), 'data', path)
-                            if os.path.exists(data_path):
-                                path = data_path
+
+                        resolved_path = None
+
+                        # 1. 절대 경로인 경우 그대로 사용
+                        if os.path.isabs(path):
+                            if os.path.exists(path):
+                                resolved_path = path
                             else:
-                                path = os.path.abspath(path)
-                        file_paths.append(path)
+                                # WSL <-> Windows 경로 변환 시도
+                                if path.startswith('/mnt/') and len(path) > 6:
+                                    drive_letter = path[5].upper()
+                                    rest_path = path[6:].replace('/', '\\')
+                                    win_path = f"{drive_letter}:{rest_path}"
+                                    if os.path.exists(win_path):
+                                        resolved_path = win_path
+                        else:
+                            # 2. 상대 경로인 경우 여러 위치 시도
+                            search_paths = [
+                                os.path.join(os.getcwd(), 'data', path),  # data/ 폴더
+                                os.path.join(os.getcwd(), path),           # 현재 폴더
+                                os.path.abspath(path),                     # 절대 경로로 변환
+                            ]
+
+                            for search_path in search_paths:
+                                if os.path.exists(search_path):
+                                    resolved_path = search_path
+                                    break
+
+                        if resolved_path:
+                            file_paths.append(resolved_path)
+                            console.print(f"[dim]  → Found: {resolved_path}[/dim]")
+                        else:
+                            # 파일이 없어도 경로는 추가 (MCP에서 에러 처리)
+                            default_path = os.path.join(os.getcwd(), 'data', path) if not os.path.isabs(path) else path
+                            file_paths.append(default_path)
+                            missing_files.append(path)
+
                     console.print(f"[dim]→ {len(file_paths)} file(s) provided[/dim]")
+
+                    # 파일이 존재하지 않으면 경고 출력
+                    if missing_files:
+                        console.print(f"[yellow]⚠ Warning: File(s) not found: {', '.join(missing_files)}[/yellow]")
+                        console.print(f"[yellow]  Please check if the file path is correct.[/yellow]")
+                        console.print(f"[yellow]  Searched in: data/ folder, current directory[/yellow]")
 
                 console.print("[dim]Conversation ID (비워두면 새로 생성):[/dim] ", end="")
                 conversation_id = input().strip()

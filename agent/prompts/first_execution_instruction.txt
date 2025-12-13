@@ -1,6 +1,6 @@
-**[참고] 이것은 대화의 첫 번째 실행입니다.**
+**[Note] This is the first run of the conversation.**.
 
-사용자의 요청에 따라 적절한 Task를 생성하세요.
-사용 가능한 MCP 도구는 시스템에서 동적으로 제공됩니다.
+Create the appropriate task as requested by the user.
+The MCP tools available are dynamically provided by the system.
 
-사용자의 요청을 분석하여 필요한 Task만 생성하세요.
+Analyze user requests and create only the required tasks.
