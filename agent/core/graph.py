@@ -353,7 +353,8 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
                 {
                     "task_id": t.task_id,
                     "description": t.description,
-                    "mcp_server": "",
+                    # mcp_server: metadata.tool_hint 또는 mcp_call.server에서 가져오기
+                    "mcp_server": t.metadata.get("tool_hint", "") or (t.mcp_call.get("server", "") if t.mcp_call else ""),
                     "mcp_tools": [],
                     "status": "pending"
                 }
@@ -502,15 +503,38 @@ def node_react_init(state: Dict[str, Any]) -> Dict[str, Any]:
                     react_answer = completed.get("react_answer", "")
                     dep_tool_hint = completed.get("metadata", {}).get("tool_hint", "")
                     success_count = sum(1 for r in dep_results if r.get("success"))
+                    dep_success = completed.get("react_success", False)
 
                     dependency_context += f"\n### {dep_id}: {dep_desc}\n"
                     dependency_context += f"- Tool: {dep_tool_hint}\n"
                     dependency_context += f"- Status: {success_count}/{len(dep_results)} successful\n"
+                    dependency_context += f"- Task Success: {'YES' if dep_success else 'NO - DEPENDENCY FAILED'}\n"
+
+                    # 의존 Task 실패 시 명확한 경고
+                    if not dep_success or success_count == 0:
+                        dependency_context += f"\n**⚠️ WARNING: Dependency task {dep_id} FAILED or produced no results.**\n"
+                        dependency_context += f"**You may not be able to proceed with this task. Report the dependency failure.**\n"
+
+                    # 이전 Task의 MCP 실행 결과에서 출력 경로/데이터 추출
+                    if dep_results:
+                        dependency_context += f"\n**MCP Execution Results (use these paths/data):**\n"
+                        for idx, exec_result in enumerate(dep_results[-3:], 1):  # 최근 3개 결과만
+                            action = exec_result.get("action", {})
+                            result_data = exec_result.get("result", "")
+                            exec_success = exec_result.get("success", False)
+
+                            action_name = f"{action.get('tool', '')}.{action.get('operation', '')}"
+                            dependency_context += f"\n{idx}. {action_name} ({'SUCCESS' if exec_success else 'FAILED'}):\n"
+
+                            # 결과에서 파일 경로 추출 시도
+                            if exec_success and result_data:
+                                result_preview = str(result_data)[:1500]
+                                dependency_context += f"```\n{result_preview}\n```\n"
 
                     # 이전 Task 결과 포함
                     if react_answer:
                         answer_preview = react_answer[:500] if len(react_answer) > 500 else react_answer
-                        dependency_context += f"\n**Result:**\n```\n{answer_preview}\n```\n"
+                        dependency_context += f"\n**Analysis Result:**\n```\n{answer_preview}\n```\n"
 
                     break
 
@@ -530,7 +554,16 @@ Think step by step, observe results, and adapt your actions accordingly."""
 
     file_meta = state.get("file_meta", {})
 
-    available_tools = get_available_tools_for_task(task.description, file_meta)
+    # High-level plan에서 지정한 서버의 도구만 조회 (Issue 1 해결)
+    # tool_hint가 빈 문자열이면 None으로 처리하여 server_hint 조건 분기 정상 작동
+    tool_hint = task.metadata.get("tool_hint") or None
+    available_tools = get_available_tools_for_task(task.description, file_meta, server_hint=tool_hint)
+
+    # tool_hint가 있지만 도구가 없는 경우 경고 로그
+    import sys
+    if tool_hint and not available_tools:
+        sys.__stdout__.write(f"│ [WARNING] tool_hint '{tool_hint}' specified but no tools loaded. Check MCP server status.\n")
+        sys.__stdout__.flush()
 
     import os
     if os.getenv("MCP_DEBUG") == "1":
@@ -623,13 +656,21 @@ def node_react_think(state: Dict[str, Any]) -> Dict[str, Any]:
 
     start_time = time.time()
 
+    # current_task에서 mcp_call과 tool_hint 가져오기
+    current_task_dict = state.get("current_task", {})
+    mcp_call = current_task_dict.get("mcp_call") if current_task_dict else None
+    # server_hint: High-level plan에서 지정한 MCP 서버 이름 (strategy 프롬프트 로드용)
+    server_hint = current_task_dict.get("metadata", {}).get("tool_hint") if current_task_dict else None
+
     thought_result = generate_react_thought(
         task_description=task_prompt,
         observations=observations,
         available_tools=available_tools,
         file_paths=file_paths,
         max_iterations=max_iterations,
-        user_prompt=state.get("user_prompt")
+        user_prompt=state.get("user_prompt"),
+        mcp_call=mcp_call,
+        server_hint=server_hint
     )
 
     think_time = time.time() - start_time
@@ -669,11 +710,35 @@ def node_react_execute(state: Dict[str, Any]) -> Dict[str, Any]:
 
     react_context = state.get("react_context", {})
     action_dict = react_context.get("current_action")
+    iteration = react_context.get("iteration", 0)
+    max_iterations = react_context.get("max_iterations", 30)
 
     if not action_dict:
-        # print(f"│ [EXECUTE] No action to execute")
-        react_context["finished"] = True
-        react_context["answer"] = "No valid action provided - cannot execute"
+        # action이 없을 때 즉시 종료하지 않고, 재시도 기회를 줌
+        # 단, iteration이 max_iterations의 절반을 넘으면 강제 종료
+        if iteration > max_iterations // 2:
+            # print(f"│ [EXECUTE] No action to execute and iteration {iteration} > {max_iterations // 2}")
+            react_context["finished"] = True
+            react_context["answer"] = "No valid action provided after multiple attempts - cannot continue"
+            return {
+                **state,
+                "react_context": react_context
+            }
+
+        # 재시도: action 없음을 observation에 기록하고 다음 think로 넘어감
+        import sys
+        sys.__stdout__.write(f"│ [EXECUTE] No action at iteration {iteration} - will retry in next think\n")
+        sys.__stdout__.flush()
+
+        # current_action을 빈 dict로 초기화하여 node_react_observe에서 NoneType 오류 방지
+        react_context["current_action"] = {}
+
+        # 빈 observation 기록하여 다음 think에서 재시도하도록 유도
+        react_context["current_execution_result"] = {
+            "success": False,
+            "error": "No action was generated. Please review available tools and try again with a valid action."
+        }
+        react_context["current_execution_time"] = 0
         return {
             **state,
             "react_context": react_context
@@ -739,7 +804,7 @@ def node_react_observe(state: Dict[str, Any]) -> Dict[str, Any]:
 
     iteration = react_context.get("iteration", 0)
     thought = react_context.get("current_thought", "")
-    action_dict = react_context.get("current_action", {})
+    action_dict = react_context.get("current_action") or {}  # None 방어 처리
     exec_result = react_context.get("current_execution_result", {})
     exec_time = react_context.get("current_execution_time", 0)
 
@@ -764,6 +829,14 @@ def node_react_observe(state: Dict[str, Any]) -> Dict[str, Any]:
 
     react_context["observations"] = observations
 
+    # 실행 시간을 timing에 누적
+    timing = state.get("timing", {"high_level_planning": 0.0, "tasks": {}})
+    current_task_dict = state.get("current_task", {})
+    task_id = current_task_dict.get("task_id") if current_task_dict else None
+
+    if task_id and task_id in timing.get("tasks", {}):
+        timing["tasks"][task_id]["execution"] = timing["tasks"][task_id].get("execution", 0.0) + exec_time
+
     obs_preview = observation[:200] if len(observation) > 200 else observation
     # print(f"│ [OBSERVE] {obs_preview}...")
 
@@ -780,7 +853,8 @@ def node_react_observe(state: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         **state,
-        "react_context": react_context
+        "react_context": react_context,
+        "timing": timing
     }
 
 
