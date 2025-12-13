@@ -4,6 +4,7 @@ MCP 도구 호출, 타임아웃 및 재시도 관리 담당
 Lazy Loading으로 필요한 MCP 서버만 초기화
 """
 from __future__ import annotations
+import os
 import time
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -23,10 +24,122 @@ _ghidra_import_cache: Dict[str, bool] = {}
 _validation_error_cache: Dict[str, int] = {}
 
 
+def _validate_file_paths(params: Dict[str, Any], action: Action) -> Optional[str]:
+    """파일 경로 파라미터의 유효성 검증
+
+    MCP 도구 호출 전에 파일 경로가 실제로 존재하는지 확인
+    Windows/WSL 경로 변환도 시도
+
+    Args:
+        params: 파라미터 딕셔너리
+        action: 액션 정보 (에러 메시지용)
+
+    Returns:
+        Optional[str]: 에러 메시지 (검증 실패 시), None (검증 성공 시)
+    """
+    # 파일 경로 관련 파라미터 키 목록
+    path_keys = ["image_path", "file_path", "path", "image", "binary_path", "input_path"]
+
+    for key in path_keys:
+        if key not in params:
+            continue
+
+        path = params[key]
+        if not isinstance(path, str) or not path.strip():
+            continue
+
+        path = path.strip()
+
+        # 경로가 이미 존재하면 OK
+        if os.path.exists(path):
+            continue
+
+        # Windows 경로를 WSL 경로로 변환 시도
+        # C:\Users\... → /mnt/c/Users/...
+        wsl_path = None
+        if len(path) >= 2 and path[1] == ':':
+            drive_letter = path[0].lower()
+            rest_path = path[2:].replace('\\', '/')
+            wsl_path = f"/mnt/{drive_letter}{rest_path}"
+
+            if os.path.exists(wsl_path):
+                # WSL 경로로 자동 변환하여 params 업데이트
+                params[key] = wsl_path
+                import sys
+                sys.__stdout__.write(f"│ [PATH FIX] Converted Windows path to WSL: {path} → {wsl_path}\n")
+                sys.__stdout__.flush()
+                continue
+
+        # WSL 경로를 Windows 경로로 변환 시도 (반대 방향)
+        # /mnt/c/Users/... → C:\Users\...
+        win_path = None
+        if path.startswith('/mnt/') and len(path) > 6:
+            drive_letter = path[5].upper()
+            rest_path = path[6:].replace('/', '\\')
+            win_path = f"{drive_letter}:{rest_path}"
+
+            if os.path.exists(win_path):
+                params[key] = win_path
+                import sys
+                sys.__stdout__.write(f"│ [PATH FIX] Converted WSL path to Windows: {path} → {win_path}\n")
+                sys.__stdout__.flush()
+                continue
+
+        # 경로를 찾을 수 없음
+        error_msg = (
+            f"FILE NOT FOUND: Parameter '{key}' contains an invalid path\n\n"
+            f"Action: {action.tool}.{action.operation}\n"
+            f"Path provided: {path}\n"
+        )
+
+        if wsl_path:
+            error_msg += f"Also tried WSL path: {wsl_path}\n"
+        if win_path:
+            error_msg += f"Also tried Windows path: {win_path}\n"
+
+        error_msg += (
+            f"\nPossible fixes:\n"
+            f"  1. Check if the file exists at the specified path\n"
+            f"  2. Use absolute path instead of relative path\n"
+            f"  3. For disk images, ensure the .E01/.dd file is accessible\n"
+            f"  4. Check file permissions"
+        )
+
+        return error_msg
+
+    return None
+
+
+def _normalize_path(path: str) -> str:
+    """경로 문자열 정규화 - 이중 이스케이프된 백슬래시 수정
+
+    LLM이 Windows 경로를 생성할 때 백슬래시를 이중 이스케이프하는 경우가 있음.
+    예: "C:\\\\Users\\\\user" → "C:\\Users\\user"
+
+    Args:
+        path: 원본 경로 문자열
+
+    Returns:
+        str: 정규화된 경로 문자열
+    """
+    if not path or not isinstance(path, str):
+        return path
+
+    import re
+
+    # 연속된 백슬래시 2개 이상을 1개로 줄임
+    # C:\Users\\user → C:\Users\user
+    # C:\\Users\\\\user → C:\Users\user
+    path = re.sub(r'\\{2,}', r'\\', path)
+
+    return path
+
+
 def _sanitize_params(params: Dict[str, Any]) -> Dict[str, Any]:
-    """파라미터 값에서 trailing 콤마/공백 제거
+    """파라미터 값에서 trailing 콤마/공백 제거 및 불필요한 필드 제거
 
     LLM이 파일 경로 등을 생성할 때 trailing 콤마나 공백이 포함되는 경우가 있음.
+    또한 LLM이 'finished' 등 내부용 필드를 params에 포함시키는 경우가 있음.
     MCP 도구 호출 전에 이를 정제하여 오류 방지.
 
     Args:
@@ -38,10 +151,26 @@ def _sanitize_params(params: Dict[str, Any]) -> Dict[str, Any]:
     if not params:
         return params
 
+    # LLM이 잘못 포함시킬 수 있는 내부용 필드들 (MCP 도구 파라미터가 아님)
+    internal_fields = {'finished', 'thought', 'answer', 'action'}
+
+    # 경로 관련 파라미터 키 (이중 이스케이프 수정 대상)
+    path_keys = {
+        'path', 'file_path', 'dir_path', 'folder_path', 'target_path',
+        'image_path', 'binary_path', 'input_path', 'output_path',
+        'out_dir', 'batch_file', 'batch_dir'
+    }
+
     sanitized = {}
     for key, value in params.items():
+        # 내부용 필드는 제거
+        if key in internal_fields:
+            continue
         if isinstance(value, str):
             value = value.strip().rstrip(',').strip()
+            # 경로 파라미터는 이중 이스케이프 수정
+            if key in path_keys:
+                value = _normalize_path(value)
         elif isinstance(value, list):
             value = [
                 v.strip().rstrip(',').strip() if isinstance(v, str) else v
@@ -71,6 +200,76 @@ def _get_tool_schema(client, server_name: str, tool_name: str) -> Optional[Dict[
             return tool.get('input_schema')
 
     return None
+
+
+def _filter_params_by_schema(params: Dict[str, Any], schema: Optional[Dict[str, Any]], action_info: str = "") -> Dict[str, Any]:
+    """Schema 기반 화이트리스트 필터링 (MCP 호출 직전 최종 방어선)
+
+    MCP 도구에 전달하기 전 schema에 정의된 파라미터만 허용합니다.
+    이를 통해 'finished', 'thought', 'answer' 등 ReAct 내부용 필드가
+    MCP tool params로 흘러들어가는 것을 완전히 차단합니다.
+
+    Args:
+        params: 원본 파라미터 딕셔너리
+        schema: JSON Schema (input_schema)
+        action_info: 로깅용 액션 정보 (예: "elastic.search_documents")
+
+    Returns:
+        Dict[str, Any]: schema에 정의된 키만 포함된 파라미터
+
+    Example:
+        >>> schema = {"properties": {"index": {}, "body": {}}, "required": ["index"]}
+        >>> params = {"index": "logs", "body": {}, "finished": False}
+        >>> _filter_params_by_schema(params, schema)
+        {"index": "logs", "body": {}}  # finished 제거됨
+    """
+    if not params:
+        return params
+
+    if not schema:
+        # Schema가 없으면 최소한의 블랙리스트만 적용
+        # (ReAct 내부 필드는 어떤 MCP 도구에서도 사용하지 않음)
+        react_internal_fields = {'finished', 'thought', 'answer', 'action', 'react_state'}
+        filtered = {k: v for k, v in params.items() if k not in react_internal_fields}
+
+        removed = set(params.keys()) - set(filtered.keys())
+        if removed:
+            import sys
+            sys.__stdout__.write(f"│ [SANITIZE] Removed internal fields from params: {removed}\n")
+            sys.__stdout__.flush()
+
+        return filtered
+
+    # Schema가 있으면 화이트리스트 방식 적용
+    properties = schema.get('properties', {})
+
+    if not properties:
+        # properties가 비어있으면 블랙리스트 방식으로 fallback
+        react_internal_fields = {'finished', 'thought', 'answer', 'action', 'react_state'}
+        return {k: v for k, v in params.items() if k not in react_internal_fields}
+
+    # 화이트리스트: schema에 정의된 키만 허용
+    allowed_keys = set(properties.keys())
+    filtered = {k: v for k, v in params.items() if k in allowed_keys}
+
+    # 제거된 키 로깅 (디버깅용)
+    removed_keys = set(params.keys()) - allowed_keys
+    if removed_keys:
+        import sys
+        import os
+        # ReAct 내부 필드가 제거된 경우만 로깅 (불필요한 로깅 방지)
+        react_internal = removed_keys & {'finished', 'thought', 'answer', 'action', 'react_state'}
+        if react_internal:
+            sys.__stdout__.write(f"│ [SCHEMA FILTER] {action_info}: Blocked internal fields → {react_internal}\n")
+            sys.__stdout__.flush()
+
+        # 디버그 모드에서는 모든 제거된 키 표시
+        if os.getenv("DEBUG") == "1" and removed_keys:
+            sys.__stdout__.write(f"│ [DEBUG] Removed params not in schema: {removed_keys}\n")
+            sys.__stdout__.write(f"│ [DEBUG] Allowed by schema: {allowed_keys}\n")
+            sys.__stdout__.flush()
+
+    return filtered
 
 
 def _validate_params_against_schema(params: Dict[str, Any], schema: Dict[str, Any], action: Action) -> Optional[str]:
@@ -334,6 +533,19 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
             execution_time_seconds=0.0
         )
 
+    # 파라미터 정리 (trailing 쉼표, 공백 제거) - 검증 전에 먼저 수행
+    action.params = _sanitize_params(action.params)
+
+    # 파일 경로 검증 (MCP 호출 전 경로 존재 여부 확인 및 자동 변환)
+    path_validation_error = _validate_file_paths(action.params, action)
+    if path_validation_error:
+        return ActionResult(
+            action=action,
+            success=False,
+            error=path_validation_error,
+            execution_time_seconds=0.0
+        )
+
     for attempt in range(max_retries + 1):
         start_time = time.time()
 
@@ -534,8 +746,8 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
 def _call_mcp_tool_with_timeout(action: Action, timeout: float) -> Dict[str, Any]:
     """타임아웃을 적용하여 MCP 도구 호출
 
-    ThreadPoolExecutor를 사용하여 별도 스레드에서 실행하고,
-    지정된 시간 내에 응답이 없으면 TimeoutError 발생
+    MCP client의 내장 타임아웃을 사용하여 도구를 호출합니다.
+    (ThreadPoolExecutor 사용 시 이벤트 루프 스레드 바인딩 문제로 데드락 발생)
 
     Args:
         action: 실행할 액션
@@ -552,21 +764,26 @@ def _call_mcp_tool_with_timeout(action: Action, timeout: float) -> Dict[str, Any
     """
     client = get_mcp_client_for_server(action.tool)
 
+    # 1단계: 기본 sanitize (trailing 콤마, 공백 제거 + 내부 필드 제거)
     sanitized_params = _sanitize_params(action.params)
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(
-            client.call_tool,
+    # 2단계: Schema 기반 화이트리스트 필터링 (최종 방어선)
+    # 'finished', 'thought', 'answer' 등 ReAct 내부 필드가 MCP로 전달되는 것을 완전 차단
+    tool_schema = _get_tool_schema(client, action.tool, action.operation)
+    action_info = f"{action.tool}.{action.operation}"
+    filtered_params = _filter_params_by_schema(sanitized_params, tool_schema, action_info)
+
+    # ThreadPoolExecutor 제거: asyncio 이벤트 루프는 스레드 바운드이므로
+    # 다른 스레드에서 호출 시 데드락 발생. MCP client의 내장 타임아웃 사용.
+    try:
+        return client.call_tool(
             server_name=action.tool,
             tool_name=action.operation,
-            arguments=sanitized_params,
-            timeout=None
+            arguments=filtered_params,
+            timeout=timeout
         )
-
-        try:
-            return future.result(timeout=timeout)
-        except FuturesTimeoutError:
-            raise FuturesTimeoutError(f"MCP 도구 호출 타임아웃 ({timeout}초)")
+    except asyncio.TimeoutError:
+        raise FuturesTimeoutError(f"MCP 도구 호출 타임아웃 ({timeout}초)")
 
 def _call_mcp_tool(action: Action) -> Dict[str, Any]:
     """MCP 도구 호출 (Lazy Loading)
@@ -585,12 +802,19 @@ def _call_mcp_tool(action: Action) -> Dict[str, Any]:
     """
     client = get_mcp_client_for_server(action.tool)
 
+    # 1단계: 기본 sanitize (trailing 콤마, 공백 제거 + 내부 필드 제거)
     sanitized_params = _sanitize_params(action.params)
+
+    # 2단계: Schema 기반 화이트리스트 필터링 (최종 방어선)
+    # 'finished', 'thought', 'answer' 등 ReAct 내부 필드가 MCP로 전달되는 것을 완전 차단
+    tool_schema = _get_tool_schema(client, action.tool, action.operation)
+    action_info = f"{action.tool}.{action.operation}"
+    filtered_params = _filter_params_by_schema(sanitized_params, tool_schema, action_info)
 
     return client.call_tool(
         server_name=action.tool,
         tool_name=action.operation,
-        arguments=sanitized_params
+        arguments=filtered_params
     )
 
 def _is_retryable_error(error_msg: str) -> bool:
