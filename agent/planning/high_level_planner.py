@@ -52,8 +52,143 @@ def _get_available_mcp_tools() -> List[Dict[str, Any]]:
         return []
 
 
+def _load_server_descriptions_from_file() -> Dict[str, str]:
+    """mcp_server_descriptions.json 파일에서 서버 설명 로드
+
+    Returns:
+        Dict[str, str]: 서버 이름 -> 서버 설명
+    """
+    import json
+    descriptions_path = os.path.join(os.path.dirname(__file__), "..", "mcp_server_descriptions.json")
+
+    try:
+        with open(descriptions_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            servers = data.get("servers", {})
+            return {name: info.get("description", "") for name, info in servers.items()}
+    except FileNotFoundError:
+        sys.stderr.write(f"[WARNING] mcp_server_descriptions.json not found: {descriptions_path}\n")
+        return {}
+    except Exception as e:
+        sys.stderr.write(f"[WARNING] Failed to load server descriptions: {e}\n")
+        return {}
+
+
+def _get_mcp_server_descriptions() -> Dict[str, str]:
+    """MCP 서버별 설명 반환 (설명 파일 + 도구 목록)
+
+    Returns:
+        Dict[str, str]: 서버 이름 -> 서버 기능 설명
+    """
+    from ..config import get_config
+    from ..mcp_client.lazy_loader import get_mcp_clients_for_servers
+
+    cfg = get_config()
+
+    if not cfg.mcp.enabled:
+        return {}
+
+    enabled_servers = [srv.name for srv in cfg.mcp.servers if srv.enabled]
+
+    if not enabled_servers:
+        return {}
+
+    # 파일에서 서버 설명 로드
+    file_descriptions = _load_server_descriptions_from_file()
+
+    try:
+        client = get_mcp_clients_for_servers(enabled_servers)
+        all_tools = client.get_all_tools()
+
+        # 서버별로 도구 그룹화
+        servers = {}
+        for tool in all_tools:
+            server = tool.get("server", "unknown")
+            if server not in servers:
+                servers[server] = []
+            servers[server].append(tool)
+
+        # 서버별 설명 생성 (파일 설명 + 도구 목록)
+        server_descriptions = {}
+        for server, tools in servers.items():
+            tool_names = [t.get("name", "") for t in tools]
+            # 파일에서 설명을 가져오고, 없으면 기본 설명 사용
+            purpose = file_descriptions.get(server, f"MCP server with {len(tools)} tools")
+            tool_list = ', '.join(tool_names[:8])
+            if len(tool_names) > 8:
+                tool_list += f" ... (+{len(tool_names) - 8} more)"
+            server_descriptions[server] = f"{purpose}\n    Tools: {tool_list}"
+
+        return server_descriptions
+
+    except Exception as e:
+        sys.stderr.write(f"[WARNING] MCP 서버 설명 로드 실패: {e}\n")
+        return {}
+
+
+def _get_e01_capable_servers() -> List[str]:
+    """mcp_server_descriptions.json에서 E01 지원 서버 목록 로드
+
+    Returns:
+        List[str]: E01 이미지를 직접 처리할 수 있는 서버 목록
+    """
+    descriptions_path = os.path.join(os.path.dirname(__file__), "..", "mcp_server_descriptions.json")
+    try:
+        with open(descriptions_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("e01_capable_servers", [])
+    except Exception:
+        return []
+
+
+def _format_mcp_servers_for_prompt(server_descriptions: Dict[str, str]) -> str:
+    """MCP 서버 목록을 프롬프트용 문자열로 변환 (서버 레벨만)
+
+    E01 지원 서버와 SQLite/파일 전용 서버를 구분하여 표시
+
+    Args:
+        server_descriptions: 서버 이름 -> 서버 설명
+
+    Returns:
+        str: 서버별 설명 문자열
+    """
+    if not server_descriptions:
+        return "No MCP servers available."
+
+    e01_capable = _get_e01_capable_servers()
+
+    # 서버를 E01 지원/비지원으로 분리
+    e01_servers = []
+    other_servers = []
+
+    for server in sorted(server_descriptions.keys()):
+        if server in e01_capable:
+            e01_servers.append(server)
+        else:
+            other_servers.append(server)
+
+    parts = []
+
+    # E01 이미지 직접 분석 가능한 서버
+    parts.append("\n**[E01 DISK IMAGE CAPABLE - Use for E01/dd/raw disk images]**")
+    for server in e01_servers:
+        description = server_descriptions[server]
+        parts.append(f"\n**{server}** (MCP Server - E01 supported):")
+        parts.append(f"  {description}")
+
+    # 기타 서버 (pre-extracted 파일 전용)
+    if other_servers:
+        parts.append("\n\n**[OTHER SERVERS - For pre-extracted files, logs, etc.]**")
+        for server in other_servers:
+            description = server_descriptions[server]
+            parts.append(f"\n**{server}** (MCP Server):")
+            parts.append(f"  {description}")
+
+    return "\n".join(parts)
+
+
 def _format_mcp_tools_for_prompt(tools: List[Dict[str, Any]]) -> str:
-    """MCP 도구 목록을 프롬프트용 문자열로 변환
+    """MCP 도구 목록을 프롬프트용 문자열로 변환 (Legacy - 사용하지 않음)
 
     Args:
         tools: MCP 도구 목록
@@ -521,22 +656,24 @@ Rules:
 {available_resources_str}
 """
 
-    available_tools = _get_available_mcp_tools()
-    tools_description = _format_mcp_tools_for_prompt(available_tools)
+    # High-level planning에서는 서버 레벨만 사용 (개별 도구 조회는 ReAct에서 수행)
+    server_descriptions = _get_mcp_server_descriptions()
+    servers_description = _format_mcp_servers_for_prompt(server_descriptions)
 
-    available_servers = list(set(t.get("server", "") for t in available_tools if t.get("server")))
+    available_servers = list(server_descriptions.keys())
 
     user_message = f"""사용자 요청: {user_prompt}
 
 파일 목록:{file_info if file_info else " (없음)"}
 
-**사용 가능한 MCP 도구:**
-{tools_description}
+**사용 가능한 MCP 서버:**
+{servers_description}
 
 **사용 가능한 서버 목록 (tool_hint에 사용):** {', '.join(available_servers) if available_servers else 'None'}
 {additional_context}
-위 정보와 사용 가능한 MCP 도구를 바탕으로 High-level 작업 계획을 생성하세요.
-각 task의 tool_hint는 반드시 사용 가능한 서버 목록에서 선택하세요."""
+위 정보와 사용 가능한 MCP 서버를 바탕으로 High-level 작업 계획을 생성하세요.
+각 task의 tool_hint는 반드시 사용 가능한 서버 목록에서 선택하세요.
+**중요**: mcp_call 필드의 operation은 서버의 도구 이름입니다. ReAct 단계에서 해당 서버의 전체 도구 목록을 조회하여 적절한 도구를 선택합니다."""
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -544,7 +681,7 @@ Rules:
     ]
 
     try:
-        response = llm.chat(messages, response_format_json=True, timeout=30, max_tokens=2048)
+        response = llm.chat(messages, response_format_json=True, timeout=60, max_tokens=2048)
 
         content = response["choices"][0]["message"]["content"]
 
@@ -569,7 +706,8 @@ Rules:
                 task_type=task_type,
                 target_files=task_data.get("target_files", []),
                 dependencies=task_data.get("dependencies", []),
-                metadata=task_data.get("metadata", {})
+                metadata=task_data.get("metadata", {}),
+                mcp_call=task_data.get("mcp_call")
             )
             tasks.append(task)
 
@@ -611,13 +749,23 @@ def _generate_default_high_level_plan(
 
     # 디스크 이미지가 있으면 아티팩트 수집 Task 생성
     if disk_images:
+        # user_prompt에서 키워드 기반으로 tool_hint 결정
+        tool_hint = "dissect"  # 기본값
+        prompt_lower = user_prompt.lower()
+        if any(kw in prompt_lower for kw in ["browser", "history", "chrome", "firefox", "edge", "브라우저", "히스토리"]):
+            tool_hint = "dissect"  # E01 브라우저 분석은 dissect
+        elif any(kw in prompt_lower for kw in ["powershell", "consolehost", "파워셸"]):
+            tool_hint = "consolehost-history"
+        elif any(kw in prompt_lower for kw in ["lnk", "shortcut", "바로가기"]):
+            tool_hint = "lnk-parser"
+
         tasks.append(HighLevelTask(
             task_id="task_001",
             description=f"디스크 이미지 분석: {user_prompt[:100]}",
             task_type=TaskType.ARTIFACT_COLLECTION,
             target_files=disk_images,
             dependencies=[],
-            metadata={"priority": "high"}
+            metadata={"priority": "high", "tool_hint": tool_hint}
         ))
 
     # PE 파일이 있으면 파일 분석 Task 생성
