@@ -1,0 +1,59 @@
+{
+  "servers": {
+    "sleuthkit": {
+      "description": "File extraction from disk images - Extract specific files by inode/path from .E01/.dd/.raw disk images. Use ONLY for file extraction, NOT for disk image analysis."
+    },
+    "elastic": {
+      "description": "SIEM log search - Query Elasticsearch indices for security logs, Windows events, network logs. NOT for disk image analysis."
+    },
+    "velociraptor": {
+      "description": "Live endpoint forensics - Collect Windows artifacts (registry, prefetch, event logs) from running systems via Velociraptor agent. NOT for disk image analysis."
+    },
+    "ghidra": {
+      "description": "Binary/malware analysis - Reverse engineering, disassembly, decompilation of PE/ELF executable files. Use after extracting suspicious files."
+    },
+    "virustotal": {
+      "description": "Threat intelligence - Check file hashes (MD5/SHA256), IPs, domains against VirusTotal database for malware detection."
+    },
+    "browser-db-parser": {
+      "description": "Browser SQLite parser - Parse pre-extracted browser history SQLite files (Chrome History, Firefox places.sqlite, Edge History). LIMITATION: Cannot read E01 images directly. For E01 browser analysis, use dissect with browser.history plugin instead."
+    },
+    "consolehost-history": {
+      "description": "PowerShell forensics from E01 disk images - Extract and parse ConsoleHost_history.txt for PowerShell command history. SUPPORTS: .E01/.dd/.raw disk images directly."
+    },
+    "ez-tools": {
+      "description": "Windows artifact parsing - Parse pre-extracted Windows artifacts using Eric Zimmerman tools. LIMITATION: Cannot directly parse E01 images. Extract artifacts first using dissect/sleuthkit."
+    },
+    "windows-notification": {
+      "description": "Windows notification forensics - Parse Windows notification database (wpndatabase.db) for app notifications."
+    },
+    "jumplist": {
+      "description": "JumpList forensics - Parse Windows JumpList files (.automaticDestinations-ms, .customDestinations-ms) for recent file access."
+    },
+    "lnk-parser": {
+      "description": "LNK file forensics from E01 disk images - Extract and parse Windows shortcut (.lnk) files for file access history. SUPPORTS: .E01/.dd/.raw disk images directly."
+    },
+    "dissect": {
+      "description": "Disk image analysis - Multi-purpose disk image analysis using Dissect framework for .E01/.dd/.raw images. SUPPORTS: browser.history (Chrome/Firefox/Edge), prefetch, amcache, shellbags, shimcache, userassist, jumplist, registry analysis. Use for E01 browser history analysis and general Windows artifact collection."
+    }
+  },
+  "usage_guidelines": {
+    "disk_image_analysis": ["sleuthkit", "dissect"],
+    "file_extraction_from_disk": ["sleuthkit"],
+    "live_endpoint_analysis": ["velociraptor"],
+    "log_analysis": ["elastic"],
+    "malware_analysis": ["ghidra", "virustotal"],
+    "artifact_parsing": ["browser-db-parser", "consolehost-history", "windows-notification", "jumplist", "lnk-parser", "ez-tools"]
+  },
+  "priority_order": {
+    "browser_forensics_e01": ["dissect"],
+    "browser_forensics_sqlite": ["browser-db-parser"],
+    "lnk_forensics": ["lnk-parser"],
+    "powershell_forensics": ["consolehost-history"],
+    "notification_forensics": ["windows-notification"],
+    "jumplist_forensics": ["jumplist"],
+    "general_disk_analysis": ["dissect", "sleuthkit"],
+    "file_extraction": ["sleuthkit"]
+  },
+  "e01_capable_servers": ["dissect", "lnk-parser", "consolehost-history", "sleuthkit"]
+}
