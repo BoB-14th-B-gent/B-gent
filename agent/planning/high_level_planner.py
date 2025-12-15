@@ -516,7 +516,7 @@ def _generate_forced_dissect_elastic_tasks(
     LLM 계획 생성을 건너뛰고 모든 Evidence 수집을 강제로 실행합니다.
 
     실행 순서:
-    1. Dissect: Evtx, prefetch, jumplist, Browser history, registry, webserver.logs, network_history, mru.*
+    1. Dissect: prefetch, jumplist, Browser history, registry, network_history, mru.*
     2. Velociraptor: Amcache, UserAssist, ShimCache, Shellbags, BAM, download Folder, scheduled tasks, mru.recentdocs
     3. ConsoleHost_history: PowerShell command history
     4. Elasticsearch: SIEM Log 검색
@@ -533,7 +533,7 @@ def _generate_forced_dissect_elastic_tasks(
     if disk_images:
         tasks.append(HighLevelTask(
             task_id="task_001",
-            description="Dissect를 사용하여 디스크 이미지에서 Windows 아티팩트 수집 (Evtx, Prefetch, Jumplist, Browser History, Registry, Webserver Logs, Network History, MRU)",
+            description="Dissect를 사용하여 디스크 이미지에서 Windows 아티팩트 수집 (Prefetch, Jumplist, Browser History, Registry, Network History, MRU)",
             task_type=TaskType.ARTIFACT_COLLECTION,
             target_files=disk_images,
             dependencies=[],
@@ -549,33 +549,19 @@ def _generate_forced_dissect_elastic_tasks(
         description="Velociraptor를 사용하여 Live Endpoint에서 Windows 아티팩트 수집 (Amcache, UserAssist, ShimCache, Shellbags, BAM, Downloads, Scheduled Tasks, RecentDocs)",
         task_type=TaskType.ARTIFACT_COLLECTION,
         target_files=[],
-        dependencies=[],  # Dissect와 병렬 실행 가능
+        dependencies=[],
         metadata={
             "priority": "high",
             "tool_hint": "velociraptor"
         }
     ))
 
-    if disk_images:
-        tasks.append(HighLevelTask(
-            task_id="task_003",
-            description="ConsoleHost_history를 사용하여 PowerShell 명령어 히스토리 수집",
-            task_type=TaskType.ARTIFACT_COLLECTION,
-            target_files=disk_images,
-            dependencies=[],  # 병렬 실행 가능
-            metadata={
-                "priority": "high",
-                "tool_hint": "consolehost-history",
-                "use_consolehost_sequence": True  # ConsoleHost sequence 사용 플래그
-            }
-        ))
-
     tasks.append(HighLevelTask(
-        task_id="task_004",
+        task_id="task_003",
         description=f"Elasticsearch에서 SIEM 로그 검색: {user_prompt[:100]}",
         task_type=TaskType.LOG_COLLECTION,
         target_files=[],
-        dependencies=[],  # 병렬 실행 가능
+        dependencies=[],
         metadata={
             "priority": "high",
             "tool_hint": "elastic"

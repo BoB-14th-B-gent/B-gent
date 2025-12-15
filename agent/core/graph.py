@@ -37,63 +37,65 @@ def _analyze_task_result_for_iocs(
 
     truncated_result = task_result[:8000] if len(task_result) > 8000 else task_result
 
-    prompt = f"""당신은 DFIR(Digital Forensics and Incident Response) 전문가입니다.
-아래 MCP 실행 결과를 분석하여 VirusTotal로 조회할 가치가 있는 **의심스러운 IoC**를 판단하세요.
+    prompt = f"""You are a Digital Forensics and Incident Response (DFIR) expert.
+Analyze the MCP execution results below and determine which **suspicious IoCs** warrant checking on VirusTotal.
 
-## 분석 대상
+## Analysis Target
 - MCP: {mcp_name}
 - Task: {task_description}
-- 실행 결과:
+- Execution Results:
 ```
 {truncated_result}
 ```
 
-## 판단 기준
+## Judgment Criteria
 
-### VirusTotal 조회가 필요한 경우 (should_query_virustotal: true)
-- 의심스러운 경로의 파일 해시 (AppData, Temp, Startup, Downloads, ProgramData 등)
-- 알려지지 않은 외부 IP 통신 (C2 서버 의심)
-- 의심스러운 도메인 (DGA 패턴, 최근 등록 도메인 등)
-- 비정상적인 프로세스의 해시
-- 난독화된 스크립트 파일
-- 비정상적인 시간대 실행 파일
+### Cases requiring VirusTotal query (should_query_virustotal: true)
+- File hashes from suspicious paths (AppData, Temp, Startup, Downloads, ProgramData, etc.)
+- Unknown external IP communication (suspected C2 server)
+- Suspicious domains (DGA patterns, recently registered domains, etc.)
+- Hash of abnormal processes
+- Obfuscated script files
+- Executable files running at abnormal times
 
-### VirusTotal 조회가 불필요한 경우 (should_query_virustotal: false)
-- Windows 시스템 파일 (notepad.exe, cmd.exe, explorer.exe 등)의 정상 해시
-- 내부 IP (192.168.x.x, 10.x.x.x, 172.16-31.x.x, 127.x.x.x)
-- 알려진 정상 도메인 (microsoft.com, google.com, windows.com 등)
-- 컨텍스트상 정상으로 판단되는 항목
-- 정상 경로의 정상 프로그램 (C:\\Windows\\System32, C:\\Program Files 등)
+### Cases where VirusTotal query is unnecessary (should_query_virustotal: false)
+- Normal hash of Windows system files (notepad.exe, cmd.exe, explorer.exe, etc.)
+- Internal IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x, 127.x.x.x)
+- Known legitimate domains (microsoft.com, google.com, windows.com, etc.)
+- Items deemed legitimate based on context
+- Legitimate programs in legitimate paths (e.g., C:\Windows\System32, C:\Program Files)
 
-## 응답 형식 (JSON)
+## Response Format (JSON)
 ```json
 {{
-    "should_query_virustotal": true,
-    "reason": "판단 이유 (1-2문장)",
-    "suspicious_iocs": [
+    “should_query_virustotal”: true,
+    “reason”: “Reason for judgment (1-2 sentences)”,
+    “suspicious_iocs”: [
         {{
-            "type": "sha256",
-            "value": "실제 해시값",
-            "context": "왜 의심스러운지 설명",
-            "confidence": "high"
+            “type”: “sha256”,
+            “value”: “actual hash value”,
+            “context”: “explanation of why it's suspicious”,
+            “confidence”: “high”
         }}
     ],
-    "benign_iocs_excluded": [
+    “benign_iocs_excluded”: [
         {{
-            "type": "ip",
-            "value": "192.168.1.1",
-            "reason": "내부 네트워크 IP"
+            “type”: “ip”,
+            “value”: “192.168.1.1”,
+            “reason”: “Internal network IP”
         }}
     ]
 }}
 ```
 
-**중요**:
-- 단순히 해시/IP가 있다고 조회하지 마세요. **컨텍스트**를 보고 판단하세요.
-- confidence가 high/medium인 IoC만 suspicious_iocs에 포함하세요.
-- 확실히 정상인 항목은 benign_iocs_excluded에 포함하세요.
-- IoC가 발견되지 않으면 should_query_virustotal: false로 설정하세요.
-- suspicious_iocs 배열은 최대 10개까지만 포함하세요 (우선순위 순)."""
+**Important**:
+- Do not query simply because a hash/IP exists. Judge based on the **context**.
+- Only include IoCs with confidence high/medium in suspicious_iocs.
+- Include items that are definitely normal in benign_iocs_excluded.
+- If no IoC is found, set should_query_virustotal: false.
+- The suspicious_iocs array should contain a maximum of 10 entries (in order of priority).
+
+Translated with DeepL.com (free version)"""
 
     try:
         response = llm.chat(
@@ -296,8 +298,8 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
     user_prompt = state["user_prompt"]
     file_paths = state.get("file_paths", [])
     file_meta = state.get("file_meta", {})
-    is_first_execution = state.get("is_first_execution", True)  # 첫 실행 여부
-    previous_context = state.get("previous_context")  # 이전 Stage AI 분석 결과
+    is_first_execution = state.get("is_first_execution", True)
+    previous_context = state.get("previous_context")
 
     start_time = time.time()
 
@@ -915,12 +917,6 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
             "requires_client_id": True
         },
         {
-            "operation": "windows_execution_amcache",
-            "description": "Windows Execution - Amcache",
-            "params": {},
-            "requires_client_id": True
-        },
-        {
             "operation": "windows_execution_bam",
             "description": "Windows Execution - BAM (Background Activity Moderator)",
             "params": {},
@@ -1500,15 +1496,15 @@ def _execute_dissect_sequence(
     import time
 
     DISSECT_ARTIFACT_SEQUENCE = [
-        {"plugin_name": "os.windows.log.evtx.evtx", "description": "Windows Event Logs (Evtx)"},
         {"plugin_name": "os.windows.prefetch", "description": "Prefetch (프로그램 실행 기록)"},
         {"plugin_name": "os.windows.jumplist", "description": "Jumplist (최근 파일 기록)"},
         {"plugin_name": "browser.history", "description": "Browser History (Chrome, Firefox, Edge 등)"},
         {"plugin_name": "os.windows.regf.regf", "description": "Registry (전체 레지스트리)"},
-        {"plugin_name": "webserver.logs", "description": "Web Server Logs"},
         {"plugin_name": "os.windows.regf.nethist", "description": "Network History (네트워크 연결 기록)"},
         {"plugin_name": "os.windows.regf.mru.mstsc", "description": "Remote Desktop MRU"},
         {"plugin_name": "os.windows.regf.mru.opensave", "description": "OpenSave MRU"},
+        {"plugin_name": "os.windows.amcache", "description": "Amcache"},
+        {"tool_name": "extract_powershell_activity", "description": "PowerShell Activity (스크립트 실행 기록)"}
     ]
 
     observations = []
@@ -1544,30 +1540,43 @@ def _execute_dissect_sequence(
         }
 
     for idx, artifact in enumerate(DISSECT_ARTIFACT_SEQUENCE, 1):
-        plugin_name = artifact["plugin_name"]
         description = artifact["description"]
 
-        debug_write(f"│ Artifact {idx}/{len(DISSECT_ARTIFACT_SEQUENCE)}: {plugin_name} - {description}\n")
+        # tool_name이 있으면 직접 MCP tool 호출, 아니면 plugin 방식
+        if "tool_name" in artifact:
+            tool_name = artifact["tool_name"]
+            operation_name = tool_name
+            artifact_label = tool_name
+            debug_write(f"│ Artifact {idx}/{len(DISSECT_ARTIFACT_SEQUENCE)}: {tool_name} - {description}\n")
 
-        params = {
-            "image_path": image_path,
-            "plugin": plugin_name,
-            "max_rows": 1000  # 응답 크기 제한
-        }
+            params = {
+                "image_path": image_path
+            }
+        else:
+            plugin_name = artifact["plugin_name"]
+            operation_name = "run_single_plugin"
+            artifact_label = plugin_name
+            debug_write(f"│ Artifact {idx}/{len(DISSECT_ARTIFACT_SEQUENCE)}: {plugin_name} - {description}\n")
+
+            params = {
+                "image_path": image_path,
+                "plugin": plugin_name,
+                "max_rows": 1000
+            }
 
         try:
-            result = dissect_client.call_tool("dissect", "run_single_plugin", params, timeout=300)
+            result = dissect_client.call_tool("dissect", operation_name, params, timeout=300)
 
             if job_id:
                 from ..storage.job_storage import add_mcp_tool
-                add_mcp_tool(job_id, "dissect", "run_single_plugin", task_id)
+                add_mcp_tool(job_id, "dissect", operation_name, task_id)
 
             success = result.get("success", False) if isinstance(result, dict) else True
             result_data = result.get("result") if isinstance(result, dict) else result
 
             log_mcp_execution(
                 mcp_name="dissect",
-                tool_name="run_single_plugin",
+                tool_name=operation_name,
                 request=params,
                 response=result_data,
                 success=success,
@@ -1583,22 +1592,22 @@ def _execute_dissect_sequence(
                 "thought": f"Collecting {description}",
                 "action": {
                     "tool": "dissect",
-                    "operation": "run_single_plugin",
+                    "operation": operation_name,
                     "params": params
                 },
                 "observation": result_str,
                 "success": success
             })
 
-            debug_write(f"│   [OK] {plugin_name}: {len(result_str)} bytes\n")
+            debug_write(f"│   [OK] {artifact_label}: {len(result_str)} bytes\n")
 
         except Exception as e:
-            error_msg = f"Plugin execution failed: {str(e)}"
-            debug_write(f"│   [X] {plugin_name}: {error_msg}\n")
+            error_msg = f"Execution failed: {str(e)}"
+            debug_write(f"│   [X] {artifact_label}: {error_msg}\n")
 
             log_mcp_execution(
                 mcp_name="dissect",
-                tool_name="run_single_plugin",
+                tool_name=operation_name,
                 request=params,
                 response=str(e),
                 success=False,
@@ -1610,7 +1619,7 @@ def _execute_dissect_sequence(
                 "thought": f"Collecting {description}",
                 "action": {
                     "tool": "dissect",
-                    "operation": "run_single_plugin",
+                    "operation": operation_name,
                     "params": params
                 },
                 "observation": error_msg,
