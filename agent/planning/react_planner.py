@@ -466,22 +466,22 @@ def _build_conversation_context(
         if excluded_count > 0:
             user_message += f"\n*({excluded_count} older observations omitted)*\n"
 
-        user_message += "\n**Previous Observations (most recent first):**\n\n"
+        user_message += "\n**Previous Observations (Iteration 1 = most recent MCP tool result):**\n\n"
 
-        for obs in reversed(recent_observations):
-            iteration = obs.get("iteration", 0)
+        reversed_obs = list(reversed(recent_observations))
+        for display_idx, obs in enumerate(reversed_obs, start=1):
             thought = obs.get("thought", "")
             action = obs.get("action", {})
             observation = obs.get("observation", "")
 
             action_name = f"{action.get('tool', '')}.{action.get('operation', '')}"
 
-            user_message += f"**Iteration {iteration}:**\n"
+            user_message += f"**Iteration {display_idx}:**\n"
             user_message += f"- Thought: {thought}\n"
             user_message += f"- Action: {action_name}\n"
             user_message += f"- Result: {observation[:max_result_len]}{'...' if len(observation) > max_result_len else ''}\n\n"
 
-            if iteration == 1 and action.get('operation') == 'import_binary':
+            if obs.get("iteration", 0) == 1 and action.get('operation') == 'import_binary':
                 if is_debug_mode():
                     debug_write(f"\n[DEBUG] import_binary observation:\n{observation}\n\n")
 
