@@ -93,14 +93,12 @@ def _get_mcp_server_descriptions() -> Dict[str, str]:
     if not enabled_servers:
         return {}
 
-    # 파일에서 서버 설명 로드
     file_descriptions = _load_server_descriptions_from_file()
 
     try:
         client = get_mcp_clients_for_servers(enabled_servers)
         all_tools = client.get_all_tools()
 
-        # 서버별로 도구 그룹화
         servers = {}
         for tool in all_tools:
             server = tool.get("server", "unknown")
@@ -108,11 +106,9 @@ def _get_mcp_server_descriptions() -> Dict[str, str]:
                 servers[server] = []
             servers[server].append(tool)
 
-        # 서버별 설명 생성 (파일 설명 + 도구 목록)
         server_descriptions = {}
         for server, tools in servers.items():
             tool_names = [t.get("name", "") for t in tools]
-            # 파일에서 설명을 가져오고, 없으면 기본 설명 사용
             purpose = file_descriptions.get(server, f"MCP server with {len(tools)} tools")
             tool_list = ', '.join(tool_names[:8])
             if len(tool_names) > 8:
@@ -157,7 +153,6 @@ def _format_mcp_servers_for_prompt(server_descriptions: Dict[str, str]) -> str:
 
     e01_capable = _get_e01_capable_servers()
 
-    # 서버를 E01 지원/비지원으로 분리
     e01_servers = []
     other_servers = []
 
@@ -169,14 +164,12 @@ def _format_mcp_servers_for_prompt(server_descriptions: Dict[str, str]) -> str:
 
     parts = []
 
-    # E01 이미지 직접 분석 가능한 서버
     parts.append("\n**[E01 DISK IMAGE CAPABLE - Use for E01/dd/raw disk images]**")
     for server in e01_servers:
         description = server_descriptions[server]
         parts.append(f"\n**{server}** (MCP Server - E01 supported):")
         parts.append(f"  {description}")
 
-    # 기타 서버 (pre-extracted 파일 전용)
     if other_servers:
         parts.append("\n\n**[OTHER SERVERS - For pre-extracted files, logs, etc.]**")
         for server in other_servers:
@@ -346,14 +339,11 @@ def _format_mcp_descriptions(available_mcps: List[str]) -> str:
     if not tools:
         return "No MCP tools available."
 
-    # available_mcps에 해당하는 도구만 필터링
     filtered_tools = [t for t in tools if t.get("server") in available_mcps]
 
     if not filtered_tools:
-        # 필터링 결과가 없으면 모든 도구 사용
         filtered_tools = tools
 
-    # 서버별로 그룹화
     servers = {}
     for tool in filtered_tools:
         server = tool.get("server", "unknown")
@@ -516,6 +506,85 @@ def _filter_analyzable_files(file_paths: List[str]) -> Dict[str, List[str]]:
     return categorized
 
 
+def _generate_forced_dissect_elastic_tasks(
+    user_prompt: str,
+    disk_images: List[str]
+) -> List[HighLevelTask]:
+    """Stage 1에서 전체 Evidence 수집 Task 생성
+
+    ANALYZE_ON_STAGE1 설정이 활성화된 경우,
+    LLM 계획 생성을 건너뛰고 모든 Evidence 수집을 강제로 실행합니다.
+
+    실행 순서:
+    1. Dissect: Evtx, prefetch, jumplist, Browser history, registry, webserver.logs, network_history, mru.*
+    2. Velociraptor: Amcache, UserAssist, ShimCache, Shellbags, BAM, download Folder, scheduled tasks, mru.recentdocs
+    3. ConsoleHost_history: PowerShell command history
+    4. Elasticsearch: SIEM Log 검색
+
+    Args:
+        user_prompt: 사용자 요청
+        disk_images: 디스크 이미지 파일 경로 리스트
+
+    Returns:
+        List[HighLevelTask]: 전체 Evidence 수집 Task 리스트
+    """
+    tasks = []
+
+    if disk_images:
+        tasks.append(HighLevelTask(
+            task_id="task_001",
+            description="Dissect를 사용하여 디스크 이미지에서 Windows 아티팩트 수집 (Evtx, Prefetch, Jumplist, Browser History, Registry, Webserver Logs, Network History, MRU)",
+            task_type=TaskType.ARTIFACT_COLLECTION,
+            target_files=disk_images,
+            dependencies=[],
+            metadata={
+                "priority": "high",
+                "tool_hint": "dissect",
+                "use_dissect_sequence": True  # Dissect sequence 사용 플래그
+            }
+        ))
+
+    tasks.append(HighLevelTask(
+        task_id="task_002",
+        description="Velociraptor를 사용하여 Live Endpoint에서 Windows 아티팩트 수집 (Amcache, UserAssist, ShimCache, Shellbags, BAM, Downloads, Scheduled Tasks, RecentDocs)",
+        task_type=TaskType.ARTIFACT_COLLECTION,
+        target_files=[],
+        dependencies=[],  # Dissect와 병렬 실행 가능
+        metadata={
+            "priority": "high",
+            "tool_hint": "velociraptor"
+        }
+    ))
+
+    if disk_images:
+        tasks.append(HighLevelTask(
+            task_id="task_003",
+            description="ConsoleHost_history를 사용하여 PowerShell 명령어 히스토리 수집",
+            task_type=TaskType.ARTIFACT_COLLECTION,
+            target_files=disk_images,
+            dependencies=[],  # 병렬 실행 가능
+            metadata={
+                "priority": "high",
+                "tool_hint": "consolehost-history",
+                "use_consolehost_sequence": True  # ConsoleHost sequence 사용 플래그
+            }
+        ))
+
+    tasks.append(HighLevelTask(
+        task_id="task_004",
+        description=f"Elasticsearch에서 SIEM 로그 검색: {user_prompt[:100]}",
+        task_type=TaskType.LOG_COLLECTION,
+        target_files=[],
+        dependencies=[],  # 병렬 실행 가능
+        metadata={
+            "priority": "high",
+            "tool_hint": "elastic"
+        }
+    ))
+
+    return tasks
+
+
 def generate_high_level_plan(
     user_prompt: str,
     file_paths: List[str] = None,
@@ -576,6 +645,8 @@ def generate_high_level_plan(
                 )
             ]
     """
+    from ..config import get_config
+
     file_paths = file_paths or []
     file_meta = file_meta or {}
 
@@ -583,12 +654,23 @@ def generate_high_level_plan(
     disk_images = categorized_files["disk_images"]
     pe_files = categorized_files["pe_files"]
 
+    cfg = get_config()
+    sys.stderr.write(f"[DEBUG] is_first_execution={is_first_execution}, analyze_on_stage1={cfg.stage.analyze_on_stage1}\n")
+    sys.stderr.write(f"[DEBUG] disk_images={disk_images}\n")
+    sys.stderr.flush()
+    if is_first_execution and cfg.stage.analyze_on_stage1:
+        sys.stderr.write("[High-Level Planner] ANALYZE_ON_STAGE1 enabled - Force Dissect + Elastic mode\n")
+        sys.stderr.flush()
+        tasks = _generate_forced_dissect_elastic_tasks(user_prompt, disk_images)
+        sys.stderr.write(f"[DEBUG] Generated {len(tasks)} tasks\n")
+        sys.stderr.flush()
+        return tasks
+
     llm = LLMClient()
 
     try:
         system_prompt = load_prompt("high_level_planning_system.txt")
     except FileNotFoundError:
-        import sys
         sys.stderr.write("[WARNING] high_level_planning_system.txt not found, trying fallback\n")
         try:
             system_prompt = load_prompt("high_level_planning_fallback.txt")
@@ -656,7 +738,6 @@ Rules:
 {available_resources_str}
 """
 
-    # High-level planning에서는 서버 레벨만 사용 (개별 도구 조회는 ReAct에서 수행)
     server_descriptions = _get_mcp_server_descriptions()
     servers_description = _format_mcp_servers_for_prompt(server_descriptions)
 
@@ -726,8 +807,6 @@ Rules:
         return tasks
 
 
-
-
 def _generate_default_high_level_plan(
     user_prompt: str,
     disk_images: List[str],
@@ -747,9 +826,7 @@ def _generate_default_high_level_plan(
     """
     tasks = []
 
-    # 디스크 이미지가 있으면 아티팩트 수집 Task 생성
     if disk_images:
-        # user_prompt에서 키워드 기반으로 tool_hint 결정
         tool_hint = "dissect"  # 기본값
         prompt_lower = user_prompt.lower()
         if any(kw in prompt_lower for kw in ["browser", "history", "chrome", "firefox", "edge", "브라우저", "히스토리"]):
@@ -768,7 +845,6 @@ def _generate_default_high_level_plan(
             metadata={"priority": "high", "tool_hint": tool_hint}
         ))
 
-    # PE 파일이 있으면 파일 분석 Task 생성
     if pe_files:
         task_id = f"task_{len(tasks)+1:03d}"
         tasks.append(HighLevelTask(
@@ -780,7 +856,6 @@ def _generate_default_high_level_plan(
             metadata={"priority": "high"}
         ))
 
-    # 파일이 없으면 일반 분석 Task 생성
     if not tasks:
         tasks.append(HighLevelTask(
             task_id="task_001",
