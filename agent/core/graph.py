@@ -11,12 +11,9 @@ from typing import Dict, Any, Literal, List
 from langgraph.graph import StateGraph, END
 from ..schemas.common import AgentState
 from ..utils.prompt_loader import format_prompt
+from ..utils.debug import debug_write
 from ..llm_client.client import LLMClient
 
-
-# =============================================================================
-# IoC 분석 관련 (Task 완료 시 AI 기반 IoC 분석)
-# =============================================================================
 
 def _analyze_task_result_for_iocs(
     task_result: str,
@@ -40,63 +37,65 @@ def _analyze_task_result_for_iocs(
 
     truncated_result = task_result[:8000] if len(task_result) > 8000 else task_result
 
-    prompt = f"""당신은 DFIR(Digital Forensics and Incident Response) 전문가입니다.
-아래 MCP 실행 결과를 분석하여 VirusTotal로 조회할 가치가 있는 **의심스러운 IoC**를 판단하세요.
+    prompt = f"""You are a Digital Forensics and Incident Response (DFIR) expert.
+Analyze the MCP execution results below and determine which **suspicious IoCs** warrant checking on VirusTotal.
 
-## 분석 대상
+## Analysis Target
 - MCP: {mcp_name}
 - Task: {task_description}
-- 실행 결과:
+- Execution Results:
 ```
 {truncated_result}
 ```
 
-## 판단 기준
+## Judgment Criteria
 
-### VirusTotal 조회가 필요한 경우 (should_query_virustotal: true)
-- 의심스러운 경로의 파일 해시 (AppData, Temp, Startup, Downloads, ProgramData 등)
-- 알려지지 않은 외부 IP 통신 (C2 서버 의심)
-- 의심스러운 도메인 (DGA 패턴, 최근 등록 도메인 등)
-- 비정상적인 프로세스의 해시
-- 난독화된 스크립트 파일
-- 비정상적인 시간대 실행 파일
+### Cases requiring VirusTotal query (should_query_virustotal: true)
+- File hashes from suspicious paths (AppData, Temp, Startup, Downloads, ProgramData, etc.)
+- Unknown external IP communication (suspected C2 server)
+- Suspicious domains (DGA patterns, recently registered domains, etc.)
+- Hash of abnormal processes
+- Obfuscated script files
+- Executable files running at abnormal times
 
-### VirusTotal 조회가 불필요한 경우 (should_query_virustotal: false)
-- Windows 시스템 파일 (notepad.exe, cmd.exe, explorer.exe 등)의 정상 해시
-- 내부 IP (192.168.x.x, 10.x.x.x, 172.16-31.x.x, 127.x.x.x)
-- 알려진 정상 도메인 (microsoft.com, google.com, windows.com 등)
-- 컨텍스트상 정상으로 판단되는 항목
-- 정상 경로의 정상 프로그램 (C:\\Windows\\System32, C:\\Program Files 등)
+### Cases where VirusTotal query is unnecessary (should_query_virustotal: false)
+- Normal hash of Windows system files (notepad.exe, cmd.exe, explorer.exe, etc.)
+- Internal IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x, 127.x.x.x)
+- Known legitimate domains (microsoft.com, google.com, windows.com, etc.)
+- Items deemed legitimate based on context
+- Legitimate programs in legitimate paths (e.g., C:\Windows\System32, C:\Program Files)
 
-## 응답 형식 (JSON)
+## Response Format (JSON)
 ```json
 {{
-    "should_query_virustotal": true,
-    "reason": "판단 이유 (1-2문장)",
-    "suspicious_iocs": [
+    “should_query_virustotal”: true,
+    “reason”: “Reason for judgment (1-2 sentences)”,
+    “suspicious_iocs”: [
         {{
-            "type": "sha256",
-            "value": "실제 해시값",
-            "context": "왜 의심스러운지 설명",
-            "confidence": "high"
+            “type”: “sha256”,
+            “value”: “actual hash value”,
+            “context”: “explanation of why it's suspicious”,
+            “confidence”: “high”
         }}
     ],
-    "benign_iocs_excluded": [
+    “benign_iocs_excluded”: [
         {{
-            "type": "ip",
-            "value": "192.168.1.1",
-            "reason": "내부 네트워크 IP"
+            “type”: “ip”,
+            “value”: “192.168.1.1”,
+            “reason”: “Internal network IP”
         }}
     ]
 }}
 ```
 
-**중요**:
-- 단순히 해시/IP가 있다고 조회하지 마세요. **컨텍스트**를 보고 판단하세요.
-- confidence가 high/medium인 IoC만 suspicious_iocs에 포함하세요.
-- 확실히 정상인 항목은 benign_iocs_excluded에 포함하세요.
-- IoC가 발견되지 않으면 should_query_virustotal: false로 설정하세요.
-- suspicious_iocs 배열은 최대 10개까지만 포함하세요 (우선순위 순)."""
+**Important**:
+- Do not query simply because a hash/IP exists. Judge based on the **context**.
+- Only include IoCs with confidence high/medium in suspicious_iocs.
+- Include items that are definitely normal in benign_iocs_excluded.
+- If no IoC is found, set should_query_virustotal: false.
+- The suspicious_iocs array should contain a maximum of 10 entries (in order of priority).
+
+Translated with DeepL.com (free version)"""
 
     try:
         response = llm.chat(
@@ -175,10 +174,6 @@ def _create_virustotal_task(
         }
     }
 
-
-# =============================================================================
-# LangGraph 워크플로우 정의
-# =============================================================================
 
 def create_workflow(mode: Literal["two_stage"] = "two_stage") -> StateGraph:
     """하이브리드 워크플로우 생성 (모드 고정)
@@ -300,18 +295,15 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
     from ..planning.task_queue import TaskQueue
     from ..storage.job_storage import save_agent_state, update_stage
 
-    # print("\n[Phase 1] Planning")
-
     user_prompt = state["user_prompt"]
     file_paths = state.get("file_paths", [])
     file_meta = state.get("file_meta", {})
-    is_first_execution = state.get("is_first_execution", True)  # 첫 실행 여부
-    previous_context = state.get("previous_context")  # 이전 Stage AI 분석 결과
+    is_first_execution = state.get("is_first_execution", True)
+    previous_context = state.get("previous_context")
 
     start_time = time.time()
 
     try:
-        # print(f"│ Requesting LLM analysis...")
         high_level_tasks = generate_high_level_plan(
             user_prompt, file_paths, file_meta, is_first_execution, previous_context
         )
@@ -339,21 +331,17 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
 
         high_level_planning_time = time.time() - start_time
 
-        # print(f"[OK] Generated {len(high_level_tasks)} tasks")
-
-        # print(f"\n[Phase 2] Execution\n")
-
         timing = state.get("timing", {"high_level_planning": 0.0, "tasks": {}})
         timing["high_level_planning"] = high_level_planning_time
 
         job_id = state.get("job_id")
-        current_stage_id = state.get("stage_id", 1)  # state에서 stage_id 가져오기
+        current_stage_id = state.get("stage_id", 1)
         if job_id:
             plan_list = [
                 {
                     "task_id": t.task_id,
                     "description": t.description,
-                    "mcp_server": "",
+                    "mcp_server": t.metadata.get("tool_hint", "") or (t.mcp_call.get("server", "") if t.mcp_call else ""),
                     "mcp_tools": [],
                     "status": "pending"
                 }
@@ -361,7 +349,7 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
             ]
             save_agent_state(
                 agent_id=job_id,
-                stage_id=current_stage_id,  # 동적으로 stage_id 사용
+                stage_id=current_stage_id,
                 plan=plan_list,
                 status="running"
             )
@@ -380,7 +368,6 @@ def node_high_level_plan(state: Dict[str, Any]) -> Dict[str, Any]:
 
     except Exception as e:
         error_msg = f"High-level 계획 생성 실패: {str(e)}"
-        # print(f"\n[[X]] {error_msg}\n")
         import traceback
         traceback.print_exc()
 
@@ -489,18 +476,46 @@ def node_react_init(state: Dict[str, Any]) -> Dict[str, Any]:
     task = HighLevelTask.from_dict(current_task_dict)
     completed_tasks = state.get("completed_tasks", [])
 
-    # print(f"\nTask {len(completed_tasks) + 1}: {task.description}")
-
     dependency_context = ""
     if task.dependencies:
-        dependency_context = "\n\n**Previous Task Results:**\n"
+        dependency_context = "\n\n**Previous Task Results (IMPORTANT - use these outputs):**\n"
         for dep_id in task.dependencies:
             for completed in completed_tasks:
                 if completed.get("task_id") == dep_id:
                     dep_desc = completed.get("description", "")
                     dep_results = completed.get("execution_results", [])
+                    react_answer = completed.get("react_answer", "")
+                    dep_tool_hint = completed.get("metadata", {}).get("tool_hint", "")
                     success_count = sum(1 for r in dep_results if r.get("success"))
-                    dependency_context += f"\n- {dep_id}: {dep_desc} ({success_count}/{len(dep_results)} successful)\n"
+                    dep_success = completed.get("react_success", False)
+
+                    dependency_context += f"\n### {dep_id}: {dep_desc}\n"
+                    dependency_context += f"- Tool: {dep_tool_hint}\n"
+                    dependency_context += f"- Status: {success_count}/{len(dep_results)} successful\n"
+                    dependency_context += f"- Task Success: {'YES' if dep_success else 'NO - DEPENDENCY FAILED'}\n"
+
+                    if not dep_success or success_count == 0:
+                        dependency_context += f"\n**⚠️ WARNING: Dependency task {dep_id} FAILED or produced no results.**\n"
+                        dependency_context += f"**You may not be able to proceed with this task. Report the dependency failure.**\n"
+
+                    if dep_results:
+                        dependency_context += f"\n**MCP Execution Results (use these paths/data):**\n"
+                        for idx, exec_result in enumerate(dep_results[-3:], 1):
+                            action = exec_result.get("action", {})
+                            result_data = exec_result.get("result", "")
+                            exec_success = exec_result.get("success", False)
+
+                            action_name = f"{action.get('tool', '')}.{action.get('operation', '')}"
+                            dependency_context += f"\n{idx}. {action_name} ({'SUCCESS' if exec_success else 'FAILED'}):\n"
+
+                            if exec_success and result_data:
+                                result_preview = str(result_data)[:1500]
+                                dependency_context += f"```\n{result_preview}\n```\n"
+
+                    if react_answer:
+                        answer_preview = react_answer[:500] if len(react_answer) > 500 else react_answer
+                        dependency_context += f"\n**Analysis Result:**\n```\n{answer_preview}\n```\n"
+
                     break
 
     try:
@@ -519,18 +534,15 @@ Think step by step, observe results, and adapt your actions accordingly."""
 
     file_meta = state.get("file_meta", {})
 
-    available_tools = get_available_tools_for_task(task.description, file_meta)
+    tool_hint = task.metadata.get("tool_hint") or None
+    available_tools = get_available_tools_for_task(task.description, file_meta, server_hint=tool_hint)
 
-    import os
-    if os.getenv("MCP_DEBUG") == "1":
-        if available_tools:
-            tool_names = [f"{t['server']}.{t['tool_name']}" for t in available_tools[:3]]
-            # print(f"│ Available tools: {len(available_tools)} (first 3: {', '.join(tool_names)})")
+    if tool_hint and not available_tools:
+        debug_write(f"│ [WARNING] tool_hint '{tool_hint}' specified but no tools loaded. Check MCP server status.\n")
 
     tool_hint = task.metadata.get("tool_hint", "")
 
     if tool_hint == "velociraptor":
-        # print(f"│ Using predefined Velociraptor artifact sequence (skipping ReAct loop)")
         return {
             **state,
             "react_context": {
@@ -543,8 +555,6 @@ Think step by step, observe results, and adapt your actions accordingly."""
     if tool_hint == "sleuthkit":
         target_path = task.metadata.get("target_path")
         if target_path:
-            # print(f"│ Using predefined SleuthKit extraction pipeline (skipping ReAct loop)")
-            # print(f"│ Target file: {target_path}")
             return {
                 **state,
                 "react_context": {
@@ -555,6 +565,30 @@ Think step by step, observe results, and adapt your actions accordingly."""
                     "user_prompt": task.metadata.get("user_prompt", "")
                 }
             }
+
+    if tool_hint == "dissect" and task.metadata.get("use_dissect_sequence", False):
+        debug_write(f"│ Using predefined Dissect artifact sequence (skipping ReAct loop)\n")
+        return {
+            **state,
+            "react_context": {
+                "use_dissect_sequence": True,
+                "task_prompt": task_prompt,
+                "file_paths": task.target_files if task.target_files else [],
+                "user_prompt": state.get("user_prompt", "")
+            }
+        }
+
+    if tool_hint == "consolehost-history" and task.metadata.get("use_consolehost_sequence", False):
+        debug_write(f"│ Using predefined ConsoleHost_history sequence (skipping ReAct loop)\n")
+        return {
+            **state,
+            "react_context": {
+                "use_consolehost_sequence": True,
+                "task_prompt": task_prompt,
+                "file_paths": task.target_files if task.target_files else [],
+                "user_prompt": state.get("user_prompt", "")
+            }
+        }
 
     react_context = {
         "iteration": 0,
@@ -567,12 +601,8 @@ Think step by step, observe results, and adapt your actions accordingly."""
         "current_action": None,
         "finished": False,
         "answer": None,
-        "use_velociraptor_sequence": False,
-        "tool_hint": tool_hint  # MCP 전략 프롬프트 미리 로딩용
+        "use_velociraptor_sequence": False
     }
-
-    # print(f"│ ReAct Loop initialized (max {react_context['max_iterations']} iterations)")
-    # print(f"│ Available tools: {len(available_tools)}")
 
     return {
         **state,
@@ -607,12 +637,13 @@ def node_react_think(state: Dict[str, Any]) -> Dict[str, Any]:
     available_tools = react_context.get("available_tools", [])
     file_paths = react_context.get("file_paths", [])
     max_iterations = react_context.get("max_iterations", 30)
-    tool_hint = react_context.get("tool_hint", "")  # MCP 전략 힌트
 
-    # print(f"\n│ Iteration {iteration}/{max_iterations}")
-    # print(f"│ [THINK] Analyzing situation...")
 
     start_time = time.time()
+
+    current_task_dict = state.get("current_task", {})
+    mcp_call = current_task_dict.get("mcp_call") if current_task_dict else None
+    server_hint = current_task_dict.get("metadata", {}).get("tool_hint") if current_task_dict else None
 
     thought_result = generate_react_thought(
         task_description=task_prompt,
@@ -621,7 +652,8 @@ def node_react_think(state: Dict[str, Any]) -> Dict[str, Any]:
         file_paths=file_paths,
         max_iterations=max_iterations,
         user_prompt=state.get("user_prompt"),
-        tool_hint=tool_hint  # 전략 프롬프트 미리 로딩용
+        mcp_call=mcp_call,
+        server_hint=server_hint
     )
 
     think_time = time.time() - start_time
@@ -631,8 +663,6 @@ def node_react_think(state: Dict[str, Any]) -> Dict[str, Any]:
     action = thought_result.get("action")
     answer = thought_result.get("answer")
 
-    # print(f"│ [THINK] {thought[:100]}..." if len(thought) > 100 else f"│ [THINK] {thought}")
-    # print(f"│ Think time: {think_time:.2f}s")
 
     react_context["current_thought"] = thought
     react_context["current_action"] = action
@@ -661,11 +691,27 @@ def node_react_execute(state: Dict[str, Any]) -> Dict[str, Any]:
 
     react_context = state.get("react_context", {})
     action_dict = react_context.get("current_action")
+    iteration = react_context.get("iteration", 0)
+    max_iterations = react_context.get("max_iterations", 30)
 
     if not action_dict:
-        # print(f"│ [EXECUTE] No action to execute")
-        react_context["finished"] = True
-        react_context["answer"] = "No valid action provided - cannot execute"
+        if iteration > max_iterations // 2:
+            react_context["finished"] = True
+            react_context["answer"] = "No valid action provided after multiple attempts - cannot continue"
+            return {
+                **state,
+                "react_context": react_context
+            }
+
+        debug_write(f"│ [EXECUTE] No action at iteration {iteration} - will retry in next think\n")
+
+        react_context["current_action"] = {}
+
+        react_context["current_execution_result"] = {
+            "success": False,
+            "error": "No action was generated. Please review available tools and try again with a valid action."
+        }
+        react_context["current_execution_time"] = 0
         return {
             **state,
             "react_context": react_context
@@ -680,7 +726,6 @@ def node_react_execute(state: Dict[str, Any]) -> Dict[str, Any]:
 
     invalid_tools = ["none", "null", "undefined", "", "n/a"]
     if tool_name.lower() in invalid_tools or not tool_name:
-        # print(f"│ [EXECUTE] Invalid tool name: '{tool_name}' - forcing completion")
         react_context["finished"] = True
         react_context["answer"] = f"Invalid tool name provided: '{tool_name}'. No tools available to execute."
         return {
@@ -697,7 +742,6 @@ def node_react_execute(state: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     action_name = f"{action.tool}.{action.operation}"
-    # print(f"│ [EXECUTE] {action_name}")
 
     start_time = time.time()
 
@@ -709,7 +753,6 @@ def node_react_execute(state: Dict[str, Any]) -> Dict[str, Any]:
     react_context["current_execution_time"] = exec_time
 
     success_marker = "[OK]" if result.success else "[X]"
-    # print(f"│ [{success_marker}] Execution time: {exec_time:.2f}s")
 
     return {
         **state,
@@ -731,7 +774,7 @@ def node_react_observe(state: Dict[str, Any]) -> Dict[str, Any]:
 
     iteration = react_context.get("iteration", 0)
     thought = react_context.get("current_thought", "")
-    action_dict = react_context.get("current_action", {})
+    action_dict = react_context.get("current_action") or {}  # None 방어 처리
     exec_result = react_context.get("current_execution_result", {})
     exec_time = react_context.get("current_execution_time", 0)
 
@@ -756,10 +799,15 @@ def node_react_observe(state: Dict[str, Any]) -> Dict[str, Any]:
 
     react_context["observations"] = observations
 
-    obs_preview = observation[:200] if len(observation) > 200 else observation
-    # print(f"│ [OBSERVE] {obs_preview}...")
+    timing = state.get("timing", {"high_level_planning": 0.0, "tasks": {}})
+    current_task_dict = state.get("current_task", {})
+    task_id = current_task_dict.get("task_id") if current_task_dict else None
 
-    # DEBUG: observation 내용 확인 (성공/실패 모두 출력)
+    if task_id and task_id in timing.get("tasks", {}):
+        timing["tasks"][task_id]["execution"] = timing["tasks"][task_id].get("execution", 0.0) + exec_time
+
+    obs_preview = observation[:200] if len(observation) > 200 else observation
+
     import sys
     import os
     if os.getenv("DEBUG") == "1":
@@ -772,7 +820,8 @@ def node_react_observe(state: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         **state,
-        "react_context": react_context
+        "react_context": react_context,
+        "timing": timing
     }
 
 
@@ -787,7 +836,10 @@ def should_continue_react(state: Dict[str, Any]) -> str:
     """
     react_context = state.get("react_context", {})
 
-    if react_context.get("use_velociraptor_sequence") or react_context.get("use_sleuthkit_sequence"):
+    if (react_context.get("use_velociraptor_sequence") or
+        react_context.get("use_sleuthkit_sequence") or
+        react_context.get("use_dissect_sequence") or
+        react_context.get("use_consolehost_sequence")):
         return "finish"
 
     finished = react_context.get("finished", False)
@@ -865,12 +917,6 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
             "requires_client_id": True
         },
         {
-            "operation": "windows_execution_amcache",
-            "description": "Windows Execution - Amcache",
-            "params": {},
-            "requires_client_id": True
-        },
-        {
             "operation": "windows_execution_bam",
             "description": "Windows Execution - BAM (Background Activity Moderator)",
             "params": {},
@@ -906,7 +952,6 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
     start_time = time.time()
     client_id = None
 
-    # print(f"\n│ Collecting {len(VELOCIRAPTOR_SEQUENCE)} Velociraptor artifacts in predefined order...")
 
     for idx, artifact in enumerate(VELOCIRAPTOR_SEQUENCE, 1):
         operation = artifact["operation"]
@@ -916,10 +961,7 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
         if artifact.get("requires_client_id") and client_id:
             params["client_id"] = client_id
 
-        # print(f"│ Artifact {idx}/{len(VELOCIRAPTOR_SEQUENCE)}: {operation}")
-        # print(f"│   → {description}")
         if params.get("client_id"):
-            # print(f"│   → Using Client ID: {client_id}")
             pass
 
         try:
@@ -942,10 +984,8 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
                             client_id = match.group(1)
 
                 if client_id:
-                    # print(f"│   [OK] Extracted Client ID: {client_id}")
                     pass
                 else:
-                    # print(f"│   [!]  Warning: Could not extract Client ID")
                     pass
 
 
@@ -976,11 +1016,9 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
                 "observation": result_str
             })
 
-            # print(f"│   [OK] Success ({len(result_str)} bytes)")
 
         except Exception as e:
             error_msg = f"Tool execution failed: {str(e)}"
-            # print(f"│   [X] Failed: {str(e)}")
 
             log_mcp_execution(
                 mcp_name="velociraptor",
@@ -1003,11 +1041,7 @@ def _execute_velociraptor_sequence(user_prompt: str, file_paths: list = None, jo
             })
 
     execution_time = time.time() - start_time
-    # print(f"\n│ [OK] Velociraptor collection: {len(observations)} artifacts, {execution_time:.2f}s")
 
-    # print(f"│ ")
-    # print(f"│ Analyzing collected artifacts with LLM (this may take 1-2 minutes)...")
-    # print(f"│ ")
 
     llm = LLMClient()
 
@@ -1085,20 +1119,13 @@ Analyze the collected Velociraptor artifacts and provide a comprehensive forensi
 Use ACTUAL data values from artifacts. Be specific with timestamps, file paths, process names."""
 
     try:
-        # print(f"│ Requesting LLM analysis...")
         response = llm.chat(
             [{"role": "user", "content": analysis_prompt}],
             timeout=180
         )
         analysis = response["choices"][0]["message"]["content"]
-        # print(f"│ ")
-        # print(f"│ [OK] Analysis completed!")
-        # print(f"│ ")
 
     except Exception as e:
-        # print(f"│ ")
-        # print(f"│ [[X]] Analysis failed: {e}")
-        # print(f"│ ")
         analysis = f"""# Velociraptor Artifact Collection Summary
 
 {len(observations)} Windows forensic artifacts collected.
@@ -1109,7 +1136,6 @@ Use ACTUAL data values from artifacts. Be specific with timestamps, file paths, 
 Analysis generation failed: {str(e)}
 Please review raw artifact data."""
 
-    # print(f"│ Returning analysis results to workflow...")
 
     return {
         "observations": observations,
@@ -1158,11 +1184,7 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
         }
 
     image_path = file_paths[0]
-    # print(f"\n│ Extracting file using SleuthKit 3-step pipeline...")
-    # print(f"│ Image: {image_path}")
-    # print(f"│ Target: {target_path}")
 
-    # print(f"\n│ Step 1/3: Get disk partition info")
     try:
         mcp_client = get_mcp_client()
         result = mcp_client.call_tool("sleuthkit", "disk_partition_info", {"image_path": image_path}, timeout=120)
@@ -1202,15 +1224,12 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
 
         if not fs_offset_sectors:
             fs_offset_sectors = "239616"
-            # print(f"│   [!] Could not parse fs_offset_sectors, using default: {fs_offset_sectors}")
             pass
         else:
-            # print(f"│   [OK] Found fs_offset_sectors: {fs_offset_sectors}")
             pass
 
     except Exception as e:
         error_msg = f"disk_partition_info failed: {str(e)}"
-        # print(f"│   [[X]] {error_msg}")
         observations.append({
             "iteration": 1,
             "thought": "Get partition info to find fs_offset_sectors",
@@ -1225,13 +1244,11 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
             "success": False
         }
 
-    # print(f"\n│ Step 2/3: Search inode by path")
     filepath_unix = target_path.replace("\\", "/")
     if filepath_unix.startswith("C:/") or filepath_unix.startswith("c:/"):
         filepath_unix = filepath_unix[2:]
     elif filepath_unix.startswith("C:\\") or filepath_unix.startswith("c:\\"):
         filepath_unix = filepath_unix[2:]
-    # print(f"│   → Searching: {filepath_unix}")
 
     try:
         mcp_client = get_mcp_client()
@@ -1284,7 +1301,6 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
 
         if not inode:
             error_msg = f"Could not find inode for file: {target_path}"
-            # print(f"│   [X] {error_msg}")
             return {
                 "observations": observations,
                 "iterations": 2,
@@ -1292,11 +1308,9 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
                 "success": False
             }
 
-        # print(f"│   [OK] Found inode: {inode}")
 
     except Exception as e:
         error_msg = f"search_inode_by_path failed: {str(e)}"
-        # print(f"│   [[X]] {error_msg}")
         observations.append({
             "iteration": 2,
             "thought": f"Search inode for file: {filepath_unix}",
@@ -1311,9 +1325,7 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
             "success": False
         }
 
-    # print(f"\n│ Step 3/3: Extract file by inode")
     out_dir = "./data/output"
-    # print(f"│   → Output directory: {out_dir}")
 
     try:
         mcp_client = get_mcp_client()
@@ -1354,15 +1366,12 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
                         break
 
         if success:
-            # print(f"│   [OK] File extracted successfully")
             answer = f"Successfully extracted {target_path} (inode: {inode}) to {out_dir}"
         else:
-            # print(f"│   [!] Extraction may have failed - check result")
             answer = f"Extraction attempted for {target_path} (inode: {inode}), please check {out_dir}"
 
     except Exception as e:
         error_msg = f"extract_files_by_inode failed: {str(e)}"
-        # print(f"│   [[X]] {error_msg}")
         observations.append({
             "iteration": 3,
             "thought": f"Extract file with inode: {inode}",
@@ -1378,7 +1387,6 @@ def _execute_sleuthkit_sequence(target_path: str, file_paths: list = None, job_i
         }
 
     execution_time = time.time() - start_time
-    # print(f"\n│ [OK] SleuthKit extraction pipeline: 3 steps, {execution_time:.2f}s")
 
     from ..llm_client.client import LLMClient
     llm = LLMClient()
@@ -1429,20 +1437,13 @@ Output: {out_dir}
 Provide forensic analysis of this extracted file, including risk assessment and recommended next steps."""
 
     try:
-        # print(f"│ Requesting LLM analysis...")
         response = llm.chat(
             [{"role": "user", "content": analysis_prompt}],
             timeout=180
         )
         analysis = response["choices"][0]["message"]["content"]
-        # print(f"│ ")
-        # print(f"│ [OK] Analysis completed!")
-        # print(f"│ ")
 
     except Exception as e:
-        # print(f"│ ")
-        # print(f"│ [[X]] Analysis failed: {e}")
-        # print(f"│ ")
         analysis = f"""# SleuthKit File Extraction Summary
 
 ## Extraction Result
@@ -1457,13 +1458,508 @@ Provide forensic analysis of this extracted file, including risk assessment and 
 Analysis generation failed: {str(e)}
 Please review the extracted file manually at {out_dir}"""
 
-    # print(f"│ Returning analysis results to workflow...")
 
     return {
         "observations": observations,
         "iterations": 3,
         "answer": analysis,
         "success": success
+    }
+
+
+def _execute_dissect_sequence(
+    user_prompt: str,
+    file_paths: list = None,
+    job_id: str = None,
+    task_id: str = None
+) -> Dict[str, Any]:
+    """Dissect 아티팩트를 정해진 순서대로 수집 (run_single_artifact_plugin 사용)
+
+    run_all_artifact_plugins의 응답이 너무 커서 에이전트가 받을 수 없으므로,
+    개별 아티팩트를 하나씩 실행하여 수집합니다.
+
+    Args:
+        user_prompt: 사용자 요청
+        file_paths: 디스크 이미지 경로 리스트
+        job_id: 작업 ID
+        task_id: Task ID (task별 mcp_tools 추적용)
+
+    Returns:
+        Dict: ReAct 결과 형식과 동일
+            - observations: 각 도구 실행 결과
+            - iterations: 실행 횟수
+            - answer: 최종 분석 결과
+    """
+    from ..mcp_client.lazy_loader import get_mcp_client_for_server
+    from ..storage.evidence_logger import log_mcp_execution
+    from ..llm_client.client import LLMClient
+    import time
+
+    DISSECT_ARTIFACT_SEQUENCE = [
+        {"plugin_name": "os.windows.prefetch", "description": "Prefetch (프로그램 실행 기록)"},
+        {"plugin_name": "os.windows.jumplist", "description": "Jumplist (최근 파일 기록)"},
+        {"plugin_name": "browser.history", "description": "Browser History (Chrome, Firefox, Edge 등)"},
+        {"plugin_name": "os.windows.regf.regf", "description": "Registry (전체 레지스트리)"},
+        {"plugin_name": "os.windows.regf.nethist", "description": "Network History (네트워크 연결 기록)"},
+        {"plugin_name": "os.windows.regf.mru.mstsc", "description": "Remote Desktop MRU"},
+        {"plugin_name": "os.windows.regf.mru.opensave", "description": "OpenSave MRU"},
+        {"plugin_name": "os.windows.amcache", "description": "Amcache"},
+        {"tool_name": "extract_powershell_activity", "description": "PowerShell Activity (스크립트 실행 기록)"}
+    ]
+
+    observations = []
+    start_time = time.time()
+
+    if not file_paths or len(file_paths) == 0:
+        return {
+            "observations": [],
+            "iterations": 0,
+            "answer": "Error: No disk image file provided for Dissect analysis",
+            "success": False
+        }
+
+    image_path = file_paths[0]
+
+    debug_write(f"\n│ [Dissect Sequence] Collecting {len(DISSECT_ARTIFACT_SEQUENCE)} artifacts from {image_path}...\n")
+
+    try:
+        dissect_client = get_mcp_client_for_server("dissect")
+        if not dissect_client:
+            return {
+                "observations": [],
+                "iterations": 0,
+                "answer": "Error: Dissect MCP server not available",
+                "success": False
+            }
+    except Exception as e:
+        return {
+            "observations": [],
+            "iterations": 0,
+            "answer": f"Error: Failed to connect to Dissect MCP server: {str(e)}",
+            "success": False
+        }
+
+    for idx, artifact in enumerate(DISSECT_ARTIFACT_SEQUENCE, 1):
+        description = artifact["description"]
+
+        # tool_name이 있으면 직접 MCP tool 호출, 아니면 plugin 방식
+        if "tool_name" in artifact:
+            tool_name = artifact["tool_name"]
+            operation_name = tool_name
+            artifact_label = tool_name
+            debug_write(f"│ Artifact {idx}/{len(DISSECT_ARTIFACT_SEQUENCE)}: {tool_name} - {description}\n")
+
+            params = {
+                "image_path": image_path
+            }
+        else:
+            plugin_name = artifact["plugin_name"]
+            operation_name = "run_single_plugin"
+            artifact_label = plugin_name
+            debug_write(f"│ Artifact {idx}/{len(DISSECT_ARTIFACT_SEQUENCE)}: {plugin_name} - {description}\n")
+
+            params = {
+                "image_path": image_path,
+                "plugin": plugin_name,
+                "max_rows": 1000
+            }
+
+        try:
+            result = dissect_client.call_tool("dissect", operation_name, params, timeout=300)
+
+            if job_id:
+                from ..storage.job_storage import add_mcp_tool
+                add_mcp_tool(job_id, "dissect", operation_name, task_id)
+
+            success = result.get("success", False) if isinstance(result, dict) else True
+            result_data = result.get("result") if isinstance(result, dict) else result
+
+            log_mcp_execution(
+                mcp_name="dissect",
+                tool_name=operation_name,
+                request=params,
+                response=result_data,
+                success=success,
+                job_id=job_id
+            )
+
+            result_str = str(result)
+            if len(result_str) > 5000:
+                result_str = result_str[:5000] + "\n\n...(truncated)"
+
+            observations.append({
+                "iteration": idx,
+                "thought": f"Collecting {description}",
+                "action": {
+                    "tool": "dissect",
+                    "operation": operation_name,
+                    "params": params
+                },
+                "observation": result_str,
+                "success": success
+            })
+
+            debug_write(f"│   [OK] {artifact_label}: {len(result_str)} bytes\n")
+
+        except Exception as e:
+            error_msg = f"Execution failed: {str(e)}"
+            debug_write(f"│   [X] {artifact_label}: {error_msg}\n")
+
+            log_mcp_execution(
+                mcp_name="dissect",
+                tool_name=operation_name,
+                request=params,
+                response=str(e),
+                success=False,
+                job_id=job_id
+            )
+
+            observations.append({
+                "iteration": idx,
+                "thought": f"Collecting {description}",
+                "action": {
+                    "tool": "dissect",
+                    "operation": operation_name,
+                    "params": params
+                },
+                "observation": error_msg,
+                "success": False
+            })
+
+    execution_time = time.time() - start_time
+    debug_write(f"\n│ [OK] Dissect collection: {len(observations)} artifacts, {execution_time:.2f}s\n")
+    debug_write(f"│ Analyzing collected artifacts with LLM...\n")
+
+    llm = LLMClient()
+
+    data_summary = f"**User Request:** {user_prompt}\n\n"
+    data_summary += f"**Collected Artifacts ({len(observations)}):**\n\n"
+
+    for obs in observations:
+        action = obs['action']
+        plugin = action['params'].get('plugin_name', 'unknown')
+        result_preview = obs['observation'][:2000]
+        success_marker = "[OK]" if obs.get('success', True) else "[FAILED]"
+
+        data_summary += f"### {obs['iteration']}. {plugin} {success_marker}\n"
+        data_summary += f"Result: {result_preview}\n\n"
+
+    try:
+        analysis_prompt = format_prompt(
+            "dissect_analysis.txt",
+            data_summary=data_summary
+        )
+    except FileNotFoundError:
+        analysis_prompt = f"""You are a senior DFIR analyst specializing in Windows forensics.
+
+Analyze the collected Dissect artifacts and provide a comprehensive forensic report.
+
+{data_summary}
+
+**REQUIRED OUTPUT FORMAT** (Minimum 500 words):
+
+# Dissect Forensic Analysis Report
+
+## Executive Summary
+[2-3 sentences summarizing key findings]
+
+## Artifacts Analyzed
+- Browser History
+- Prefetch Files
+- Amcache
+- Registry (Shellbags, Shimcache, UserAssist, BAM, MRU)
+- Scheduled Tasks
+- Event Logs
+
+## Detailed Findings
+
+### Browser Activity
+[URLs visited, download history, timestamps]
+
+### Program Execution Evidence
+**Prefetch:** [Executed programs, timestamps, run counts]
+**Amcache:** [Installed applications, execution history]
+**UserAssist:** [User-executed programs, counts]
+**Shimcache:** [Application compatibility entries]
+**BAM:** [Background activity records]
+
+### File Access History
+**Shellbags:** [Folder navigation history]
+**Jumplist:** [Recent files and folders]
+**MRU (RecentDocs, OpenSave, MSTSC):** [Recent document access]
+
+### System Events
+**Event Logs:** [Security events, logon/logoff, service changes]
+**Scheduled Tasks:** [Persistence mechanisms, scheduled jobs]
+
+### Indicators of Compromise (IOCs)
+- **Suspicious Programs**: [paths, timestamps]
+- **Malicious Files**: [hashes, paths]
+- **Persistence Mechanisms**: [registry keys, scheduled tasks]
+- **Network Indicators**: [URLs, domains, IPs]
+
+## Timeline
+[Chronological sequence of key events]
+
+## Risk Assessment
+- **Severity**: Critical/High/Medium/Low
+- **Confidence**: High/Medium/Low
+- **Justification**: [Why]
+
+## Recommendations
+1. **Immediate Actions**: [Steps]
+2. **Further Investigation**: [Additional analysis needed]
+3. **Remediation**: [Fixes]
+
+---
+Use ACTUAL data values from artifacts. Be specific with timestamps, file paths, URLs, process names."""
+
+    try:
+        response = llm.chat(
+            [{"role": "user", "content": analysis_prompt}],
+            timeout=180
+        )
+        analysis = response["choices"][0]["message"]["content"]
+        debug_write(f"│ [OK] Dissect analysis completed!\n")
+
+    except Exception as e:
+        debug_write(f"│ [X] Analysis failed: {e}\n")
+        analysis = f"""# Dissect Artifact Collection Summary
+
+{len(observations)} Windows forensic artifacts collected from disk image.
+
+## Artifacts
+{chr(10).join([f"- {obs['action']['params'].get('plugin_name', 'unknown')}" for obs in observations])}
+
+Analysis generation failed: {str(e)}
+Please review raw artifact data."""
+
+    return {
+        "observations": observations,
+        "iterations": len(observations),
+        "answer": analysis,
+        "success": True
+    }
+
+
+def _execute_consolehost_history_sequence(
+    user_prompt: str,
+    file_paths: list = None,
+    job_id: str = None,
+    task_id: str = None
+) -> Dict[str, Any]:
+    """ConsoleHost_history를 사용하여 PowerShell 명령어 히스토리 수집
+
+    E01 디스크 이미지에서 모든 사용자의 ConsoleHost_history.txt를 추출하고 분석합니다.
+
+    Args:
+        user_prompt: 사용자 요청
+        file_paths: 디스크 이미지 경로 리스트
+        job_id: 작업 ID
+        task_id: Task ID (task별 mcp_tools 추적용)
+
+    Returns:
+        Dict: ReAct 결과 형식과 동일
+            - observations: 실행 결과
+            - iterations: 실행 횟수
+            - answer: 최종 분석 결과
+    """
+    from ..mcp_client.lazy_loader import get_mcp_client_for_server
+    from ..storage.evidence_logger import log_mcp_execution
+    from ..llm_client.client import LLMClient
+    import time
+
+    observations = []
+    start_time = time.time()
+
+    if not file_paths or len(file_paths) == 0:
+        return {
+            "observations": [],
+            "iterations": 0,
+            "answer": "Error: No disk image file provided for ConsoleHost_history analysis",
+            "success": False
+        }
+
+    image_path = file_paths[0]
+
+    debug_write(f"\n│ [ConsoleHost_history Sequence] Extracting PowerShell history from {image_path}...\n")
+
+    try:
+        consolehost_client = get_mcp_client_for_server("consolehost-history")
+        if not consolehost_client:
+            return {
+                "observations": [],
+                "iterations": 0,
+                "answer": "Error: ConsoleHost_history MCP server not available",
+                "success": False
+            }
+    except Exception as e:
+        return {
+            "observations": [],
+            "iterations": 0,
+            "answer": f"Error: Failed to connect to ConsoleHost_history MCP server: {str(e)}",
+            "success": False
+        }
+
+    params = {"image_path": image_path}
+
+    try:
+        result = consolehost_client.call_tool("consolehost-history", "extract_consolehost_history", params, timeout=300)
+
+        if job_id:
+            from ..storage.job_storage import add_mcp_tool
+            add_mcp_tool(job_id, "consolehost-history", "extract_consolehost_history", task_id)
+
+        success = result.get("success", False) if isinstance(result, dict) else True
+        result_data = result.get("result") if isinstance(result, dict) else result
+
+        log_mcp_execution(
+            mcp_name="consolehost-history",
+            tool_name="extract_consolehost_history",
+            request=params,
+            response=result_data,
+            success=success,
+            job_id=job_id
+        )
+
+        result_str = str(result)
+        if len(result_str) > 5000:
+            result_str = result_str[:5000] + "\n\n...(truncated)"
+
+        observations.append({
+            "iteration": 1,
+            "thought": "Extracting PowerShell command history from disk image",
+            "action": {
+                "tool": "consolehost-history",
+                "operation": "extract_consolehost_history",
+                "params": params
+            },
+            "observation": result_str,
+            "success": success
+        })
+
+        debug_write(f"│   [OK] ConsoleHost_history extracted: {len(result_str)} bytes\n")
+
+    except Exception as e:
+        error_msg = f"extract_consolehost_history failed: {str(e)}"
+        debug_write(f"│   [X] {error_msg}\n")
+
+        log_mcp_execution(
+            mcp_name="consolehost-history",
+            tool_name="extract_consolehost_history",
+            request=params,
+            response=str(e),
+            success=False,
+            job_id=job_id
+        )
+
+        observations.append({
+            "iteration": 1,
+            "thought": "Extracting PowerShell command history from disk image",
+            "action": {
+                "tool": "consolehost-history",
+                "operation": "extract_consolehost_history",
+                "params": params
+            },
+            "observation": error_msg,
+            "success": False
+        })
+
+        return {
+            "observations": observations,
+            "iterations": 1,
+            "answer": f"Failed to extract ConsoleHost_history: {error_msg}",
+            "success": False
+        }
+
+    execution_time = time.time() - start_time
+    debug_write(f"\n│ [OK] ConsoleHost_history extraction: {execution_time:.2f}s\n")
+    debug_write(f"│ Analyzing PowerShell commands with LLM...\n")
+
+    llm = LLMClient()
+
+    data_summary = f"**User Request:** {user_prompt}\n\n"
+    data_summary += f"**PowerShell Command History:**\n\n"
+
+    for obs in observations:
+        result_preview = obs['observation'][:3000]
+        success_marker = "[OK]" if obs.get('success', True) else "[FAILED]"
+        data_summary += f"### ConsoleHost_history {success_marker}\n"
+        data_summary += f"Result: {result_preview}\n\n"
+
+    analysis_prompt = f"""You are a senior DFIR analyst specializing in PowerShell forensics.
+
+Analyze the extracted ConsoleHost_history (PowerShell command history) and provide a comprehensive forensic report.
+
+{data_summary}
+
+**REQUIRED OUTPUT FORMAT** (Minimum 300 words):
+
+# PowerShell Forensic Analysis Report
+
+## Executive Summary
+[2-3 sentences summarizing key findings from PowerShell history]
+
+## Users Analyzed
+[List of users whose PowerShell history was found]
+
+## Suspicious Command Analysis
+
+### High-Risk Commands
+[Commands indicating potential malicious activity]
+- Encoded commands (Base64)
+- Download operations (Invoke-WebRequest, curl, wget)
+- Credential harvesting
+- Lateral movement (Enter-PSSession, Invoke-Command)
+- Persistence mechanisms
+- Execution policy bypasses
+
+### Command Timeline
+[Chronological sequence of significant commands]
+
+### Indicators of Compromise (IOCs)
+- **Suspicious URLs/IPs**: [URLs, domains, IPs from download commands]
+- **Suspicious Files**: [File paths referenced in commands]
+- **Encoded Payloads**: [Base64 or obfuscated content]
+
+## Risk Assessment
+- **Severity**: Critical/High/Medium/Low
+- **Confidence**: High/Medium/Low
+- **Justification**: [Why]
+
+## Recommendations
+1. **Immediate Actions**: [Steps]
+2. **Further Investigation**: [Additional analysis needed]
+3. **Remediation**: [Fixes]
+
+---
+Use ACTUAL command data from the extracted history. Be specific with command text, timestamps, and user accounts."""
+
+    try:
+        response = llm.chat(
+            [{"role": "user", "content": analysis_prompt}],
+            timeout=180
+        )
+        analysis = response["choices"][0]["message"]["content"]
+        debug_write(f"│ [OK] ConsoleHost_history analysis completed!\n")
+
+    except Exception as e:
+        debug_write(f"│ [X] Analysis failed: {e}\n")
+        analysis = f"""# ConsoleHost_history Collection Summary
+
+PowerShell command history extracted from disk image.
+
+## Extraction Result
+{observations[0]['observation'][:2000] if observations else 'No data'}
+
+Analysis generation failed: {str(e)}
+Please review raw command data."""
+
+    return {
+        "observations": observations,
+        "iterations": len(observations),
+        "answer": analysis,
+        "success": True
     }
 
 
@@ -1490,7 +1986,6 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
         return state
 
     if react_context.get("use_velociraptor_sequence"):
-        # import sys
         job_id = state.get("job_id")
         task_id = current_task_dict.get("task_id")
         task_prompt = react_context.get("task_prompt", "")
@@ -1520,15 +2015,8 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
         current_task_dict["react_iterations"] = react_result.get("iterations", 0)
         current_task_dict["react_success"] = react_result.get("success", False)
 
-        # # Velociraptor sequence 완료 로깅
-        # sys.__stdout__.write(
-        #     f"[Task Complete] {task_id} (Velociraptor): {len(execution_results)} artifacts collected, "
-        #     f"success={react_result.get('success', False)}\n"
-        # )
-        # sys.__stdout__.flush()
 
     elif react_context.get("use_sleuthkit_sequence"):
-        # import sys
         job_id = state.get("job_id")
         task_id = current_task_dict.get("task_id")
         target_path = react_context.get("target_path", "")
@@ -1558,39 +2046,86 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
         current_task_dict["react_iterations"] = react_result.get("iterations", 0)
         current_task_dict["react_success"] = react_result.get("success", False)
 
-        # # SleuthKit sequence 완료 로깅
-        # sys.__stdout__.write(
-        #     f"[Task Complete] {task_id} (SleuthKit): {len(execution_results)} steps, "
-        #     f"target={target_path}, success={react_result.get('success', False)}\n"
-        # )
-        # sys.__stdout__.flush()
+
+    elif react_context.get("use_dissect_sequence"):
+        job_id = state.get("job_id")
+        task_id = current_task_dict.get("task_id")
+        user_prompt = react_context.get("user_prompt", "")
+        file_paths = react_context.get("file_paths", [])
+
+        react_result = _execute_dissect_sequence(user_prompt, file_paths, job_id, task_id)
+
+        observations = react_result.get("observations", [])
+        execution_results = []
+
+        for obs in observations:
+            action = obs.get("action", {})
+            execution_results.append({
+                "success": obs.get("success", True),
+                "action": {
+                    "tool": action.get("tool", ""),
+                    "operation": action.get("operation", ""),
+                    "params": action.get("params", {}),
+                    "reason": obs.get("thought", "")
+                },
+                "result": obs.get("observation", ""),
+                "execution_time_seconds": 0
+            })
+
+        current_task_dict["execution_results"] = execution_results
+        current_task_dict["react_answer"] = react_result.get("answer", "")
+        current_task_dict["react_iterations"] = react_result.get("iterations", 0)
+        current_task_dict["react_success"] = react_result.get("success", False)
+
+        import sys
+        sys.__stdout__.write(
+            f"│ [Task Complete] {task_id} (Dissect): {len(execution_results)} artifacts collected, "
+            f"success={react_result.get('success', False)}\n"
+        )
+        sys.__stdout__.flush()
+
+    elif react_context.get("use_consolehost_sequence"):
+        job_id = state.get("job_id")
+        task_id = current_task_dict.get("task_id")
+        user_prompt = react_context.get("user_prompt", "")
+        file_paths = react_context.get("file_paths", [])
+
+        react_result = _execute_consolehost_history_sequence(user_prompt, file_paths, job_id, task_id)
+
+        observations = react_result.get("observations", [])
+        execution_results = []
+
+        for obs in observations:
+            action = obs.get("action", {})
+            execution_results.append({
+                "success": obs.get("success", True),
+                "action": {
+                    "tool": action.get("tool", ""),
+                    "operation": action.get("operation", ""),
+                    "params": action.get("params", {}),
+                    "reason": obs.get("thought", "")
+                },
+                "result": obs.get("observation", ""),
+                "execution_time_seconds": 0
+            })
+
+        current_task_dict["execution_results"] = execution_results
+        current_task_dict["react_answer"] = react_result.get("answer", "")
+        current_task_dict["react_iterations"] = react_result.get("iterations", 0)
+        current_task_dict["react_success"] = react_result.get("success", False)
+
+        import sys
+        sys.__stdout__.write(
+            f"│ [Task Complete] {task_id} (ConsoleHost_history): PowerShell history extracted, "
+            f"success={react_result.get('success', False)}\n"
+        )
+        sys.__stdout__.flush()
 
     else:
         observations = react_context.get("observations", [])
         answer = react_context.get("answer", "No answer provided")
         iteration = react_context.get("iteration", 0)
-        # task_id_for_log = current_task_dict.get("task_id", "unknown")
-        # task_desc_for_log = current_task_dict.get("description", "")[:50]
 
-        # # ReAct 즉시 종료 감지 및 로깅
-        # import sys
-        # if not observations or len(observations) == 0:
-        #     sys.__stdout__.write(
-        #         f"\n[ReAct Early Termination] Task {task_id_for_log} completed with NO tool executions\n"
-        #         f"  Description: {task_desc_for_log}...\n"
-        #         f"  Iterations: {iteration}\n"
-        #         f"  Answer: {answer[:300] if answer else 'None'}...\n\n"
-        #     )
-        #     sys.__stdout__.flush()
-        # else:
-        #     # observations가 있지만 iteration이 1인 경우 (빠른 종료)
-        #     if iteration <= 1:
-        #         sys.__stdout__.write(
-        #             f"\n[ReAct Quick Finish] Task {task_id_for_log} finished after {iteration} iteration(s)\n"
-        #             f"  Description: {task_desc_for_log}...\n"
-        #             f"  Tool executions: {len(observations)}\n"
-        #         )
-        #         sys.__stdout__.flush()
 
         execution_results = []
         for obs in observations:
@@ -1612,12 +2147,6 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
         current_task_dict["react_iterations"] = iteration
         current_task_dict["react_success"] = len(execution_results) > 0
 
-        # # 최종 로깅: execution_results 개수
-        # sys.__stdout__.write(
-        #     f"[Task Complete] {task_id_for_log}: {len(execution_results)} execution_results, "
-        #     f"iterations={iteration}, success={len(execution_results) > 0}\n"
-        # )
-        # sys.__stdout__.flush()
 
     timing = state.get("timing", {"high_level_planning": 0.0, "tasks": {}})
     task_id = current_task_dict.get("task_id")
@@ -1631,6 +2160,8 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
 
         task_timing.pop("start_time", None)
         task_timing.pop("exec_start", None)
+
+    current_task_dict["status"] = "done"
 
     completed_tasks = state.get("completed_tasks", [])
     completed_tasks.append(current_task_dict)
@@ -1647,12 +2178,10 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
         from ..storage.job_storage import update_task_status
         update_task_status(job_id, task_id, "done")
 
-    # Stage 1(첫 실행)에서 AI 기반 IoC 분석
     ioc_analysis_results = state.get("ioc_analysis_results", [])
     is_first_execution = state.get("is_first_execution", False)
 
     if is_first_execution:
-        # VirusTotal Task가 아닌 경우에만 IoC 분석 수행
         tool_hint = current_task_dict.get("metadata", {}).get("tool_hint", "")
         if tool_hint != "virustotal":
             task_result_str = current_task_dict.get("react_answer", "")
@@ -1665,17 +2194,14 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
                     task_description=current_task_dict.get("description", "")
                 )
 
-                # 분석 결과 저장 (Stage 2+에서 활용)
                 ioc_analysis["source_task_id"] = task_id
                 ioc_analysis["source_mcp"] = mcp_name
                 ioc_analysis_results.append(ioc_analysis)
 
-                # AI가 VirusTotal 조회 필요하다고 판단한 경우
                 if ioc_analysis.get("should_query_virustotal"):
                     suspicious_iocs = ioc_analysis.get("suspicious_iocs", [])
 
                     if suspicious_iocs:
-                        # 이미 VirusTotal Task가 큐에 있는지 확인
                         existing_vt_task = None
                         for t_id, t_dict in all_tasks_dict.items():
                             if t_dict.get("metadata", {}).get("tool_hint") == "virustotal":
@@ -1684,7 +2210,6 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
                                     break
 
                         if existing_vt_task:
-                            # 기존 VirusTotal Task에 IoC 추가
                             existing_iocs = existing_vt_task.get("metadata", {}).get("iocs", {})
                             for ioc in suspicious_iocs:
                                 ioc_type = ioc.get("type", "")
@@ -1706,7 +2231,6 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
                                         existing_iocs["domains"].append(ioc_value)
                             existing_vt_task["metadata"]["iocs"] = existing_iocs
                         else:
-                            # 새로운 VirusTotal Task 생성
                             max_task_num = 0
                             for t_id in all_tasks_dict.keys():
                                 try:
@@ -1733,7 +2257,6 @@ def node_task_complete(state: Dict[str, Any]) -> Dict[str, Any]:
                 sys.stderr.write(f"\n[AI IoC 분석] 오류 발생: {str(e)}\n")
                 sys.stderr.flush()
 
-    # print(f"│ [OK] Task completed: {len(current_task_dict['execution_results'])} actions, {current_task_dict['react_iterations']} iterations")
 
     return {
         **state,

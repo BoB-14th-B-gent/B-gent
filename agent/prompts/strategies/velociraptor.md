@@ -1,92 +1,65 @@
-# Velociraptor Endpoint Forensics Strategy
+# Velociraptor MCP Strategy
 
-**Tool**: velociraptor
-**Purpose**: Endpoint artifact collection and live system investigation
-**NOT for**: Searching logs already in a SIEM system
+## Purpose
+Live endpoint forensics - Collect Windows artifacts from running systems via Velociraptor agent.
 
----
+## Important Notice
+This is for LIVE endpoint analysis, NOT disk image analysis. For disk images, use sleuthkit or dissect.
 
-## When to Use Velociraptor
+## Required Tool Sequence
 
-**[OK] USE Velociraptor for:**
-- Collecting artifacts from live endpoints (registry, prefetch, browser history, etc.)
-- Endpoint forensics and artifact collection
-- Live system investigation
-- Retrieving data directly from endpoints
+### Standard Artifact Collection:
+1. **list_clients** - List available Velociraptor clients
+   - No required params
+   - Returns list of enrolled endpoints with client_id
 
-**[X] DO NOT use Velociraptor for:**
-- Analyzing logs that are already stored in a SIEM system
-- SIEM log analysis (use Elasticsearch instead)
-- Searching existing security events
+2. **list_artifacts** - List available artifact collectors
+   - No required params
+   - Returns available VQL artifacts (Windows.*, Linux.*, etc.)
 
----
+3. **collect_artifact** - Run artifact collection on endpoint
+   - Required params: `client_id`, `artifact_name`
+   - Optional: `parameters` (artifact-specific params)
 
-## Common Use Cases
+4. **get_flow_results** - Get collection results
+   - Required params: `client_id`, `flow_id` (from collect_artifact)
 
-### 1. Registry Analysis
-Collect Windows registry hives and keys for forensic analysis
+## Common Mistakes to Avoid
+- Do NOT use for disk image analysis - this is for live endpoints
+- Do NOT forget to get client_id first from list_clients
+- Do NOT use arbitrary artifact names - check list_artifacts first
+- Do NOT forget to check flow_results after collection
 
-### 2. Prefetch Analysis
-Extract prefetch files to understand program execution history
-
-### 3. Browser History Collection
-Retrieve browser artifacts (history, cookies, cache) from endpoints
-
-### 4. File Collection
-Collect specific files from endpoints for analysis
-
-### 5. Process Information
-Gather running process information and loaded modules
-
-### 6. Network Connections
-Collect active network connections and listening ports
-
----
-
-## CRITICAL: client_id Workflow (MUST FOLLOW)
-
-**⚠️ ALL Velociraptor artifact tools require a `client_id` parameter.**
-
-### Step 1: Get client_id FIRST
+## Parameter Examples
 ```json
+// Step 1: List clients
+{}
+
+// Step 2: List available artifacts
+{}
+
+// Step 3: Collect artifact
 {
-  "tool": "velociraptor",
-  "operation": "client_info",
-  "params": {"hostname": "DESKTOP-XXXXXX"}
+  "client_id": "C.1234567890abcdef",
+  "artifact_name": "Windows.System.Pslist"
 }
-```
-This returns the `client_id` (e.g., "C.321a73e41bec2516")
 
-### Step 2: Use client_id in ALL subsequent calls
-```json
+// Step 4: Get results
 {
-  "tool": "velociraptor",
-  "operation": "windows_execution_prefetch",
-  "params": {"client_id": "C.321a73e41bec2516"}
+  "client_id": "C.1234567890abcdef",
+  "flow_id": "F.ABCD1234"
 }
 ```
 
-**⚠️ NEVER call artifact tools without client_id - they will FAIL!**
+## Common Artifacts
+- Windows.System.Pslist: Running processes
+- Windows.Registry.NTUser: User registry hives
+- Windows.EventLogs.Evtx: Windows event logs
+- Windows.Forensics.Prefetch: Prefetch files
+- Windows.Detection.Yara: YARA scanning
 
----
-
-## Best Practices
-
-1. **ALWAYS get client_id first** - Call `client_info` before any other Velociraptor tool
-2. **Target specific endpoints** - Use hostname or client ID
-3. **Select appropriate artifacts** - Choose VQL artifacts based on investigation needs
-4. **Consider performance impact** - Some artifact collections are resource-intensive
-5. **Verify client connectivity** - Ensure endpoint is online before collection
-
----
-
-## Important Notes
-
-- Velociraptor connects to live endpoints via agent
-- Collection may take time depending on artifact size
-- Some artifacts require elevated privileges
-- Always verify you have proper authorization for endpoint access
-
----
-
-**Last Updated**: 2025-11-24
+## Expected Workflow
+1. list_clients -> Get target endpoint client_id
+2. list_artifacts -> Identify needed collectors
+3. collect_artifact -> Start collection
+4. get_flow_results -> Retrieve and analyze results

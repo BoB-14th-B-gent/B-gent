@@ -4,6 +4,7 @@ MCP 도구 호출, 타임아웃 및 재시도 관리 담당
 Lazy Loading으로 필요한 MCP 서버만 초기화
 """
 from __future__ import annotations
+import os
 import time
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -11,6 +12,7 @@ from typing import Dict, Any, Optional, List
 from ..schemas.actions import Action, ActionResult
 from ..mcp_client.lazy_loader import get_mcp_client_for_server
 from ..storage.evidence_logger import log_mcp_execution
+from ..utils.debug import debug_write
 from ..constants import (
     DEFAULT_RETRY_COUNT,
     MAX_BACKOFF_SECONDS,
@@ -23,10 +25,107 @@ _ghidra_import_cache: Dict[str, bool] = {}
 _validation_error_cache: Dict[str, int] = {}
 
 
+def _validate_file_paths(params: Dict[str, Any], action: Action) -> Optional[str]:
+    """파일 경로 파라미터의 유효성 검증
+
+    MCP 도구 호출 전에 파일 경로가 실제로 존재하는지 확인
+    Windows/WSL 경로 변환도 시도
+
+    Args:
+        params: 파라미터 딕셔너리
+        action: 액션 정보 (에러 메시지용)
+
+    Returns:
+        Optional[str]: 에러 메시지 (검증 실패 시), None (검증 성공 시)
+    """
+    path_keys = ["image_path", "file_path", "path", "image", "binary_path", "input_path"]
+
+    for key in path_keys:
+        if key not in params:
+            continue
+
+        path = params[key]
+        if not isinstance(path, str) or not path.strip():
+            continue
+
+        path = path.strip()
+
+        if os.path.exists(path):
+            continue
+
+        wsl_path = None
+        if len(path) >= 2 and path[1] == ':':
+            drive_letter = path[0].lower()
+            rest_path = path[2:].replace('\\', '/')
+            wsl_path = f"/mnt/{drive_letter}{rest_path}"
+
+            if os.path.exists(wsl_path):
+                params[key] = wsl_path
+                debug_write(f"│ [PATH FIX] Converted Windows path to WSL: {path} → {wsl_path}\n")
+                continue
+
+        win_path = None
+        if path.startswith('/mnt/') and len(path) > 6:
+            drive_letter = path[5].upper()
+            rest_path = path[6:].replace('/', '\\')
+            win_path = f"{drive_letter}:{rest_path}"
+
+            if os.path.exists(win_path):
+                params[key] = win_path
+                debug_write(f"│ [PATH FIX] Converted WSL path to Windows: {path} → {win_path}\n")
+                continue
+
+        error_msg = (
+            f"FILE NOT FOUND: Parameter '{key}' contains an invalid path\n\n"
+            f"Action: {action.tool}.{action.operation}\n"
+            f"Path provided: {path}\n"
+        )
+
+        if wsl_path:
+            error_msg += f"Also tried WSL path: {wsl_path}\n"
+        if win_path:
+            error_msg += f"Also tried Windows path: {win_path}\n"
+
+        error_msg += (
+            f"\nPossible fixes:\n"
+            f"  1. Check if the file exists at the specified path\n"
+            f"  2. Use absolute path instead of relative path\n"
+            f"  3. For disk images, ensure the .E01/.dd file is accessible\n"
+            f"  4. Check file permissions"
+        )
+
+        return error_msg
+
+    return None
+
+
+def _normalize_path(path: str) -> str:
+    """경로 문자열 정규화 - 이중 이스케이프된 백슬래시 수정
+
+    LLM이 Windows 경로를 생성할 때 백슬래시를 이중 이스케이프하는 경우가 있음.
+    예: "C:\\\\Users\\\\user" → "C:\\Users\\user"
+
+    Args:
+        path: 원본 경로 문자열
+
+    Returns:
+        str: 정규화된 경로 문자열
+    """
+    if not path or not isinstance(path, str):
+        return path
+
+    import re
+
+    path = re.sub(r'\\{2,}', r'\\', path)
+
+    return path
+
+
 def _sanitize_params(params: Dict[str, Any]) -> Dict[str, Any]:
-    """파라미터 값에서 trailing 콤마/공백 제거
+    """파라미터 값에서 trailing 콤마/공백 제거 및 불필요한 필드 제거
 
     LLM이 파일 경로 등을 생성할 때 trailing 콤마나 공백이 포함되는 경우가 있음.
+    또한 LLM이 'finished' 등 내부용 필드를 params에 포함시키는 경우가 있음.
     MCP 도구 호출 전에 이를 정제하여 오류 방지.
 
     Args:
@@ -38,10 +137,22 @@ def _sanitize_params(params: Dict[str, Any]) -> Dict[str, Any]:
     if not params:
         return params
 
+    internal_fields = {'finished', 'thought', 'answer', 'action'}
+
+    path_keys = {
+        'path', 'file_path', 'dir_path', 'folder_path', 'target_path',
+        'image_path', 'binary_path', 'input_path', 'output_path',
+        'out_dir', 'batch_file', 'batch_dir'
+    }
+
     sanitized = {}
     for key, value in params.items():
+        if key in internal_fields:
+            continue
         if isinstance(value, str):
             value = value.strip().rstrip(',').strip()
+            if key in path_keys:
+                value = _normalize_path(value)
         elif isinstance(value, list):
             value = [
                 v.strip().rstrip(',').strip() if isinstance(v, str) else v
@@ -71,6 +182,62 @@ def _get_tool_schema(client, server_name: str, tool_name: str) -> Optional[Dict[
             return tool.get('input_schema')
 
     return None
+
+
+def _filter_params_by_schema(params: Dict[str, Any], schema: Optional[Dict[str, Any]], action_info: str = "") -> Dict[str, Any]:
+    """Schema 기반 화이트리스트 필터링 (MCP 호출 직전 최종 방어선)
+
+    MCP 도구에 전달하기 전 schema에 정의된 파라미터만 허용합니다.
+    이를 통해 'finished', 'thought', 'answer' 등 ReAct 내부용 필드가
+    MCP tool params로 흘러들어가는 것을 완전히 차단합니다.
+
+    Args:
+        params: 원본 파라미터 딕셔너리
+        schema: JSON Schema (input_schema)
+        action_info: 로깅용 액션 정보 (예: "elastic.search_documents")
+
+    Returns:
+        Dict[str, Any]: schema에 정의된 키만 포함된 파라미터
+
+    Example:
+        >>> schema = {"properties": {"index": {}, "body": {}}, "required": ["index"]}
+        >>> params = {"index": "logs", "body": {}, "finished": False}
+        >>> _filter_params_by_schema(params, schema)
+        {"index": "logs", "body": {}}  # finished 제거됨
+    """
+    if not params:
+        return params
+
+    if not schema:
+        react_internal_fields = {'finished', 'thought', 'answer', 'action', 'react_state'}
+        filtered = {k: v for k, v in params.items() if k not in react_internal_fields}
+
+        removed = set(params.keys()) - set(filtered.keys())
+        if removed:
+            debug_write(f"│ [SANITIZE] Removed internal fields from params: {removed}\n")
+
+        return filtered
+
+    properties = schema.get('properties', {})
+
+    if not properties:
+        react_internal_fields = {'finished', 'thought', 'answer', 'action', 'react_state'}
+        return {k: v for k, v in params.items() if k not in react_internal_fields}
+
+    allowed_keys = set(properties.keys())
+    filtered = {k: v for k, v in params.items() if k in allowed_keys}
+
+    removed_keys = set(params.keys()) - allowed_keys
+    if removed_keys:
+        react_internal = removed_keys & {'finished', 'thought', 'answer', 'action', 'react_state'}
+        if react_internal:
+            debug_write(f"│ [SCHEMA FILTER] {action_info}: Blocked internal fields → {react_internal}\n")
+
+        if removed_keys:
+            debug_write(f"│ [DEBUG] Removed params not in schema: {removed_keys}\n")
+            debug_write(f"│ [DEBUG] Allowed by schema: {allowed_keys}\n")
+
+    return filtered
 
 
 def _validate_params_against_schema(params: Dict[str, Any], schema: Dict[str, Any], action: Action) -> Optional[str]:
@@ -119,8 +286,7 @@ def _basic_type_validation(params: Dict[str, Any], schema: Dict[str, Any], actio
                 f"VALIDATION ERROR: Missing required parameter '{req_field}'\n\n"
                 f"Action: {action.tool}.{action.operation}\n"
                 f"Your params: {params}\n"
-                f"Required params: {required}\n\n"
-                f"See: agent/prompts/strategies/{action.tool}.md for correct schema"
+                f"Required params: {required}"
             )
 
     for param_name, param_value in params.items():
@@ -139,24 +305,21 @@ def _basic_type_validation(params: Dict[str, Any], schema: Dict[str, Any], actio
                     f"Expected: string\n"
                     f"Got: {type(param_value).__name__} = {param_value}\n\n"
                     f"Fix:\n"
-                    f"  WRONG: \"{param_name}\": {param_value}{example_fix}\n\n"
-                    f"See: agent/prompts/strategies/{action.tool}.md"
+                    f"  WRONG: \"{param_name}\": {param_value}{example_fix}"
                 )
             elif expected_type == 'object' and not isinstance(param_value, dict):
                 return (
                     f"TYPE ERROR: Parameter '{param_name}' must be an OBJECT (dict)\n\n"
                     f"Action: {action.tool}.{action.operation}\n"
                     f"Expected: object/dict\n"
-                    f"Got: {type(param_value).__name__}\n\n"
-                    f"See: agent/prompts/strategies/{action.tool}.md"
+                    f"Got: {type(param_value).__name__}"
                 )
             elif expected_type == 'array' and not isinstance(param_value, list):
                 return (
                     f"TYPE ERROR: Parameter '{param_name}' must be an ARRAY (list)\n\n"
                     f"Action: {action.tool}.{action.operation}\n"
                     f"Expected: array/list\n"
-                    f"Got: {type(param_value).__name__}\n\n"
-                    f"See: agent/prompts/strategies/{action.tool}.md"
+                    f"Got: {type(param_value).__name__}"
                 )
 
     return None
@@ -195,8 +358,7 @@ def _format_jsonschema_error(error: 'jsonschema.ValidationError', action: Action
         f"Common fixes:\n"
         f"  1. Check parameter types (string vs list, object vs string)\n"
         f"  2. Ensure all required fields are present\n"
-        f"  3. Remove unexpected/unsupported parameters\n\n"
-        f"See: agent/prompts/strategies/{action.tool}.md for correct examples"
+        f"  3. Remove unexpected/unsupported parameters"
     )
 
 
@@ -222,8 +384,7 @@ def _enhance_mcp_error_message(error_msg: str, action: Action) -> str:
             f"Common issues:\n"
             f"  - Wrong parameter type (e.g., list instead of string)\n"
             f"  - Missing required parameters\n"
-            f"  - Unsupported parameters\n\n"
-            f"Check: agent/prompts/strategies/{action.tool}.md for correct schema"
+            f"  - Unsupported parameters"
         )
 
     if "missing required" in error_lower or "required argument" in error_lower:
@@ -231,8 +392,7 @@ def _enhance_mcp_error_message(error_msg: str, action: Action) -> str:
             f"MISSING REQUIRED PARAMETER\n\n"
             f"Action: {action.tool}.{action.operation}\n"
             f"Your params:\n{json_module.dumps(action.params, indent=2, ensure_ascii=False)}\n\n"
-            f"Error: {error_msg}\n\n"
-            f"See: agent/prompts/strategies/{action.tool}.md for required parameters"
+            f"Error: {error_msg}"
         )
 
     if "unexpected keyword" in error_lower:
@@ -241,15 +401,13 @@ def _enhance_mcp_error_message(error_msg: str, action: Action) -> str:
             f"Action: {action.tool}.{action.operation}\n"
             f"Your params:\n{json_module.dumps(action.params, indent=2, ensure_ascii=False)}\n\n"
             f"Error: {error_msg}\n\n"
-            f"One or more parameters are not supported by this tool.\n\n"
-            f"See: agent/prompts/strategies/{action.tool}.md for supported parameters"
+            f"One or more parameters are not supported by this tool."
         )
 
     return (
         f"MCP TOOL ERROR\n\n"
         f"Action: {action.tool}.{action.operation}\n"
-        f"Error: {error_msg}\n\n"
-        f"See: agent/prompts/strategies/{action.tool}.md for usage guide"
+        f"Error: {error_msg}"
     )
 
 def execute_action(action: Action, job_id: Optional[str] = None, task_id: Optional[str] = None) -> ActionResult:
@@ -334,12 +492,21 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
             )
 
     if action.params.get("_skip_execution"):
-        # print(f"[!]  건너뜀: {action.tool}.{action.operation}")
-        # print(f"   이유: 이전 단계 실패로 인해 실행 불가")
         return ActionResult(
             action=action,
             success=False,
             error="이전 단계에서 필요한 값을 추출하지 못해 실행을 건너뜁니다.",
+            execution_time_seconds=0.0
+        )
+
+    action.params = _sanitize_params(action.params)
+
+    path_validation_error = _validate_file_paths(action.params, action)
+    if path_validation_error:
+        return ActionResult(
+            action=action,
+            success=False,
+            error=path_validation_error,
             execution_time_seconds=0.0
         )
 
@@ -349,13 +516,10 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
         try:
 
             if attempt > 0:
-                # print(f"[!] 재시도 {attempt}/{max_retries}: {action.tool}.{action.operation}")
                 sleep_time = min(2 ** (attempt - 1), 10)
                 time.sleep(sleep_time)
 
             else:
-                # print(f"   실행 중: {action.tool}.{action.operation}")
-                # print(f"   이유: {action.reason}")
 
                 client = get_mcp_client_for_server(action.tool)
                 tool_schema = _get_tool_schema(client, action.tool, action.operation)
@@ -433,14 +597,8 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
                     if len(preview) > PREVIEW_MAX_LENGTH:
                         preview = preview[:PREVIEW_MAX_LENGTH] + f"\n... (총 {len(preview)}자, 나머지 생략)"
 
-                    # print(f"[OK] 완료 ({execution_time:.2f}초)")
-                    # print(f"\n   결과:")
-                    # print(SEPARATOR)
-                    # print(preview)
-                    # print(SEPARATOR)
                     pass
                 else:
-                    # print(f"[OK] 완료 ({execution_time:.2f}초) - 결과 없음")
                     pass
 
                 return ActionResult(
@@ -477,11 +635,9 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
                 )
 
                 if attempt < max_retries and _is_retryable_error(error_msg):
-                    # print(f"[X] 실패 (재시도 가능): {error_msg}")
                     continue
 
                 else:
-                    # print(f"[X] 실패: {error_msg}")
                     pass
 
                     return ActionResult(
@@ -497,11 +653,9 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
             last_error = error_msg
 
             if attempt < max_retries:
-                # print(f"[!]  {error_msg} - 재시도 중...")
                 continue
 
             else:
-                # print(f"[X] {error_msg}")
                 pass
 
                 return ActionResult(
@@ -517,12 +671,9 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
             last_error = error_msg
 
             if attempt < max_retries and _is_retryable_error(error_msg):
-                # print(f"[X] 예외 발생 (재시도 가능): {e}")
                 continue
 
             else:
-                # print(f"[X] 예외 발생: {e}")
-                # traceback 출력 (디버깅용)
                 import traceback
                 traceback.print_exc()
 
@@ -543,8 +694,8 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
 def _call_mcp_tool_with_timeout(action: Action, timeout: float) -> Dict[str, Any]:
     """타임아웃을 적용하여 MCP 도구 호출
 
-    ThreadPoolExecutor를 사용하여 별도 스레드에서 실행하고,
-    지정된 시간 내에 응답이 없으면 TimeoutError 발생
+    MCP client의 내장 타임아웃을 사용하여 도구를 호출합니다.
+    (ThreadPoolExecutor 사용 시 이벤트 루프 스레드 바인딩 문제로 데드락 발생)
 
     Args:
         action: 실행할 액션
@@ -563,19 +714,19 @@ def _call_mcp_tool_with_timeout(action: Action, timeout: float) -> Dict[str, Any
 
     sanitized_params = _sanitize_params(action.params)
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(
-            client.call_tool,
+    tool_schema = _get_tool_schema(client, action.tool, action.operation)
+    action_info = f"{action.tool}.{action.operation}"
+    filtered_params = _filter_params_by_schema(sanitized_params, tool_schema, action_info)
+
+    try:
+        return client.call_tool(
             server_name=action.tool,
             tool_name=action.operation,
-            arguments=sanitized_params,
-            timeout=None
+            arguments=filtered_params,
+            timeout=timeout
         )
-
-        try:
-            return future.result(timeout=timeout)
-        except FuturesTimeoutError:
-            raise FuturesTimeoutError(f"MCP 도구 호출 타임아웃 ({timeout}초)")
+    except asyncio.TimeoutError:
+        raise FuturesTimeoutError(f"MCP 도구 호출 타임아웃 ({timeout}초)")
 
 def _call_mcp_tool(action: Action) -> Dict[str, Any]:
     """MCP 도구 호출 (Lazy Loading)
@@ -596,10 +747,14 @@ def _call_mcp_tool(action: Action) -> Dict[str, Any]:
 
     sanitized_params = _sanitize_params(action.params)
 
+    tool_schema = _get_tool_schema(client, action.tool, action.operation)
+    action_info = f"{action.tool}.{action.operation}"
+    filtered_params = _filter_params_by_schema(sanitized_params, tool_schema, action_info)
+
     return client.call_tool(
         server_name=action.tool,
         tool_name=action.operation,
-        arguments=sanitized_params
+        arguments=filtered_params
     )
 
 def _is_retryable_error(error_msg: str) -> bool:

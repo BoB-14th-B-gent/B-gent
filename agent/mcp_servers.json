@@ -116,8 +116,8 @@
         "DISSECT_RDUMP": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/.venv/bin/rdump",
         "DISSECT_TARGET_FS": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/.venv/bin/target-fs",
         "DISSECT_ACQUIRE_BIN": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/.venv/bin/acquire",
-        "DISSECT_ACQUIRE_DIR": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/acquire_output",
-        "DISSECT_EXTRACT_DIR": "/mnt/c/Users/user/Desktop/Dissect-mcp-server/dissect_extracts",
+        "DISSECT_ACQUIRE_DIR": "/mnt/c/Users/user/B-gent/data/acquire_output",
+        "DISSECT_EXTRACT_DIR": "/mnt/c/Users/user/B-gent/data/dissect_extracts",
         "PATH": "/usr/bin:/usr/local/bin:/bin"
       },
       "enabled": true

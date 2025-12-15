@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Optional
 
+from .utils.debug import debug_print
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def _load_env_file():
@@ -181,6 +183,41 @@ class MCPConfig:
 
 @dataclass
 
+class StageConfig:
+    """Stage 실행 설정
+
+    Attributes:
+        analyze_on_stage1: Stage 1에서 Dissect + Elastic MCP 강제 실행 여부
+            - True: stage_id == 1일 때 Dissect sequence와 Elastic 검색을 강제로 실행
+            - False: LLM이 적절한 MCP를 판단하여 사용 (기본값)
+    """
+    analyze_on_stage1: bool = False
+
+@dataclass
+
+class ObservationConfig:
+    """Observation 관리 설정
+
+    ReAct 루프에서 이전 iteration 결과를 프롬프트에 포함할 때의 설정
+
+    Attributes:
+        max_observations: 프롬프트에 포함할 최대 observation 수 (Sliding Window)
+            - 이 수를 초과하면 오래된 observation은 프롬프트에서 제외됨
+            - 기본값: 10
+        max_result_length: 각 observation의 result 최대 길이 (문자 수)
+            - 이 길이를 초과하면 잘림 처리됨
+            - 기본값: 5000
+        include_action_summary: Action History Summary 포함 여부
+            - True: 전체 action 통계 요약을 항상 포함
+            - False: 요약 생략
+            - 기본값: True
+    """
+    max_observations: int = 5
+    max_result_length: int = 5000
+    include_action_summary: bool = True
+
+@dataclass
+
 class AppConfig:
     """애플리케이션 전체 설정
 
@@ -194,6 +231,8 @@ class AppConfig:
         velociraptor: Velociraptor 설정
         sleuthkit: SleuthKit 설정
         mcp: MCP 서버 설정
+        stage: Stage 실행 설정
+        observation: Observation 관리 설정
     """
     mongo: MongoConfig
     chroma: ChromaConfig
@@ -202,6 +241,8 @@ class AppConfig:
     velociraptor: VelociraptorConfig
     sleuthkit: SleuthKitConfig
     mcp: MCPConfig
+    stage: StageConfig
+    observation: ObservationConfig
 
 @lru_cache(maxsize=1)
 
@@ -236,8 +277,6 @@ def get_config() -> AppConfig:
     if not os.path.isabs(chroma_dir):
         chroma_dir = os.path.normpath(os.path.join(PROJECT_ROOT, chroma_dir))
 
-    # RAG_ENABLED 환경 변수로 RAG 활성화 여부 결정 (기본값: true)
-    # false로 설정하면 MCP 클라이언트에서 직접 도구 목록을 가져옴
     rag_enabled = os.getenv("RAG_ENABLED", "true").lower() == "true"
     chroma = ChromaConfig(dir=chroma_dir, rag_enabled=rag_enabled)
     profile = os.getenv("LLM_PROFILE", "local").lower()
@@ -283,7 +322,7 @@ def get_config() -> AppConfig:
         else:
             default_mcp_config = "mcp_servers.json"
         mcp_config_file = os.getenv("MCP_CONFIG_FILE", os.path.join(os.path.dirname(__file__), default_mcp_config))
-        print(f"[DEBUG] Platform: {sys.platform}, MCP config file: {mcp_config_file}")
+        debug_print(f"[DEBUG] Platform: {sys.platform}, MCP config file: {mcp_config_file}")
 
         if os.path.exists(mcp_config_file):
 
@@ -326,11 +365,21 @@ def get_config() -> AppConfig:
                         ))
 
             except Exception as e:
-                print(f"[!] MCP 설정 파일 로드 실패: {e}")
+                debug_print(f"[!] MCP 설정 파일 로드 실패: {e}")
     mcp = MCPConfig(enabled=mcp_enabled, servers=mcp_servers)
+
+    analyze_on_stage1 = os.getenv("ANALYZE_ON_STAGE1", "false").lower() == "true"
+    stage = StageConfig(analyze_on_stage1=analyze_on_stage1)
+
+    observation = ObservationConfig(
+        max_observations=int(os.getenv("OBSERVATION_MAX_COUNT", "10")),
+        max_result_length=int(os.getenv("OBSERVATION_MAX_RESULT_LENGTH", "5000")),
+        include_action_summary=os.getenv("OBSERVATION_INCLUDE_SUMMARY", "true").lower() == "true"
+    )
 
     return AppConfig(
         mongo=mongo, chroma=chroma, llm=llm, elastic=elastic,
-        velociraptor=velo, sleuthkit=tsk, mcp=mcp
+        velociraptor=velo, sleuthkit=tsk, mcp=mcp, stage=stage,
+        observation=observation
     )
 

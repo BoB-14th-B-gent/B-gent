@@ -10,17 +10,19 @@ from bson import ObjectId
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
+from ..utils.debug import debug_print
+
 try:
     BASE_DIR = Path(__file__).resolve().parents[2]
     ENV_PATH = BASE_DIR / ".env"
 
     if ENV_PATH.exists():
         load_dotenv(ENV_PATH, override=False)
-        print(f"[agent.service] .env loaded: {ENV_PATH}")
+        debug_print(f"[agent.service] .env loaded: {ENV_PATH}")
     else:
-        print(f"[agent.service] .env NOT FOUND at: {ENV_PATH}")
+        debug_print(f"[agent.service] .env NOT FOUND at: {ENV_PATH}")
 except Exception as e:
-    print(f"[agent.service] dotenv load skipped: {e}")
+    debug_print(f"[agent.service] dotenv load skipped: {e}")
 
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB = os.getenv("MONGO_DB")
@@ -31,7 +33,7 @@ def get_db():
     global _mongo_client
     if _mongo_client is None:
         _mongo_client = MongoClient(MONGO_URI)
-        print(f"[agent.service] connected → {MONGO_URI} / db={MONGO_DB}")
+        debug_print(f"[agent.service] connected → {MONGO_URI} / db={MONGO_DB}")
     return _mongo_client[MONGO_DB]
 
 def get_agent_state_from_db(trigger_id: str) -> Dict[str, Any]:
@@ -56,7 +58,7 @@ async def send_log(trigger_id: str, message: str):
     try:
         await send_log_to_client(trigger_id, message)
     except Exception as e:
-        print(f"Failed to send log via WebSocket: {e}")
+        debug_print(f"Failed to send log via WebSocket: {e}")
 
 class LogCapture(io.StringIO):
     def __init__(self, trigger_id: str, original_stdout):
@@ -144,7 +146,7 @@ def execute_agent_sync(trigger_id: str):
             loop.run_until_complete(send_log(trigger_id, f"[DEBUG] Loaded from MongoDB → conv={conversation_id}, stage={stage_id}, files={file_paths}"))
         except Exception as db_error:
             err_msg = f"[ERROR] Failed to load trigger/prompt from MongoDB: {db_error}"
-            print(err_msg)
+            debug_print(err_msg)
             loop.run_until_complete(send_log(trigger_id, err_msg))
             loop.close()
             return
@@ -165,7 +167,7 @@ def execute_agent_sync(trigger_id: str):
                     loop.run_until_complete(send_log(trigger_id, f"[INFO] File loaded: {filename}"))
                 else:
                     warning_msg = f"[WARNING] File not found: {absolute_path}"
-                    print(warning_msg)
+                    debug_print(warning_msg)
                     loop.run_until_complete(send_log(trigger_id, warning_msg))
 
         loop.run_until_complete(send_log(trigger_id, f"[INFO] Running analysis with {len(absolute_file_paths)} files..."))
@@ -189,10 +191,10 @@ def execute_agent_sync(trigger_id: str):
             sys.stdout = original_stdout
             sys.stderr = original_stderr
             error_detail = f"[ERROR] run_job failed: {str(run_job_error)}"
-            print(error_detail)
+            debug_print(error_detail)
             import traceback
             tb = traceback.format_exc()
-            print(tb)
+            debug_print(tb)
             loop.run_until_complete(send_log(trigger_id, error_detail))
             loop.run_until_complete(send_log(trigger_id, f"[TRACEBACK] {tb}"))
             raise
@@ -208,10 +210,10 @@ def execute_agent_sync(trigger_id: str):
         sys.stderr = original_stderr
 
         error_msg = f"[ERROR] Agent Execution Error: {str(e)}"
-        print(error_msg)
+        debug_print(error_msg)
         import traceback
         tb = traceback.format_exc()
-        print(tb)
+        debug_print(tb)
 
         try:
             error_loop = asyncio.new_event_loop()

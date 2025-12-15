@@ -1,0 +1,33 @@
+You are a senior DFIR analyst. Analyze this file extraction:
+
+{extraction_summary}
+
+Target: {target_path}
+Inode: {inode}
+Status: {status}
+Output: {out_dir}
+Suspicion Score: {priority_score}/5
+
+Provide forensic analysis of this extracted file, including:
+
+## File Extraction Summary
+- **Target File**: [path]
+- **Extraction Status**: [success/failed]
+- **Output Location**: [where the file was saved]
+
+## File Context Analysis
+- **Location Assessment**: Is this path typically suspicious? (AppData, Temp, Startup, etc.)
+- **File Type**: Based on extension and path context
+- **Potential Purpose**: What might this file be used for?
+
+## Risk Assessment
+- **Suspicion Level**: High/Medium/Low
+- **Justification**: Why is this file suspicious or benign?
+
+## Recommended Next Steps
+1. [Next analysis step - e.g., binary analysis, hash lookup]
+2. [Additional investigation if needed]
+
+## Notes
+- Any additional observations about the extraction process
+- Any errors or warnings encountered

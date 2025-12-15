@@ -5,6 +5,8 @@ ChromaDB 기반 벡터 검색으로 사용자 요청에 맞는 MCP 도구 검색
 from __future__ import annotations
 from typing import List, Dict, Any
 from ..config import get_config
+from ..utils.debug import debug_print, is_debug_mode
+
 _cfg = get_config()
 _RAG_DISABLED = False
 _coll = None
@@ -34,9 +36,8 @@ try:
     _seed_defaults()
 
 except Exception as e:
-    import os
-    if os.getenv("MCP_DEBUG") == "1":
-        print(f"⚠️  RAG 초기화 실패: {e}")
+    if is_debug_mode():
+        debug_print(f"⚠️  RAG 초기화 실패: {e}")
         import traceback
         traceback.print_exc()
     _RAG_DISABLED = True
@@ -84,12 +85,12 @@ def _load_mcp_tools_if_needed():
         if res and res.get("ids") and len(res["ids"]) > 0:
 
             return
-        print("⚠️  ChromaDB에 MCP 도구가 없습니다.")
-        print("   → manage_rag.py를 실행하여 'MCP 도구 초기 로딩'을 선택하세요.")
-        print("   → 한번만 실행하면 이후로는 빠르게 사용할 수 있습니다.")
+        debug_print("⚠️  ChromaDB에 MCP 도구가 없습니다.")
+        debug_print("   → manage_rag.py를 실행하여 'MCP 도구 초기 로딩'을 선택하세요.")
+        debug_print("   → 한번만 실행하면 이후로는 빠르게 사용할 수 있습니다.")
 
     except Exception as e:
-        print(f"⚠️  MCP 도구 확인 실패: {e}")
+        debug_print(f"⚠️  MCP 도구 확인 실패: {e}")
 
 def query_mcp_candidates(text: str, file_meta: dict = None, top_k: int = 5) -> list[dict]:
     """쿼리에 맞는 MCP 도구 후보 검색
@@ -106,7 +107,7 @@ def query_mcp_candidates(text: str, file_meta: dict = None, top_k: int = 5) -> l
             - 사용자 문서: document에 전체 내용 포함
     """
     if _RAG_DISABLED:
-        print("⚠️  RAG가 비활성화되어 있습니다. MCP 도구를 검색할 수 없습니다.")
+        debug_print("⚠️  RAG가 비활성화되어 있습니다. MCP 도구를 검색할 수 없습니다.")
 
         return []
     _load_mcp_tools_if_needed()

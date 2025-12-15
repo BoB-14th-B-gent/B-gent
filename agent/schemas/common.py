@@ -45,7 +45,6 @@ class AgentState(TypedDict, total=False):
     completed: bool
     error: Optional[str]
 
-    # Multi-Stage Conversation 필드
     conversation_id: Optional[str]
     stage_id: int
     is_first_execution: bool

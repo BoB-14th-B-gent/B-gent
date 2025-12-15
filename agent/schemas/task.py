@@ -61,10 +61,11 @@ class HighLevelTask:
     low_level_plan: List[Dict[str, Any]] = field(default_factory=list)
     execution_results: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    mcp_call: Optional[Dict[str, Any]] = field(default=None)
 
     def to_dict(self) -> Dict[str, Any]:
         """딕셔너리로 변환 (JSON 직렬화용)"""
-        return {
+        result = {
             "task_id": self.task_id,
             "description": self.description,
             "task_type": self.task_type.value,
@@ -75,6 +76,9 @@ class HighLevelTask:
             "execution_results": self.execution_results,
             "metadata": self.metadata
         }
+        if self.mcp_call:
+            result["mcp_call"] = self.mcp_call
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> HighLevelTask:
@@ -88,7 +92,8 @@ class HighLevelTask:
             status=TaskStatus(data.get("status", "pending")),
             low_level_plan=data.get("low_level_plan", []),
             execution_results=data.get("execution_results", []),
-            metadata=data.get("metadata", {})
+            metadata=data.get("metadata", {}),
+            mcp_call=data.get("mcp_call")
         )
 
     def is_ready(self, completed_task_ids: set) -> bool:
