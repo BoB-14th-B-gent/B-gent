@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict, Any
 from pydantic import BaseModel, Field
 
 class EvidenceFromConversationIn(BaseModel):
@@ -37,7 +37,7 @@ class EvidenceInputDetail(BaseModel):
     stage_id: Optional[int] = None
     filename: Optional[str] = None
     size: Optional[int] = None
-    data: Optional[dict] = None
+    data: Optional[Any] = None
     data_gridfs_id: Optional[str] = None
     ingested_at: Optional[datetime] = None
 
@@ -52,3 +52,16 @@ class McpEvidenceListItem(BaseModel):
 
 class McpEvidenceListOut(BaseModel):
     items: List[McpEvidenceListItem]
+
+class McpEvidenceDetailOut(BaseModel):
+    id: str = Field(alias="_id")
+    trigger_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    stage_id: Optional[int] = None
+    mcp_name: Optional[str] = None
+    tool_name: Optional[str] = None
+    agent_id: Optional[str] = None
+    success: Optional[bool] = None
+    created_at: Optional[datetime] = None
+    request: Optional[Dict[str, Any]] = None
+    response: Optional[Dict[str, Any]] = None
