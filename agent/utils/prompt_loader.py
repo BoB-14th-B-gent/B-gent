@@ -6,10 +6,8 @@ import os
 from pathlib import Path
 from typing import Dict, Optional
 
-# 프롬프트 디렉토리 경로
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
-# 캐시: 파일을 한 번만 읽고 메모리에 저장
 _prompt_cache: Dict[str, str] = {}
 
 

@@ -9,11 +9,9 @@ import atexit
 import logging
 import json
 
-# Windows cp949 인코딩 문제 해결을 위한 UTF-8 강제 설정
 os.environ["PYTHONIOENCODING"] = "utf-8"
 os.environ["PYTHONUTF8"] = "1"
 if sys.platform == "win32":
-    # Windows 콘솔 출력 인코딩을 UTF-8로 설정
     try:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
         sys.stderr.reconfigure(encoding='utf-8', errors='replace')
@@ -153,7 +151,6 @@ def run_with_progress(user_prompt: str, file_paths: list = None, generate_report
     환경변수:
         DEBUG=1: 디버그 모드 - 출력을 억제하지 않고 모든 로그 표시
     """
-    # DEBUG 모드 확인
     debug_mode = os.getenv("DEBUG") == "1"
 
     original_log_levels = {}
@@ -532,19 +529,16 @@ def interactive_mode():
                     file_paths = []
                     missing_files = []
                     for path in file_input.split(','):
-                        # 공백 및 trailing 쉼표 제거
                         path = path.strip().rstrip(',').strip()
                         if not path:
                             continue
 
                         resolved_path = None
 
-                        # 1. 절대 경로인 경우 그대로 사용
                         if os.path.isabs(path):
                             if os.path.exists(path):
                                 resolved_path = path
                             else:
-                                # WSL <-> Windows 경로 변환 시도
                                 if path.startswith('/mnt/') and len(path) > 6:
                                     drive_letter = path[5].upper()
                                     rest_path = path[6:].replace('/', '\\')
@@ -552,7 +546,6 @@ def interactive_mode():
                                     if os.path.exists(win_path):
                                         resolved_path = win_path
                         else:
-                            # 2. 상대 경로인 경우 여러 위치 시도
                             search_paths = [
                                 os.path.join(os.getcwd(), 'data', path),  # data/ 폴더
                                 os.path.join(os.getcwd(), path),           # 현재 폴더
@@ -568,14 +561,12 @@ def interactive_mode():
                             file_paths.append(resolved_path)
                             console.print(f"[dim]  → Found: {resolved_path}[/dim]")
                         else:
-                            # 파일이 없어도 경로는 추가 (MCP에서 에러 처리)
                             default_path = os.path.join(os.getcwd(), 'data', path) if not os.path.isabs(path) else path
                             file_paths.append(default_path)
                             missing_files.append(path)
 
                     console.print(f"[dim]→ {len(file_paths)} file(s) provided[/dim]")
 
-                    # 파일이 존재하지 않으면 경고 출력
                     if missing_files:
                         console.print(f"[yellow]⚠ Warning: File(s) not found: {', '.join(missing_files)}[/yellow]")
                         console.print(f"[yellow]  Please check if the file path is correct.[/yellow]")
