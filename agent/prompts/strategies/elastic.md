@@ -117,7 +117,7 @@ For malicious behavior detection or incident analysis:
 ### 2) Zero-Hit (`hits = 0`) Mandatory Fallback Routine
 If a search executes successfully but returns 0 hits, you MUST follow this sequence:
 1. Run `match_all` with small size (1-5) to inspect real field names and values
-2. Run aggregation (`size: 0` + `aggs`) on key pivot fields (e.g. `event.code`, `winlog.event_id`, `process.name`)
+2. Run aggregation (`size: 0` + `aggs`) on key pivot fields (e.g. `event.code`, `event_id`, `process.name`)
 3. Rebuild the query using observed field names and value formats
 
 Repeating keyword-based searches after a 0-hit result is FORBIDDEN.
@@ -149,12 +149,43 @@ When you get 0 hits, you MUST perform the following mental check:
 > Reading them again... I see `powershell.exe -w hidden` and `Invoke-WebRequest`.
 > I will pivot and search for `*hidden*` or the detected IP instead."
 
+###  Critical Logic: Omnidirectional Entity Search (Use `OR` Queries)
+When you identify **ANY suspicious entity** (e.g., an unknown executable, a suspicious script, or a high-entropy string) from previous logs, do NOT guess its role (Actor vs. Target).
+
+**Strategy:** Use a `bool` query with `should` (OR logic) to search ALL possible contexts for that specific entity at once.
+
+####  Recommended Query Pattern
+Construct a query that asks: "Show me logs where **THIS ENTITY** appears as the **Image**, **Parent**, **TargetFile**, or **Argument**."
+
+**Example Query Structure (JSON):**
+*Replace `<SUSPICIOUS_ENTITY_NAME>` with the actual value you found (e.g., the filename or script name).*
+
+
+```json
+{
+  "index": "sysmon-logs",
+  "body": {
+    "query": {
+      "bool": {
+        "minimum_should_match": 1,
+        "should": [
+          { "wildcard": { "process.name": "*<SUSPICIOUS_ENTITY_NAME>*" } },        
+          { "wildcard": { "process.parent.name": "*<SUSPICIOUS_ENTITY_NAME>*" } }, 
+          { "wildcard": { "file.path": "*<SUSPICIOUS_ENTITY_NAME>*" } },           
+          { "wildcard": { "process.command_line": "*<SUSPICIOUS_ENTITY_NAME>*" } } 
+        ]
+      }
+    }
+  }
+}
+```
 ---
 
 
 ## Parameter Examples
 
 ### list_indices (ALWAYS FIRST)
+
 ```json
 {}
 ```
@@ -162,7 +193,7 @@ When you get 0 hits, you MUST perform the following mental check:
 ### search_documents - Correct Format
 **CRITICAL:** `size` parameter MUST be outside the `query` block.
 
-**✅ Correct Structure:**
+**Correct Structure:**
 ```json
 {
   "index": "sysmon-logs",
@@ -223,14 +254,14 @@ When you get 0 hits, you MUST perform the following mental check:
   }
 }
 
-// Example 4: Search by winlog.event_id
+// Example 4: Search by event_id
 {
   "index": "sysmon-logs",
   "body": {
     "query": {
       "bool": {
         "must": [
-          {"term": {"winlog.event_id": "1"}}
+          {"term": {"event_id": "1"}}
         ]
       }
     },
