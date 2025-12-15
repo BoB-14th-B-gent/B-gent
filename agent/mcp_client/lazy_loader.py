@@ -13,8 +13,8 @@ _cfg = get_config()
 _lazy_clients: Dict[str, MCPClientManagerSync] = {}
 
 _connection_failure_cache: Dict[str, tuple] = {}
-_RETRY_COOLDOWN_SECONDS = 300  # 5분 후 재시도
-_MAX_FAILURE_COUNT = 3  # 최대 실패 횟수 (이후 해당 세션에서 영구 스킵)
+_RETRY_COOLDOWN_SECONDS = 300
+_MAX_FAILURE_COUNT = 3
 
 
 def _should_skip_server(server_name: str) -> bool:

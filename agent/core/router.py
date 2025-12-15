@@ -70,22 +70,19 @@ def run_job(
     sys.stderr.write(f"\n[DEBUG router.run_job] conversation_id={conversation_id}, stage_id={stage_id}, trigger_id={trigger_id}\n")
     sys.stderr.write(f"[DEBUG router.run_job] file_paths (input)={file_paths}\n")
 
-    # 해당 conversation에서 첫 번째 실행인지 확인
     is_first_execution = is_first_execution_in_conversation(conversation_id)
     sys.stderr.write(f"[DEBUG router.run_job] is_first_execution_from_db={is_first_execution}\n")
 
-    # file_paths가 비어있으면 이전 Stage의 리소스에서 자동 로드 (AGENT_STATES에서 조회)
-    previous_context = None  # 현재 사용하지 않음
+    previous_context = None
     if conversation_id:
         if not file_paths:
             available_resources = get_available_resources(conversation_id)
             disk_images = available_resources.get("disk_images", [])
             if disk_images:
                 file_paths = disk_images
-                is_first_execution = False  # 리소스가 있으면 첫 실행이 아님
+                is_first_execution = False
                 sys.stderr.write(f"[DEBUG router.run_job] file_paths auto-loaded from AGENT_STATES: {file_paths}\n")
 
-    # stage_id가 명시적으로 2 이상이면 첫 실행이 아님
     if stage_id is not None and stage_id > 1:
         is_first_execution = False
         sys.stderr.write(f"[DEBUG router.run_job] is_first_execution overridden to False (stage_id={stage_id})\n")
@@ -109,11 +106,11 @@ def run_job(
             },
             "completed": False,
             "error": None,
-            "is_first_execution": is_first_execution,  # 첫 실행 여부 플래그
-            "previous_context": previous_context,  # 이전 Stage AI 분석 결과
-            "ioc_analysis_results": [],  # 현재 Stage IoC 분석 결과
-            "conversation_id": conversation_id,  # conversation_id 전달
-            "stage_id": stage_id if stage_id is not None else 1  # Stage ID 추가
+            "is_first_execution": is_first_execution,
+            "previous_context": previous_context,
+            "ioc_analysis_results": [],
+            "conversation_id": conversation_id,
+            "stage_id": stage_id if stage_id is not None else 1
         }
     else:
         initial_state = {
@@ -128,13 +125,12 @@ def run_job(
             "error": None
         }
 
-    # 초기 상태 저장 (plan 수립 전)
     save_agent_state(
         agent_id=job_id,
         stage_id=stage_id if stage_id is not None else 0,
         plan=[],
         status="running",
-        mcp_tools=[],  # 초기에는 비워둠
+        mcp_tools=[],
         conversation_id=conversation_id,
         trigger_id=trigger_id
     )
@@ -146,16 +142,9 @@ def run_job(
 
         completed_tasks = final_state.get("completed_tasks", [])
 
-        # # DEBUG: completed_tasks 상태 로깅
-        # sys.stderr.write(f"[DEBUG router] completed_tasks count: {len(completed_tasks)}\n")
-        # if not completed_tasks:
-        #     sys.stderr.write(f"[DEBUG router] final_state keys: {list(final_state.keys())}\n")
-
         all_results = []
         for task in completed_tasks:
             task_results = task.get("execution_results", [])
-            # task_id = task.get("task_id", "unknown")
-            # sys.stderr.write(f"[DEBUG router] Task {task_id}: {len(task_results)} execution_results\n")
             all_results.extend(task_results)
 
         results = all_results
@@ -164,8 +153,6 @@ def run_job(
         success_count = sum(1 for r in results if r.get("success"))
         fail_count = total_steps - success_count
 
-        # # DEBUG: Steps 집계 결과
-        # sys.stderr.write(f"[DEBUG router] Total steps: {total_steps}, success: {success_count}, fail: {fail_count}\n")
         summary = JobSummary(
             job_id=job_id,
             user_prompt=user_prompt,
@@ -181,7 +168,6 @@ def run_job(
             status="done" if fail_count == 0 else "failed"
         )
 
-        # Stage 완료 시 available_resources 저장 (AGENT_STATES)
         _save_available_resources_on_complete(
             final_state=final_state,
             file_paths=file_paths
@@ -193,10 +179,7 @@ def run_job(
             "state": final_state
         }
 
-        # print(f"\n[Summary]")
-        # print(f"Total: {len(completed_tasks)} tasks, {total_steps} actions, {execution_time:.2f}s")
         if fail_count > 0:
-            # print(f"Status: {success_count} succeeded, {fail_count} failed")
             pass
 
         return result
@@ -231,16 +214,11 @@ def run_job(
                 status="done"
             )
 
-            # print(f"\n[Summary]")
-            # print(f"Total: {len(completed_tasks)} tasks, {total_steps} actions, {execution_time:.2f}s")
-
             return {
                 "job_id": job_id,
                 "summary": summary.to_dict(),
                 "state": initial_state
             }
-
-        # print(f"\n[[X]] Error: {error_msg}")
 
         save_agent_state(
             agent_id=job_id,
@@ -277,20 +255,17 @@ def _save_available_resources_on_complete(
         if not job_id:
             return
 
-        # available_resources 구성
         available_resources = {
             "disk_images": [],
             "extracted_files": []
         }
 
-        # 디스크 이미지 파일 경로 저장 (E01, raw, dd 등)
         if file_paths:
             disk_image_extensions = {'.e01', '.raw', '.dd', '.img', '.vmdk', '.vhd', '.vhdx'}
             for path in file_paths:
                 if any(path.lower().endswith(ext) for ext in disk_image_extensions):
                     available_resources["disk_images"].append(path)
 
-        # AGENT_STATES에 저장
         if available_resources["disk_images"] or available_resources["extracted_files"]:
             update_agent_resources(job_id, available_resources)
 

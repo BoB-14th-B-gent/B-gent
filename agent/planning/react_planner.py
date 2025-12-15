@@ -264,7 +264,7 @@ def generate_react_thought(
 
         if current_iteration == 1 and not result.get("action"):
             debug_write(f"\n[ENFORCE] Iteration 1 requires tool call - forcing fallback\n")
-            result["finished"] = False  # 강제로 finished=False로 설정하여 fallback 유도
+            result["finished"] = False
 
         if not result.get("action") and not result.get("finished"):
             server = ""
@@ -288,7 +288,7 @@ def generate_react_thought(
                     "sleuthkit": "disk_info",
                     "virustotal": "check_hash",
                     "ghidra": "import_binary",
-                    "elastic": "list_indices",  # SIEM 분석 시 항상 list_indices 먼저 실행
+                    "elastic": "list_indices",
                 }
                 operation = default_operations.get(server, "")
 

@@ -308,7 +308,7 @@ class MCPClientManagerSync:
         import threading
         self.manager = MCPClientManager(server_configs)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._loop_thread_id: Optional[int] = None  # 이벤트 루프가 생성된 스레드 ID
+        self._loop_thread_id: Optional[int] = None
         self._initialized = False
 
     def _get_or_create_loop(self) -> asyncio.AbstractEventLoop:

@@ -61,7 +61,7 @@ class HighLevelTask:
     low_level_plan: List[Dict[str, Any]] = field(default_factory=list)
     execution_results: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
-    mcp_call: Optional[Dict[str, Any]] = field(default=None)  # Required MCP call info
+    mcp_call: Optional[Dict[str, Any]] = field(default=None)
 
     def to_dict(self) -> Dict[str, Any]:
         """딕셔너리로 변환 (JSON 직렬화용)"""

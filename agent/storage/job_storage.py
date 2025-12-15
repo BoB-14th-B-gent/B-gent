@@ -83,7 +83,7 @@ def save_agent_state(
     stage_id: Optional[int] = None,
     plan: Optional[list] = None,
     status: str = "running",
-    mcp_tools: Optional[list] = None,  # deprecated
+    mcp_tools: Optional[list] = None,
     trigger_id: Optional[str] = None,
     conversation_id: Optional[str] = None,
     available_resources: Optional[Dict[str, Any]] = None
