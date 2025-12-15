@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
-from .schema import EvidenceFromConversationIn, EvidenceCreatedOut, EvidenceListOut, EvidenceInputDetail, McpEvidenceListOut
-from .service import create_evidences_from_latest_message, list_input_evidences, list_mcp_evidences, get_input_evidence_detail, preview_input_evidence
+from .schema import EvidenceFromConversationIn, EvidenceCreatedOut, EvidenceListOut, EvidenceInputDetail, McpEvidenceListOut, McpEvidenceDetailOut
+from .service import create_evidences_from_latest_message, list_input_evidences, list_mcp_evidences, get_input_evidence_detail, preview_input_evidence, get_mcp_evidence_detail
 
 router = APIRouter()
 
@@ -38,3 +38,10 @@ def get_preview(evidence_id: str):
 def list_mcp(conversation_id: Optional[str] = Query(None), stage_id: Optional[int] = Query(None), limit: int = Query(100, ge=1, le=1000),):
     items = list_mcp_evidences(conversation_id, stage_id, limit)
     return McpEvidenceListOut(items=items)
+
+@router.get("/mcp/{evidence_id}", response_model=McpEvidenceDetailOut, summary="MCP 증거 상세 조회")
+def get_mcp_detail(evidence_id: str):
+    d = get_mcp_evidence_detail(evidence_id)
+    if not d:
+        raise HTTPException(status_code=404, detail="not found")
+    return McpEvidenceDetailOut.model_validate(d)
