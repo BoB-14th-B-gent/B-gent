@@ -16,6 +16,8 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+from ..utils.debug import debug_print, is_debug_mode
+
 logging.basicConfig(level=logging.WARNING)
 mcp_logger = logging.getLogger("mcp")
 mcp_logger.setLevel(logging.INFO)
@@ -84,31 +86,31 @@ class MCPClientManager:
                 ]
 
             except asyncio.TimeoutError:
-                print(f"MCP 서버 연결 타임아웃: {name} (응답 없음, 건너뜀)")
+                debug_print(f"MCP 서버 연결 타임아웃: {name} (응답 없음, 건너뜀)")
                 self.tools_cache[name] = []
 
             except Exception as e:
                 import traceback
-                print(f"MCP 서버 연결 실패: {name} - {e}")
-                print(f"  상세 오류:\n{traceback.format_exc()}")
+                debug_print(f"MCP 서버 연결 실패: {name} - {e}")
+                debug_print(f"  상세 오류:\n{traceback.format_exc()}")
                 self.tools_cache[name] = []
         self._initialized = True
 
     async def _connect_server(self, config: MCPServerConfig) -> ClientSession:
         """개별 MCP 서버 연결 (stdio 또는 http)"""
         import os
-        verbose = os.getenv("MCP_DEBUG") == "1"
+        verbose = is_debug_mode()
 
         if verbose:
-            print(f"DEBUG [{config.name}]:")
+            debug_print(f"DEBUG [{config.name}]:")
             if config.url:
-                print(f"   Mode: HTTP")
-                print(f"   URL: {config.url}")
+                debug_print(f"   Mode: HTTP")
+                debug_print(f"   URL: {config.url}")
             else:
-                print(f"   Mode: stdio")
-                print(f"   Command: {config.command}")
-                print(f"   Args: {config.args}")
-                print(f"   Env: {config.env}")
+                debug_print(f"   Mode: stdio")
+                debug_print(f"   Command: {config.command}")
+                debug_print(f"   Args: {config.args}")
+                debug_print(f"   Env: {config.env}")
 
         try:
 
@@ -123,7 +125,7 @@ class MCPClientManager:
                     if config.headers:
                         headers.update(config.headers)
                     if verbose:
-                        print(f"  HTTP 헤더: {list(headers.keys())}")
+                        debug_print(f"  HTTP 헤더: {list(headers.keys())}")
                     client_context = streamablehttp_client(config.url, headers=headers)
                     result = await self._exit_stack.enter_async_context(client_context)
                     read, write = result[0], result[1]
@@ -134,7 +136,7 @@ class MCPClientManager:
 
             elif config.command:
                 if verbose:
-                    print(f"  stdio 클라이언트 생성 중...")
+                    debug_print(f"  stdio 클라이언트 생성 중...")
                 import os
                 env_merged = os.environ.copy()
                 env_merged.pop("VIRTUAL_ENV", None)
@@ -142,15 +144,9 @@ class MCPClientManager:
                 if config.env:
                     env_merged.update(config.env)
                 env_merged["PYTHONUNBUFFERED"] = "1"
-                # Windows cp949 인코딩 문제 해결을 위한 UTF-8 강제 설정
                 env_merged["PYTHONIOENCODING"] = "utf-8"
                 env_merged["PYTHONUTF8"] = "1"
 
-                # # debug mode
-                # if os.getenv("MCP_DEBUG") != "1":
-                #     env_merged["LOGLEVEL"] = "ERROR"
-                #     env_merged["LOG_LEVEL"] = "ERROR"
-                #     env_merged["PYTHONWARNINGS"] = "ignore"
 
                 params = StdioServerParameters(
                     command=config.command,
@@ -161,12 +157,12 @@ class MCPClientManager:
                 client_context = stdio_client(params, errlog=errlog)
                 read, write = await self._exit_stack.enter_async_context(client_context)
                 if verbose:
-                    print(f"  [OK] stdio 스트림 연결 완료")
+                    debug_print(f"  [OK] stdio 스트림 연결 완료")
 
             else:
                 raise ValueError(f"MCP 서버 설정에 url 또는 command가 필요합니다: {config.name}")
             if verbose:
-                print(f"  ClientSession 생성 중...")
+                debug_print(f"  ClientSession 생성 중...")
             session = await self._exit_stack.enter_async_context(ClientSession(read, write))
             init_timeout = 60.0 if config.command else 30.0
 
@@ -174,26 +170,18 @@ class MCPClientManager:
                 import time
                 start_time = time.time()
                 if verbose:
-                    # print(f"  initialize() 호출 중... (서버: {config.name})")
                     pass
                 result = await asyncio.wait_for(session.initialize(), timeout=init_timeout)
                 elapsed = time.time() - start_time
                 if verbose:
-                    # print(f"  세션 초기화 완료 (소요 시간: {elapsed:.2f}초)")
-                    pass
-                    print(f"  서버 정보: {result.serverInfo.name} v{result.serverInfo.version}")
+                    debug_print(f"  서버 정보: {result.serverInfo.name} v{result.serverInfo.version}")
                     if result.capabilities.tools:
-                        print(f"  도구 기능 지원됨")
+                        debug_print(f"  도구 기능 지원됨")
 
             except asyncio.TimeoutError:
-                elapsed = time.time() - start_time
-                # print(f"  초기화 타임아웃 ({elapsed:.2f}/{init_timeout}초)")
-                pass
                 raise
 
             except Exception as e:
-                # print(f"  초기화 중 예외 발생: {type(e).__name__}: {e}")
-                pass
                 raise
 
             return session
@@ -201,7 +189,7 @@ class MCPClientManager:
         except Exception as e:
             import traceback
             error_details = traceback.format_exc()
-            print(f"상세 에러:\n{error_details}")
+            debug_print(f"상세 에러:\n{error_details}")
             raise RuntimeError(f"MCP 서버 연결 실패 ({config.name}): {e}")
 
     def get_all_tools(self) -> List[Dict[str, Any]]:
@@ -304,14 +292,12 @@ class MCPClientManager:
         try:
             await self._exit_stack.aclose()
         except RuntimeError as e:
-            # anyio의 cancel scope 관련 에러는 무시 (다른 태스크에서 종료 시도 시 발생)
-            # 프로세스 종료 직전에 발생하므로 기능적 영향 없음
             if "cancel scope" in str(e).lower():
                 pass
             else:
-                print(f"[FAIL] MCP 서버 종료 중 오류: {e}")
+                debug_print(f"[FAIL] MCP 서버 종료 중 오류: {e}")
         except Exception as e:
-            print(f"[FAIL] MCP 서버 종료 중 오류: {e}")
+            debug_print(f"[FAIL] MCP 서버 종료 중 오류: {e}")
         self.sessions.clear()
         self._initialized = False
 
@@ -335,16 +321,14 @@ class MCPClientManagerSync:
         import threading
         current_thread_id = threading.current_thread().ident
 
-        # 기존 루프가 있고, 같은 스레드에서 호출된 경우에만 재사용
         if (self._loop is not None
             and not self._loop.is_closed()
             and self._loop_thread_id == current_thread_id):
             return self._loop
 
-        # 다른 스레드에서 호출되었거나 루프가 없는 경우 새로 생성
         try:
             running_loop = asyncio.get_running_loop()
-            print("[!]  Warning: 실행 중인 이벤트 루프가 감지되었습니다. 새 루프를 생성합니다.")
+            debug_print("[!]  Warning: 실행 중인 이벤트 루프가 감지되었습니다. 새 루프를 생성합니다.")
         except RuntimeError:
             pass
 
@@ -352,7 +336,6 @@ class MCPClientManagerSync:
             new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
 
-            # 메인 스레드인 경우에만 캐시 (다른 스레드는 일회성 루프 사용)
             if threading.current_thread() is threading.main_thread():
                 self._loop = new_loop
                 self._loop_thread_id = current_thread_id
@@ -360,7 +343,7 @@ class MCPClientManagerSync:
             return new_loop
 
         except Exception as e:
-            print(f"[!]  이벤트 루프 생성 실패, 기본 루프 사용: {e}")
+            debug_print(f"[!]  이벤트 루프 생성 실패, 기본 루프 사용: {e}")
 
             try:
                 return asyncio.get_event_loop()
@@ -444,7 +427,7 @@ class MCPClientManagerSync:
             self._initialized = False
 
         except Exception as e:
-            print(f"[!]  MCP 클라이언트 종료 중 오류: {e}")
+            debug_print(f"[!]  MCP 클라이언트 종료 중 오류: {e}")
 
     def __enter__(self):
         self.initialize()
