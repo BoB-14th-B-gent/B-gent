@@ -247,8 +247,11 @@ def list_mcp_evidences(conversation_id: Optional[str], stage_id: Optional[int], 
     if stage_id is not None:
         q["stage_id"] = int(stage_id)
     cur = db[MCP_EVIDENCE_COLL].find(q, {
-        "trigger_id": 1, "mcp_name": 1, "tool_name": 1, "created_at": 1, "conversation_id": 1, "stage_id": 1
-    }).sort("created_at", -1).limit(limit)
+        "trigger_id": 1, "mcp_name": 1, "tool_name": 1, "created_at": 1,
+        "conversation_id": 1, "stage_id": 1,
+        "success": 1,
+        "response.length": 1,
+        }).sort("created_at", -1).limit(limit)
 
     out: List[Dict[str, Any]] = []
     for d in cur:
@@ -260,6 +263,8 @@ def list_mcp_evidences(conversation_id: Optional[str], stage_id: Optional[int], 
             "mcp_name": d.get("mcp_name"),
             "tool_name": d.get("tool_name"),
             "created_at": d.get("created_at"),
+            "success": d.get("success"),
+            "response_length": (d.get("response") or {}).get("length"),
         })
     return out
 
@@ -323,3 +328,28 @@ def preview_input_evidence(evidence_id: str, limit: int = 64 * 1024):
     ctype = d.get("content_type", "application/octet-stream")
 
     return {"type": "gridfs", "content_type": ctype, "preview": head}
+
+def get_mcp_evidence_detail(evidence_id: str) -> Optional[Dict[str, Any]]:
+    db = get_db()
+    if not ObjectId.is_valid(evidence_id):
+        return None
+
+    d = db[MCP_EVIDENCE_COLL].find_one({"_id": ObjectId(evidence_id)})
+    if not d:
+        return None
+
+    return {
+        "_id": str(d["_id"]),
+        "trigger_id": (str(d.get("trigger_id")) if isinstance(d.get("trigger_id"), ObjectId) else d.get("trigger_id")),
+        "conversation_id": str(d.get("conversation_id")) if isinstance(d.get("conversation_id"), ObjectId) else d.get("conversation_id"),
+        "stage_id": d.get("stage_id"),
+        "mcp_name": d.get("mcp_name"),
+        "tool_name": d.get("tool_name"),
+        "agent_id": d.get("agent_id"),
+        "success": d.get("success"),
+        "created_at": d.get("created_at"),
+
+        # ✅ 핵심: 상세에서는 request/response 내려줌
+        "request": d.get("request"),
+        "response": d.get("response"),
+    }
