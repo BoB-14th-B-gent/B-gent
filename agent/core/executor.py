@@ -5,8 +5,11 @@ Lazy Loading으로 필요한 MCP 서버만 초기화
 """
 from __future__ import annotations
 import os
+import sys
+import re
 import time
 import asyncio
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Dict, Any, Optional, List
 from ..schemas.actions import Action, ActionResult
@@ -44,7 +47,8 @@ def _validate_file_paths(params: Dict[str, Any], action: Action) -> Optional[str
         if key not in params:
             continue
 
-        path = params[key]
+        path = _normalize_path(params[key])
+        params[key] = path
         if not isinstance(path, str) or not path.strip():
             continue
 
@@ -99,26 +103,43 @@ def _validate_file_paths(params: Dict[str, Any], action: Action) -> Optional[str
     return None
 
 
+# def _normalize_path(path: str) -> str:
+#     """경로 문자열 정규화 - 이중 이스케이프된 백슬래시 수정
+
+#     LLM이 Windows 경로를 생성할 때 백슬래시를 이중 이스케이프하는 경우가 있음.
+#     예: "C:\\\\Users\\\\user" → "C:\\Users\\user"
+
+#     Args:
+#         path: 원본 경로 문자열
+
+#     Returns:
+#         str: 정규화된 경로 문자열
+#     """
+#     if not path or not isinstance(path, str):
+#         return path
+
+#     import re
+
+#     path = re.sub(r'\\{2,}', r'\\', path)
+
+#     return path
+
 def _normalize_path(path: str) -> str:
-    """경로 문자열 정규화 - 이중 이스케이프된 백슬래시 수정
-
-    LLM이 Windows 경로를 생성할 때 백슬래시를 이중 이스케이프하는 경우가 있음.
-    예: "C:\\\\Users\\\\user" → "C:\\Users\\user"
-
-    Args:
-        path: 원본 경로 문자열
-
-    Returns:
-        str: 정규화된 경로 문자열
-    """
     if not path or not isinstance(path, str):
         return path
 
-    import re
+    p = path.strip().rstrip(',').strip().strip('"').strip("'")
+    p = re.sub(r'\\{2,}', r'\\', p)
 
-    path = re.sub(r'\\{2,}', r'\\', path)
+    if len(p) >= 2 and p[1] == ':':
+        return p
 
-    return path
+    try:
+        p = str(Path(p).expanduser().resolve())
+    except Exception:
+        p = os.path.normpath(p)
+
+    return p
 
 
 def _sanitize_params(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -479,8 +500,6 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
 
     if action.tool == 'ghidra' and action.operation == 'import_binary':
         if job_id and job_id in _ghidra_import_cache:
-            import sys
-            import os
             if os.getenv("DEBUG") == "1":
                 sys.__stdout__.write(f"[DEBUG] BLOCKED import_binary re-call for job {job_id}\n")
                 sys.__stdout__.flush()
@@ -540,14 +559,7 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
             if result.get("success"):
                 result_data = result.get("result", "")
 
-                import sys
-                import os
-                if os.getenv("DEBUG") == "1":
-                    sys.__stdout__.write(f"[DEBUG] Calling log_mcp_execution for {action.tool}.{action.operation}\n")
-                    sys.__stdout__.write(f"[DEBUG] Response length: {len(str(result_data))} chars\n")
-                    sys.__stdout__.flush()
-
-                save_result = log_mcp_execution(
+                log_mcp_execution(
                     mcp_name=action.tool,
                     tool_name=action.operation,
                     request=action.params,
@@ -565,7 +577,6 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
                     add_mcp_tool(job_id, action.tool, action.operation, task_id)
 
                 if action.tool == 'ghidra' and action.operation == 'import_binary':
-                    import sys
                     if os.getenv("DEBUG") == "1":
                         sys.__stdout__.write("[DEBUG] Ghidra import_binary detected, waiting for analysis...\n")
                         sys.__stdout__.flush()
@@ -616,8 +627,6 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
                                     'input should be a valid', 'type=dict_type', 'type=unexpected_keyword_argument']
                 if any(err_pattern.lower() in error_msg.lower() for err_pattern in validation_errors):
                     _validation_error_cache[action_signature] = _validation_error_cache.get(action_signature, 0) + 1
-                    import sys
-                    import os
                     if os.getenv("DEBUG") == "1":
                         sys.__stdout__.write(f"[DEBUG] Validation error detected for {action_signature}, count: {_validation_error_cache[action_signature]}\n")
                         sys.__stdout__.flush()
@@ -652,6 +661,15 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
             error_msg = f"타임아웃 ({timeout}초 초과)"
             last_error = error_msg
 
+            log_mcp_execution(
+                mcp_name=action.tool,
+                tool_name=action.operation,
+                request=action.params,
+                response={"error": error_msg},
+                success=False,
+                job_id=job_id
+            )
+
             if attempt < max_retries:
                 continue
 
@@ -669,6 +687,15 @@ def execute_action(action: Action, job_id: Optional[str] = None, task_id: Option
             execution_time = time.time() - start_time
             error_msg = str(e)
             last_error = error_msg
+
+            log_mcp_execution(
+                mcp_name=action.tool,
+                tool_name=action.operation,
+                request=action.params,
+                response={"error": error_msg},
+                success=False,
+                job_id=job_id
+            )
 
             if attempt < max_retries and _is_retryable_error(error_msg):
                 continue
@@ -713,7 +740,6 @@ def _call_mcp_tool_with_timeout(action: Action, timeout: float) -> Dict[str, Any
     client = get_mcp_client_for_server(action.tool)
 
     sanitized_params = _sanitize_params(action.params)
-
     tool_schema = _get_tool_schema(client, action.tool, action.operation)
     action_info = f"{action.tool}.{action.operation}"
     filtered_params = _filter_params_by_schema(sanitized_params, tool_schema, action_info)
@@ -746,7 +772,6 @@ def _call_mcp_tool(action: Action) -> Dict[str, Any]:
     client = get_mcp_client_for_server(action.tool)
 
     sanitized_params = _sanitize_params(action.params)
-
     tool_schema = _get_tool_schema(client, action.tool, action.operation)
     action_info = f"{action.tool}.{action.operation}"
     filtered_params = _filter_params_by_schema(sanitized_params, tool_schema, action_info)

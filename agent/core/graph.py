@@ -733,12 +733,26 @@ def node_react_execute(state: Dict[str, Any]) -> Dict[str, Any]:
             "react_context": react_context
         }
 
+    HEAVY_TOOL_TIMEOUTS = {
+        "dissect": 300,
+        "sleuthkit": 300,
+        "ghidra": 300,
+        "consolehost-history": 300,
+        "browser-db-parser": 180,
+        "lnk-parser": 180,
+        "jumplist": 180,
+    }
+
+    default_timeout = action_dict.get("timeout_seconds", 120)
+    tool_timeout = HEAVY_TOOL_TIMEOUTS.get(tool_name, default_timeout)
+    final_timeout = max(default_timeout, tool_timeout)
+
     action = Action(
         tool=tool_name,
         operation=operation_name,
         params=action_dict.get("params", {}),
         reason=react_context.get("current_thought", ""),
-        timeout_seconds=action_dict.get("timeout_seconds", 120)
+        timeout_seconds=final_timeout
     )
 
     action_name = f"{action.tool}.{action.operation}"
