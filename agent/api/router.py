@@ -1,8 +1,9 @@
+import asyncio
 from fastapi import APIRouter, BackgroundTasks, WebSocket, WebSocketDisconnect, HTTPException
 from typing import Dict
 from .schema import AgentExecuteRequest, AgentExecuteResponse, AgentState
-from .service import execute_agent_sync, get_agent_state_from_db
-from ..utils.debug import debug_print
+from .service import execute_agent_sync, get_agent_state_from_db, execute_agent_async
+from agent.utils.debug import debug_print
 
 router = APIRouter()
 active_connections: Dict[str, WebSocket] = {}
@@ -11,6 +12,11 @@ active_connections: Dict[str, WebSocket] = {}
 async def execute_agent(body: AgentExecuteRequest, background_tasks: BackgroundTasks):
     background_tasks.add_task(execute_agent_sync, body.trigger_id)
     return AgentExecuteResponse(ok=True)
+
+# @router.post("")
+# async def execute_agent(body: AgentExecuteRequest):
+#     asyncio.create_task(execute_agent_async(body.trigger_id))
+#     return AgentExecuteResponse(ok=True)
 
 @router.websocket("/ws/{trigger_id}")
 async def agent_websocket(websocket: WebSocket, trigger_id: str):
