@@ -153,7 +153,16 @@ class MCPClientManager:
                     args=config.args or [],
                     env=env_merged
                 )
-                errlog = sys.stderr if verbose else open(os.devnull, 'w')
+                # sys.stderr가 LogCapture 등 fileno()가 없는 객체일 수 있으므로
+                # 항상 실제 파일 객체를 사용
+                if verbose:
+                    try:
+                        # sys.__stderr__는 원본 stderr (fileno 지원)
+                        errlog = sys.__stderr__
+                    except AttributeError:
+                        errlog = open(os.devnull, 'w')
+                else:
+                    errlog = open(os.devnull, 'w')
                 client_context = stdio_client(params, errlog=errlog)
                 read, write = await self._exit_stack.enter_async_context(client_context)
                 if verbose:
@@ -229,6 +238,7 @@ class MCPClientManager:
                 )
             else:
                 result = await session.call_tool(tool_name, arguments=arguments)
+
             content_parts = []
 
             for item in result.content:
@@ -280,10 +290,10 @@ class MCPClientManager:
             return response
 
         except Exception as e:
-
+            error_msg = str(e) or f"MCP 도구 호출 예외: {type(e).__name__}"
             return {
                 "success": False,
-                "error": str(e),
+                "error": error_msg,
                 "is_error": True
             }
 
@@ -336,9 +346,9 @@ class MCPClientManagerSync:
             new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
 
-            if threading.current_thread() is threading.main_thread():
-                self._loop = new_loop
-                self._loop_thread_id = current_thread_id
+            # 모든 스레드에서 루프 저장 (ThreadPoolExecutor 지원)
+            self._loop = new_loop
+            self._loop_thread_id = current_thread_id
 
             return new_loop
 

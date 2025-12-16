@@ -91,6 +91,19 @@ def get_mcp_client_for_server(server_name: str) -> MCPClientManagerSync:
     if server_name in _lazy_clients:
         return _lazy_clients[server_name]
 
+    # singleton에 이미 연결된 서버가 있으면 재사용
+    # 두 개의 별도 연결이 생기면 타임아웃 등 문제 발생
+    try:
+        from . import singleton
+        singleton_client = singleton._mcp_client
+
+        if singleton_client is not None and singleton_client.manager and server_name in singleton_client.manager.sessions:
+            debug_write(f"│ [MCP] Reusing singleton connection for '{server_name}'\n")
+            _lazy_clients[server_name] = singleton_client
+            return singleton_client
+    except Exception:
+        pass  # singleton 모듈이 없거나 접근 실패 시 무시
+
     if _should_skip_server(server_name):
         raise RuntimeError(f"MCP 서버 '{server_name}' 연결이 이전에 실패했습니다. 잠시 후 다시 시도하세요.")
 
@@ -165,6 +178,14 @@ def get_mcp_clients_for_servers(server_names: List[str]) -> MCPClientManagerSync
 
         for srv in server_configs:
             _clear_connection_failure(srv.name)
+
+        # 생성된 클라이언트를 singleton에도 저장 (get_mcp_client_for_server가 재사용)
+        try:
+            from . import singleton
+            if singleton._mcp_client is None:
+                singleton._mcp_client = client
+        except Exception:
+            pass
 
         return client
 
