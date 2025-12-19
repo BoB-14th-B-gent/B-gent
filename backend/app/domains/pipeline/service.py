@@ -104,7 +104,7 @@ async def _wait_agent_done(
 
         await asyncio.sleep(poll_interval)
 
-async def run_pipeline_service(
+async def run_pipeline_prepare_service(
     *,
     input_text: str,
     stage_id: int = 0,
@@ -139,7 +139,6 @@ async def run_pipeline_service(
                     500,
                     detail={"error": "conversation_id missing", "response": conv_res},
                 )
-
         else:
             await _http_json(
                 client,
@@ -147,7 +146,6 @@ async def run_pipeline_service(
                 f"/conversations/{conversation_id}/stage",
                 params={"stage_id": stage_id},
             )
-
             await _http_json(
                 client,
                 "POST",
@@ -214,24 +212,34 @@ async def run_pipeline_service(
     )
     if not agent_call_res.get("ok", False):
         print(f"[pipeline] AGENT /agent returned non-ok for trigger {trigger_id}: {agent_call_res}")
-    try:
-        agent_state = await _wait_agent_done(
-            trigger_id=trigger_id,
-            poll_interval=2.0,
-            timeout=900,
-        )
-    except HTTPException as exc:
-        print(f"[pipeline] Agent wait failed for trigger {trigger_id}: {exc.detail}")
 
+    return {
+        "conversation_id": conversation_id,
+        "trigger_id": trigger_id,
+        "prompt_id": prompt_id,
+    }
+
+async def run_after_agent_and_create_report(
+    trigger_id: str,
+) -> Dict[str, Any]:
     async with httpx.AsyncClient(base_url=BACKEND_INTERNAL_URL, timeout=TIMEOUT) as client:
+        trg = await _http_json(client, "GET", f"/triggers/{trigger_id}")
+        conversation_id = trg.get("conversation_id")
+        if isinstance(conversation_id, dict) and "$oid" in conversation_id:
+            conversation_id = conversation_id["$oid"]
+        
+        prompt_id = trg.get("prompt_id")
+        if isinstance(prompt_id, dict) and "$oid" in prompt_id:
+            prompt_id = prompt_id["$oid"]
+        
+        stage_id = trg.get("stage_id", 0)
 
         mcp_list = await _http_json(
             client,
             "GET",
-            f"/evidences/mcp",
+            "/evidences/mcp",
             params={"conversation_id": conversation_id, "stage_id": stage_id},
         )
-
         mcp_items: List[Dict[str, Any]] = mcp_list.get("items") or []
 
         mcp_refs = [
@@ -244,10 +252,9 @@ async def run_pipeline_service(
                 client,
                 "PATCH",
                 f"/triggers/{trigger_id}/evidences",
-                json={"evidences": mcp_refs}
+                json={"evidences": mcp_refs},
             )
 
-    async with httpx.AsyncClient(base_url=BACKEND_INTERNAL_URL, timeout=TIMEOUT) as client:
         sllm = await _http_json(
             client,
             "POST",
@@ -260,7 +267,7 @@ async def run_pipeline_service(
                 500,
                 detail={"error": "report_id missing from sLLM", "response": sllm},
             )
-        
+
         rep_doc = await _http_json(client, "GET", f"/reports/{report_id}")
         report_text: str = rep_doc.get("report") or ""
 
@@ -299,3 +306,127 @@ async def run_pipeline_service(
         "report_id": report_id,
         "report": report_text,
     }
+
+async def run_pipeline_full_service(
+    *,
+    input_text: str,
+    stage_id: int = 0,
+    inline_threshold: int = 10 * 1024 * 1024,
+    mode: str = "auto",
+    conversation_id: Optional[str] = None,
+    case_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    base = await run_pipeline_prepare_service(
+        input_text=input_text,
+        stage_id=stage_id,
+        inline_threshold=inline_threshold,
+        mode=mode,
+        conversation_id=conversation_id,
+        case_id=case_id,
+    )
+    conversation_id = base["conversation_id"]
+    trigger_id = base["trigger_id"]
+    prompt_id = base.get("prompt_id")
+
+    try:
+        agent_state = await _wait_agent_done(
+            trigger_id=trigger_id,
+            poll_interval=2.0,
+            timeout=900,
+        )
+    except HTTPException as exc:
+        print(f"[pipeline] Agent wait failed for trigger {trigger_id}: {exc.detail}")
+
+    async with httpx.AsyncClient(base_url=BACKEND_INTERNAL_URL, timeout=TIMEOUT) as client:
+        mcp_list = await _http_json(
+            client,
+            "GET",
+            f"/evidences/mcp",
+            params={"conversation_id": conversation_id, "stage_id": stage_id},
+        )
+
+        mcp_items: List[Dict[str, Any]] = mcp_list.get("items") or []
+
+        mcp_refs = [
+            {"collection": "MCP_EVIDENCES", "id": it["_id"]}
+            for it in mcp_items
+            if it.get("_id")
+        ]
+        if mcp_refs:
+            await _http_json(
+                client,
+                "PATCH",
+                f"/triggers/{trigger_id}/evidences",
+                json={"evidences": mcp_refs}
+            )
+
+    async with httpx.AsyncClient(base_url=BACKEND_INTERNAL_URL, timeout=TIMEOUT) as client:
+        sllm = await _http_json(
+            client,
+            "POST",
+            "/sllm/reports",
+            json={"trigger_id": trigger_id},
+        )
+        report_id = sllm.get("report_id")
+        if not report_id:
+            raise HTTPException(
+                500,
+                detail={"error": "report_id missing from sLLM", "response": sllm},
+            )
+
+        rep_doc = await _http_json(client, "GET", f"/reports/{report_id}")
+        report_text: str = rep_doc.get("report") or ""
+
+        patched = await _http_json(
+            client,
+            "PATCH",
+            f"/reports/{report_id}/structured",
+            json={},
+        )
+        structured: Dict[str, Any] = patched.get("structured") or {}
+
+        await _http_json(
+            client,
+            "PATCH",
+            f"/triggers/{trigger_id}/report",
+            json={"report_id": report_id},
+        )
+
+        bgent_msg = _build_bgent_message_from_structured(structured)
+        if bgent_msg:
+            await _http_json(
+                client,
+                "POST",
+                f"/conversations/{conversation_id}/messages",
+                json={
+                    "role": "B-GENT",
+                    "stage_id": stage_id,
+                    "content": bgent_msg,
+                },
+            )
+
+    return {
+        "conversation_id": conversation_id,
+        "trigger_id": trigger_id,
+        "prompt_id": prompt_id,
+        "report_id": report_id,
+        "report": report_text,
+    }
+
+async def run_pipeline_service(
+    *,
+    input_text: str,
+    stage_id: int = 0,
+    inline_threshold: int = 10 * 1024 * 1024,
+    mode: str = "auto",
+    conversation_id: Optional[str] = None,
+    case_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    return await run_pipeline_full_service(
+        input_text=input_text,
+        stage_id=stage_id,
+        inline_threshold=inline_threshold,
+        mode=mode,
+        conversation_id=conversation_id,
+        case_id=case_id,
+    )

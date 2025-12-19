@@ -11,15 +11,24 @@ class RunPipelineReq(BaseModel):
     conversation_id: Optional[str] = None
     case_id: Optional[str] = None
 
-class PipelineResult(BaseModel):
+class PipelinePrepareResult(BaseModel):
+    conversation_id: str
+    trigger_id: str
+    prompt_id: Optional[str] = None
+
+class PipelineFullResult(BaseModel):
     conversation_id: str
     trigger_id: str
     prompt_id: Optional[str] = None
     report_id: str
     report: str
 
+class RunAfterAgentReq(BaseModel):
+    trigger_id: str
+
 __all__ = [
     "DEFAULT_INLINE_THRESHOLD",
     "RunPipelineReq",
-    "PipelineResult",
+    "PipelinePrepareResult",
+    "PipelineFullResult",
 ]
