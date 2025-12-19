@@ -6,6 +6,7 @@ from app.db.mongo import get_db
 from app.domains.messages.service import create_message
 
 CONV_COLL = os.getenv("CONVERSATIONS_COLL")
+TRIGGERS_COLL = os.getenv("TRIGGER_COLL")
 REPORTS_COLL = os.getenv("REPORTS_COLL")
 
 def _now() -> datetime:
@@ -120,31 +121,40 @@ def get_conversation_reports(conversation_id: str) -> Optional[Dict[str, Any]]:
     db = get_db()
     cid = ObjectId(conversation_id)
 
-    cursor = (
-        db[REPORTS_COLL]
-        .find({"conversation_id": cid})
-        .sort([("stage_id", 1), ("created_at", 1)])
+    triggers = list(
+        db[TRIGGERS_COLL].find({"conversation_id": cid}).sort([("stage_id", 1), ("created_at", 1)])
     )
-
-    docs = list(cursor)
-    if not docs:
+    if not triggers:
         return None
 
+    trigger_ids = [t["_id"] for t in triggers]
+
+    reports = list(
+        db[REPORTS_COLL]
+        .find({"trigger_id": {"$in": trigger_ids}})
+        .sort([("created_at", 1)])
+    )
+    if not reports:
+        return None
+
+    trig_meta = {t["_id"]: {"stage_id": int(t.get("stage_id", 1))} for t in triggers}
+
     items: List[Dict[str, Any]] = []
-    for d in docs:
+    for r in reports:
+        tid = r.get("trigger_id")
+        stage_id = trig_meta.get(tid, {}).get("stage_id", 1)
         items.append(
             {
-                "_id": str(d["_id"]),
-                "stage_id": int(d.get("stage_id", 1)),
-                "report": d.get("report", ""),
-                "created_at": d.get("created_at"),
+                "_id": str(r["_id"]),
+                "stage_id": stage_id,
+                "report": r.get("report", ""),
+                "created_at": r.get("created_at"),
             }
         )
 
-    return {
-        "conversation_id": conversation_id,
-        "items": items,
-    }
+    items.sort(key=lambda x: (x["stage_id"], x["created_at"]))
+
+    return {"conversation_id": conversation_id, "items": items}
 
 def update_last_stage(conversation_id: str, stage_id: int) -> Optional[Dict[str, Any]]:
     if not ObjectId.is_valid(conversation_id):

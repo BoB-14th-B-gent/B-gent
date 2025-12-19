@@ -14,7 +14,7 @@ INPUT_EVIDENCE_COLL = os.getenv("INPUT_EVIDENCE_COLL")
 MCP_EVIDENCE_COLL = os.getenv("MCP_EVIDENCE_COLL")
 
 SUPPORTED_INPUT_EXTS = {".json", ".jsonl", ".xml", ".csv"}
-UNSUPPORTED_KNOWN_EXTS = {".001", ".evtx", ".pcap", ".pcapng", ".vmdk", ".img", ".zip", ".gz", ".xz"}
+UNSUPPORTED_KNOWN_EXTS = {".001", ".e01", ".ex01", ".aff4", ".vhdx", ".evtx", ".pcap", ".pcapng", ".vmdk", ".img", ".zip", ".gz", ".xz"}
 ALLOWED_EXTS_FOR_DETECTION = SUPPORTED_INPUT_EXTS | UNSUPPORTED_KNOWN_EXTS
 
 def _is_safe_relative_under_data(token: str) -> bool:
@@ -348,8 +348,6 @@ def get_mcp_evidence_detail(evidence_id: str) -> Optional[Dict[str, Any]]:
         "agent_id": d.get("agent_id"),
         "success": d.get("success"),
         "created_at": d.get("created_at"),
-
-        # ✅ 핵심: 상세에서는 request/response 내려줌
         "request": d.get("request"),
         "response": d.get("response"),
     }

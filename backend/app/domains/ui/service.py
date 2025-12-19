@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-
+from pymongo import ReturnDocument
 from bson import ObjectId
 
 from app.db.mongo import get_db
@@ -18,8 +18,8 @@ def _doc_to_layout(doc: Dict[str, Any]) -> Dict[str, Any]:
         "stage_id": int(doc["stage_id"]),
         "nodes": doc.get("nodes", []),
         "edges": doc.get("edges", []),
-        "created_at": doc.get("created_at"),
-        "updated_at": doc.get("updated_at"),
+        "created_at": doc.get("created_at") or _now,
+        "updated_at": doc.get("updated_at")
     }
 
 def get_layout(conversation_id: str, stage_id: int) -> Optional[Dict[str, Any]]:
@@ -59,7 +59,7 @@ def upsert_layout(conversation_id: str, stage_id: int, body: UILayoutUpsertIn) -
             },
         },
         upsert=True,
-        return_document=True,
+        return_document=ReturnDocument.AFTER,
     )
 
     if result is None:

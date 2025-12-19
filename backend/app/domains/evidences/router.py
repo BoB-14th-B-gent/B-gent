@@ -5,6 +5,11 @@ from .service import create_evidences_from_latest_message, list_input_evidences,
 
 router = APIRouter()
 
+@router.get("", response_model=EvidenceListOut, summary="전체 증거 목록 조회")
+def list_all(conversation_id: Optional[str] = Query(None), stage_id: Optional[int] = Query(None), limit: int = Query(100, ge=1, le=1000)):
+    items = list_input_evidences(conversation_id, stage_id, limit)
+    return EvidenceListOut(items=items)
+
 @router.post("/input", response_model=EvidenceCreatedOut, summary="사용자 프롬프트 내용에서 전처리기 증거 추출 및 변환 후 저장")
 def create_from_conversation(body: EvidenceFromConversationIn):
     try:
@@ -14,11 +19,6 @@ def create_from_conversation(body: EvidenceFromConversationIn):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"internal error: {e}")
-
-@router.get("", response_model=EvidenceListOut, summary="전체 증거 목록 조회")
-def list_all(conversation_id: Optional[str] = Query(None), stage_id: Optional[int] = Query(None), limit: int = Query(100, ge=1, le=1000)):
-    items = list_input_evidences(conversation_id, stage_id, limit)
-    return EvidenceListOut(items=items)
 
 @router.get("/input/{evidence_id}", response_model=EvidenceInputDetail, summary="전처리기 증거 상세 조회")
 def get_detail(evidence_id: str):

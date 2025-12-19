@@ -1,4 +1,4 @@
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Any, Dict
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -40,3 +40,34 @@ class TriggerPatchEvidences(BaseModel):
 
 class TriggerPatchReport(BaseModel):
     report_id: str
+
+class MCPEvidenceItemOut(BaseModel):
+    id: str = Field(alias="_id")
+    trigger_id: str
+    conversation_id: str
+    agent_id: Optional[str] = None
+    stage_id: int
+    mcp_name: str
+    tool_name: Optional[str] = None
+    success: bool = True
+    created_at: Optional[datetime] = None
+    request: Dict[str, Any] = {}
+    response: Dict[str, Any] = {}
+
+class MCPEvidenceListOut(BaseModel):
+    trigger_id: str
+    stage_id: int
+    mcp_name: str
+    items: List[MCPEvidenceItemOut]
+
+class MCPSummaryItemOut(BaseModel):
+    mcp_name: str
+    total: int
+    success: int
+    failed: int
+    last_at: Optional[datetime] = None
+
+class MCPSummaryOut(BaseModel):
+    trigger_id: str
+    stage_id: int
+    items: List[MCPSummaryItemOut]

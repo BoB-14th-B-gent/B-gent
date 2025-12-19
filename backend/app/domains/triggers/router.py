@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException
-from .schema import TriggerCreate, TriggerIdOut, TriggerDetailOut, TriggerPatchPrompt, TriggerPatchEvidences, TriggerPatchReport
-from .service import create_trigger_with_conversation_id, get_trigger_with_trigger_id, add_prompt_to_trigger, add_evidences_to_trigger, add_report_to_trigger
+from fastapi import APIRouter, HTTPException, Query
+from .schema import TriggerCreate, TriggerIdOut, TriggerDetailOut, TriggerPatchPrompt, TriggerPatchEvidences, TriggerPatchReport, MCPEvidenceListOut, MCPSummaryOut
+from .service import create_trigger_with_conversation_id, get_trigger_with_trigger_id, add_prompt_to_trigger, add_evidences_to_trigger, add_report_to_trigger, get_mcp_evidences_by_trigger, get_mcp_summary_by_trigger
 
 router = APIRouter()
 
@@ -36,5 +36,31 @@ def add_evidences(trigger_id: str, body: TriggerPatchEvidences):
 def add_report(trigger_id: str, body: TriggerPatchReport):
     try:
         return add_report_to_trigger(trigger_id, body.report_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+@router.get("/{trigger_id}/mcp-evidences", response_model=MCPEvidenceListOut, summary="트리거 기반 MCP evidences 조회")
+def get_mcp_evidences(
+    trigger_id: str,
+    mcp_name: str = Query(...),
+    stage_id: int = Query(...),
+    limit: int = Query(200, ge=1, le=500),
+    include_payload: bool = Query(True),
+):
+    try:
+        return get_mcp_evidences_by_trigger(
+            trigger_id,
+            mcp_name=mcp_name,
+            stage_id=stage_id,
+            limit=limit,
+            include_payload=include_payload,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+@router.get("/{trigger_id}/mcp-summary", response_model=MCPSummaryOut, summary="트리거 기반 MCP 요약")
+def get_mcp_summary(trigger_id: str, stage_id: int = Query(...)):
+    try:
+        return get_mcp_summary_by_trigger(trigger_id, stage_id=stage_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
