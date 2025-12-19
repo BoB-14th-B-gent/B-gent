@@ -1,6 +1,6 @@
 import re
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -10,12 +10,17 @@ def _strip(s: Optional[str]) -> str:
 _TS_PATTERNS = [
     "%Y-%m-%d %H:%M",
     "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M:%S.%f",
     "%Y/%m/%d %H:%M",
+    "%Y/%m/%d %H:%M:%S",
     "%Y.%m.%d %H:%M",
+    "%Y.%m.%d %H:%M:%S",
 ]
 
 def try_parse_timestamp(ts: str) -> Tuple[Optional[str], Optional[str]]:
     raw = _strip(ts)
+    if not raw:
+        return None, None
     for pat in _TS_PATTERNS:
         try:
             dt = datetime.strptime(raw, pat)
@@ -23,7 +28,7 @@ def try_parse_timestamp(ts: str) -> Tuple[Optional[str], Optional[str]]:
         except Exception:
             pass
     return None, f"unparsed timestamp: {raw}"
-
+    
 
 def parse_markdown_table(block: str) -> List[Dict[str, str]]:
     lines = [ln for ln in block.strip().splitlines() if ln.strip()]
@@ -31,7 +36,6 @@ def parse_markdown_table(block: str) -> List[Dict[str, str]]:
         return []
 
     header_idx = 0
-
     while header_idx < len(lines) and "|" not in lines[header_idx]:
         header_idx += 1
     if header_idx >= len(lines):
@@ -63,7 +67,89 @@ def parse_markdown_table(block: str) -> List[Dict[str, str]]:
             rows.append(row)
     return rows
 
-SECTION_HEADER_RE = re.compile(r"^\s*(\d+)\.\s*(.+?)\s*$", re.IGNORECASE)
+NUMBERED_HEADER_RE = re.compile(r"^\s*(\d+)\.\s*(.+?)\s*$", re.IGNORECASE)
+ATX_HEADER_RE = re.compile(r"^\s*#{1,6}\s*(.+?)\s*#*\s*$")
+
+def _is_setext_underline(ln: str) -> bool:
+    s = ln.strip()
+    if "|" in s:
+        return False
+    if len(s) < 3:
+        return False
+    return set(s) <= set("=-") and any(ch in s for ch in "=-")
+
+def _norm_title(title: str) -> str:
+    t = title.strip()
+    t = re.sub(r"[*_`]", "", t)
+    t = re.sub(r"\s+", " ", t).strip().lower()
+    t = t.rstrip(":").strip()
+    return t
+
+SECTION_ALIASES: Dict[str, str] = {
+    "executive summary": "executive summary",
+
+    "timeline": "timeline",
+    "timeline / progression": "timeline",
+    "progression": "timeline",
+
+    "mitre att&ck": "mitre att&ck mapping",
+    "mitre attack": "mitre att&ck mapping",
+    "mitre att&ck mapping": "mitre att&ck mapping",
+    "mitre attack mapping": "mitre att&ck mapping",
+
+    "attack details": "attack details",
+    "details": "attack details",
+
+    "iocs & evidence": "iocs & evidence",
+    "iocs and evidence": "iocs & evidence",
+    "iocs": "iocs & evidence",
+
+    "additional evidence required": "additional evidence required",
+    "additional evidence": "additional evidence required",
+}
+
+KNOWN_SECTION_PREFIXES = set(SECTION_ALIASES.keys())
+
+def _canonical_section_key(title: str) -> Optional[str]:
+    n = _norm_title(title)
+    if n in SECTION_ALIASES:
+        return SECTION_ALIASES[n]
+    for pfx in KNOWN_SECTION_PREFIXES:
+        if n.startswith(pfx):
+            return SECTION_ALIASES[pfx]
+    return None
+
+def _detect_section_header(lines: List[str], i: int) -> Tuple[Optional[str], int]:
+    ln = lines[i]
+
+    if "|" in ln and ln.strip().startswith("|"):
+        return None, 1
+
+    m = NUMBERED_HEADER_RE.match(ln)
+    if m:
+        title = m.group(2).strip()
+        if _canonical_section_key(title):
+            return title, 1
+        return None, 1
+
+    m = ATX_HEADER_RE.match(ln)
+    if m:
+        title = m.group(1).strip()
+        if _canonical_section_key(title):
+            return title, 1
+        return None, 1
+
+    if i + 1 < len(lines) and _is_setext_underline(lines[i + 1]):
+        title = ln.strip()
+        if _canonical_section_key(title):
+            return title, 2
+        return None, 2
+
+    title = ln.strip()
+    if _canonical_section_key(title):
+        return title, 1
+
+    return None, 1
 
 
 def split_sections(text: str) -> Tuple[str, List[Tuple[str, str]]]:
@@ -75,21 +161,29 @@ def split_sections(text: str) -> Tuple[str, List[Tuple[str, str]]]:
         if ln.strip():
             header_line = ln.strip()
             body_start = i + 1
+            if body_start < len(lines) and _is_setext_underline(lines[body_start]):
+                body_start += 1
             break
 
     sections: List[Tuple[str, str]] = []
-    current_title = None
+    current_title: Optional[str] = None
     current_buf: List[str] = []
 
-    for ln in lines[body_start:]:
-        m = SECTION_HEADER_RE.match(ln)
-        if m:
+    i = body_start
+    while i < len(lines):
+        title, consumed = _detect_section_header(lines, i)
+        if title:
             if current_title is not None:
                 sections.append((current_title, "\n".join(current_buf).strip()))
-            current_title = m.group(2).strip().rstrip("- ")
+            current_title = title
             current_buf = []
-        else:
-            current_buf.append(ln)
+            i += consumed
+            if i < len(lines) and _is_setext_underline(lines[i]):
+                i += 1
+            continue
+
+        current_buf.append(lines[i])
+        i += 1
 
     if current_title is not None:
         sections.append((current_title, "\n".join(current_buf).strip()))
@@ -103,32 +197,35 @@ def parse_exec_summary(block: str) -> List[str]:
         if not s:
             continue
         if s.startswith(("- ", "•", "– ", "— ")):
-            bullets.append(s.lstrip("•-—– ").strip())
+            v = s.lstrip("•-—– ").strip()
         else:
-            bullets.append(s)
+            v = s
+
+        v = re.sub(r"^\*\*(.+?)\*\*$", r"\1", v).strip()
+        bullets.append(v)
     return bullets
 
 TIMELINE_LINE_RE = re.compile(r"^\s*([^|]+?)\s*\|\s*(.+?)\s*$")
 
 def parse_timeline(block: str) -> List[Dict[str, Any]]:
+    rows = parse_markdown_table(block)
+    if not rows:
+        return []
+
     items: List[Dict[str, Any]] = []
-    for ln in block.splitlines():
-        s = ln.strip()
-        if not s:
-            continue
-        m = TIMELINE_LINE_RE.match(s)
-        if not m:
-            continue
-        ts_raw, rest = m.group(1).strip(), m.group(2).strip()
+    for r in rows:
+        ts_raw = (
+            r.get("Timestamp (KST)")
+            or r.get("Time (KST)")
+            or r.get("Timestamp")
+            or r.get("Time")
+            or ""
+        ).strip()
+
+        desc = (r.get("Description") or r.get("Event") or r.get("Details") or "").strip()
+        src  = (r.get("Source") or r.get("Evidence") or "").strip() or None
+
         iso, err = try_parse_timestamp(ts_raw)
-
-        src = None
-        desc = rest
-
-        paren = re.search(r"\(([^()]+)\)\s*$", rest)
-        if paren:
-            src = paren.group(1).strip()
-            desc = rest[: paren.start()].strip().rstrip("-:")
 
         items.append({
             "timestamp_raw": ts_raw,
@@ -136,11 +233,12 @@ def parse_timeline(block: str) -> List[Dict[str, Any]]:
             "timestamp_error": err,
             "description": desc,
             "source": src,
+            "_row": r,
         })
     return items
 
 def parse_attack_details(block: str) -> Dict[str, Any]:
-    details: Dict[str, Any] = {"items": [], "raw_excerpts": []}
+    details: Dict[str, Any] = {"items": [], "raw_excerpts": [], "raw": block.strip()}
     for ln in block.splitlines():
         s = ln.rstrip()
         if not s:
@@ -151,36 +249,56 @@ def parse_attack_details(block: str) -> Dict[str, Any]:
             details["raw_excerpts"].append(s.lstrip("> ").strip())
     return details
 
-def parse_mitre(block: str) -> List[Dict[str, str]]:
+def parse_mitre(block: str) -> List[Dict[str, Any]]:
     rows = parse_markdown_table(block)
-    normalized: List[Dict[str, str]] = []
+    out: List[Dict[str, Any]] = []
+
     for r in rows:
+        tactic = (r.get("Tactic") or r.get("Tactics") or "").strip()
+        technique_id = (r.get("Technique ID") or r.get("Modern ID") or r.get("ID") or "").strip()
+        technique_name = (r.get("Technique Name") or r.get("Technique") or "").strip()
+        relevance = (r.get("Relevance") or r.get("Observed Behavior") or r.get("Observed") or "").strip()
+
         entry = {
-            "action": r.get("Action", "").strip(),
-            "ttp_id": r.get("TTP ID", r.get("TTP", "")).strip(),
-            "evidence": r.get("Explanation/Evidence", r.get("Explanation", "")).strip(),
+            "tactic": tactic,
+            "technique_id": technique_id,
+            "technique_name": technique_name,
+            "relevance": relevance,
+            "_row": r,
         }
-        if any(entry.values()):
-            normalized.append(entry)
-    return normalized
+        if any([tactic, technique_id, technique_name, relevance]):
+            out.append(entry)
+
+    return out
 
 def parse_iocs(block: str) -> List[Dict[str, Any]]:
     rows = parse_markdown_table(block)
     out: List[Dict[str, Any]] = []
+
     for r in rows:
-        ts_raw = r.get("Timestamp", "").strip()
+        ts_raw = (
+            r.get("Timestamp (KST)")
+            or r.get("Time (KST)")
+            or r.get("Timestamp")
+            or r.get("Time")
+            or ""
+        ).strip()
         iso, err = try_parse_timestamp(ts_raw)
+
+        raw_snip = (r.get("Raw Snippet") or r.get("Context") or r.get("Notes") or "").strip()
+
         out.append({
-            "indicator": r.get("IOC", "").strip(),
-            "type": r.get("Type", "").strip(),
+            "indicator": (r.get("IOC") or r.get("Indicator") or "").strip(),
+            "type": (r.get("Type") or "").strip(),
+            "source": (r.get("Source") or "").strip(),
             "timestamp_raw": ts_raw,
             "timestamp_iso": iso,
             "timestamp_error": err,
-            "source": r.get("Source", "").strip(),
-            "context": r.get("Context", "").strip(),
+            "raw_snippet": raw_snip,
+            "context": raw_snip,
+            "_row": r,
         })
     return out
-
 
 def parse_additional_evidence(block: str) -> List[str]:
     items: List[str] = []
@@ -188,20 +306,19 @@ def parse_additional_evidence(block: str) -> List[str]:
         s = ln.strip()
         if not s:
             continue
-        if s.startswith(("- ", "•", "– ", "— ")):
-            items.append(s.lstrip("•-—– ").strip())
-        else:
+        # bullet / number list 모두 흡수
+        s = re.sub(r"^\s*(?:[-•–—]\s+|\d+\.\s+)", "", s).strip()
+        if s and s not in ("---", "—"):
             items.append(s)
     return items
+
 
 SECTION_DISPATCH = {
     "executive summary": parse_exec_summary,
     "timeline": parse_timeline,
-    "timeline / progression": parse_timeline,
     "mitre att&ck mapping": parse_mitre,
     "attack details": parse_attack_details,
     "iocs & evidence": parse_iocs,
-    "iocs": parse_iocs,
     "additional evidence required": parse_additional_evidence,
 }
 
@@ -215,21 +332,10 @@ def parse_incident_report(text: str) -> ParseResult:
 
     parsed: Dict[str, Any] = {}
     for title, body in sections:
-        key = title.strip().lower()
-        key_norm = key
-        key_norm = re.sub(r"\s+", " ", key_norm)
-        key_norm = key_norm.strip("- ")
+        canon = _canonical_section_key(title)
+        key_norm = canon or _norm_title(title)
 
-        handler = None
-        if key_norm in SECTION_DISPATCH:
-            handler = SECTION_DISPATCH[key_norm]
-        else:
-            for k, fn in SECTION_DISPATCH.items():
-                if key_norm.startswith(k):
-                    handler = fn
-                    key_norm = k
-                    break
-
+        handler = SECTION_DISPATCH.get(key_norm)
         if handler:
             try:
                 parsed[key_norm] = handler(body)
@@ -241,7 +347,7 @@ def parse_incident_report(text: str) -> ParseResult:
     return ParseResult(header=header_line, sections=parsed)
 
 if __name__ == "__main__":
-    import argparse, sys
+    import argparse, sys, json
 
     ap = argparse.ArgumentParser(description="Parse an Incident Analysis Report into structured JSON")
     ap.add_argument("file", nargs="?", help="Path to a .txt/.md file. If omitted, read stdin")
@@ -255,10 +361,7 @@ if __name__ == "__main__":
         text = sys.stdin.read()
 
     result = parse_incident_report(text)
-    payload = {
-        "header": result.header,
-        "sections": result.sections,
-    }
+    payload = {"header": result.header, "sections": result.sections}
     js = json.dumps(payload, ensure_ascii=False, indent=2)
 
     if args.output:
