@@ -16,6 +16,16 @@ contextBridge.exposeInMainWorld('api', {
 
   quitApp: () => ipcRenderer.invoke('app:quit'),
 
+  notifyTotalReportLoaded: (payload: { stageId?: number; reportId?: string }) => {
+    ipcRenderer.send('report:totalLoaded', payload)
+  },
+
+  onTotalReportLoaded: (cb: (payload: { stageId?: number; reportId?: string }) => void) => {
+    const handler = (_evt: unknown, payload: { stageId?: number; reportId?: string }) => cb(payload)
+    ipcRenderer.on('report:totalLoaded', handler)
+    return () => ipcRenderer.removeListener('report:totalLoaded', handler)
+  },
+
   openCaseWindow: (payload: { caseId?: string; conversationId?: string } = {}) =>
     ipcRenderer.invoke('case:open', payload),
 })

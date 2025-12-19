@@ -10,7 +10,7 @@ type BackendReportDoc = {
   created_at?: string
   structured?: {
     header?: string
-    sections?: Record<string, any>
+    sections?: Record<string, unknown>
   }
 }
 
@@ -64,84 +64,125 @@ async function fetchReport(reportId: string): Promise<BackendReportDoc> {
   return (await res.json()) as BackendReportDoc
 }
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+function asArray(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : []
+}
+function asString(v: unknown): string {
+  return typeof v === 'string' ? v : String(v ?? '')
+}
+function cleanLine(s: unknown): string {
+  // ✅ any 제거
+  const v = asString(s).trim()
+  if (!v) return ''
+  if (v === '---' || v === '—' || v === '–––') return ''
+  return v
+}
+
 function adaptStructuredToView(doc: BackendReportDoc | null): ViewReport | null {
-  if (!doc?.structured?.sections) return null
-  const S = doc.structured.sections
+  const sections = doc?.structured?.sections
+  if (!sections) return null
 
-  const exec: ViewExecItem[] = Array.isArray(S['executive summary'])
-    ? (S['executive summary'] as any[]).map(s =>
-        typeof s === 'string'
-          ? { bullet: s }
-          : { bullet: String(s?.bullet ?? s ?? ''), source: s?.source }
-      )
-    : []
+  // sections는 Record<string, unknown> 이므로 안전하게 접근
+  const execSrc = asArray(sections['executive summary'])
+  const exec: ViewExecItem[] = execSrc
+    .map(s => {
+      if (typeof s === 'string') return { bullet: cleanLine(s) }
+      if (isRecord(s)) {
+        return {
+          bullet: cleanLine(s['bullet'] ?? s),
+          source: typeof s['source'] === 'string' ? s['source'] : undefined,
+        }
+      }
+      return { bullet: cleanLine(s) }
+    })
+    .filter(x => !!x.bullet)
 
-  const tl: ViewTimelineItem[] = Array.isArray(S['timeline / progression'])
-    ? (S['timeline / progression'] as any[]).map(t => ({
-        timestamp: t?.timestamp_iso ?? t?.timestamp_raw ?? '',
-        event: t?.description ?? '',
-        evidence: t?.source ?? '',
-      }))
-    : Array.isArray(S['timeline'])
-      ? (S['timeline'] as any[]).map(t => ({
-          timestamp: t?.timestamp_iso ?? t?.timestamp_raw ?? '',
-          event: t?.description ?? '',
-          evidence: t?.source ?? '',
-        }))
-      : []
+  const tlSrc = asArray(sections['timeline'])
+  const tl: ViewTimelineItem[] = tlSrc.map(t => {
+    const r = isRecord(t) ? t : {}
+    return {
+      timestamp: cleanLine(r['timestamp_iso'] ?? r['timestamp_raw'] ?? ''),
+      event: cleanLine(r['description'] ?? ''),
+      evidence: cleanLine(r['source'] ?? ''),
+    }
+  })
 
-  const mitre: ViewMitreItem[] = Array.isArray(S['mitre att&ck mapping'])
-    ? (S['mitre att&ck mapping'] as any[]).map(m => ({
-        action: m?.action ?? '',
-        ttpId: m?.ttp_id ?? m?.ttp ?? '',
-        explanation: m?.evidence ?? m?.explanation ?? '',
-      }))
-    : []
+  const mitreSrc = asArray(sections['mitre att&ck mapping'])
+  const mitre: ViewMitreItem[] = mitreSrc
+    .map(m0 => {
+      const m = isRecord(m0) ? m0 : {}
+      if (m['technique_id'] || m['technique_name'] || m['tactic']) {
+        const techniqueName = cleanLine(m['technique_name'] ?? '')
+        const relevance = cleanLine(m['relevance'] ?? '')
+        return {
+          action: cleanLine(m['tactic'] ?? ''),
+          ttpId: cleanLine(m['technique_id'] ?? ''),
+          explanation: cleanLine(`${techniqueName}${relevance ? ` — ${relevance}` : ''}`),
+        }
+      }
+      return {
+        action: cleanLine(m['ttp_id'] ?? ''),
+        ttpId: cleanLine(m['description'] ?? ''),
+        explanation: cleanLine(m['observed'] ?? ''),
+      }
+    })
+    .filter(x => x.action || x.ttpId || x.explanation)
 
-  const detailsRaw = S['attack details']
-  const attackDetails: ViewAttackDetail[] = detailsRaw
-    ? [
-        ...(Array.isArray(detailsRaw.items)
-          ? detailsRaw.items.map((b: string) => ({ artifact: 'details', bullet: b }))
-          : []),
-        ...(Array.isArray(detailsRaw.raw_excerpts)
-          ? detailsRaw.raw_excerpts.map((r: string) => ({ artifact: 'excerpt', bullet: r, raw: r }))
-          : []),
-      ]
-    : []
+  // attack details
+  const detailsRaw = sections['attack details']
+  let attackDetails: ViewAttackDetail[] = []
+  if (isRecord(detailsRaw)) {
+    const items = asArray(detailsRaw['items']).map(b => ({
+      artifact: 'details',
+      bullet: cleanLine(b),
+    }))
+    const rawEx = asArray(detailsRaw['raw_excerpts']).map(r => {
+      const line = cleanLine(r)
+      return { artifact: 'excerpt', bullet: line, raw: line }
+    })
+    attackDetails = [...items, ...rawEx].filter(x => !!x.bullet)
+  }
 
-  const iocs: ViewIocItem[] = Array.isArray(S['iocs & evidence'])
-    ? (S['iocs & evidence'] as any[]).map(i => ({
-        ioc: i?.indicator ?? i?.IOC ?? '',
-        type: i?.type ?? '',
-        source: i?.source ?? '',
-        timestamp: i?.timestamp_iso ?? i?.timestamp_raw ?? '',
-        context: i?.context ?? '',
-      }))
-    : Array.isArray(S['iocs'])
-      ? (S['iocs'] as any[]).map(i => ({
-          ioc: i?.indicator ?? '',
-          type: i?.type ?? '',
-          source: i?.source ?? '',
-          timestamp: i?.timestamp_iso ?? i?.timestamp_raw ?? '',
-          context: i?.context ?? '',
-        }))
-      : []
+  // iocs
+  const iocsSrc = asArray(sections['iocs & evidence'])
+  const iocsAlt = asArray(sections['iocs'])
+  const baseIocs = iocsSrc.length ? iocsSrc : iocsAlt
 
-  const additionalNeeded: ViewAdditionalItem[] = Array.isArray(S['additional evidence required'])
-    ? (S['additional evidence required'] as any[]).map(s =>
-        typeof s === 'string'
-          ? { what: s }
-          : {
-              what: String(s?.what ?? s ?? ''),
-              purpose: s?.purpose,
-              successCriteria: s?.successCriteria,
-            }
-      )
-    : []
+  const iocs: ViewIocItem[] = baseIocs
+    .map(i0 => {
+      const i = isRecord(i0) ? i0 : {}
+      return {
+        ioc: cleanLine(i['indicator'] ?? i['IOC'] ?? ''),
+        type: cleanLine(i['type'] ?? ''),
+        source: cleanLine(i['source'] ?? ''),
+        timestamp: cleanLine(i['timestamp_iso'] ?? i['timestamp_raw'] ?? ''),
+        context: cleanLine(i['context'] ?? i['notes'] ?? i['raw_snippet'] ?? i['snippet'] ?? ''),
+      }
+    })
+    .filter(x => !!x.ioc)
+
+  // additional
+  const addSrc = asArray(sections['additional evidence required'])
+  const additionalNeeded: ViewAdditionalItem[] = addSrc
+    .map(s => {
+      if (typeof s === 'string') return { what: cleanLine(s) }
+      if (isRecord(s)) {
+        return {
+          what: cleanLine(s['what'] ?? s),
+          purpose: typeof s['purpose'] === 'string' ? s['purpose'] : undefined,
+          successCriteria:
+            typeof s['successCriteria'] === 'string' ? s['successCriteria'] : undefined,
+        }
+      }
+      return { what: cleanLine(s) }
+    })
+    .filter(x => !!x.what)
 
   return {
-    date: doc.created_at,
+    date: doc?.created_at,
     execSummary: exec,
     timeline: tl,
     mitre,
@@ -152,7 +193,6 @@ function adaptStructuredToView(doc: BackendReportDoc | null): ViewReport | null 
 }
 
 function fallbackFromRaw(doc: BackendReportDoc): ViewReport {
-  const firstLine = (doc.report || '').split('\n').find(Boolean) || 'Incident Analysis Report'
   const summaryBlock = (doc.report || '')
     .split('\n')
     .slice(0, 12)
@@ -174,6 +214,9 @@ function fallbackFromRaw(doc: BackendReportDoc): ViewReport {
 export default function ReportWindow() {
   const search = new URLSearchParams(location.hash.split('?')[1] || '')
   const reportIdParam = search.get('reportId') || undefined
+  const stageIdParamRaw = search.get('stageId')
+  const stageIdParam = stageIdParamRaw ? Number(stageIdParamRaw) : null
+  const safeStageId = Number.isFinite(stageIdParam) ? stageIdParam : null
 
   const [loading, setLoading] = useState<boolean>(!!reportIdParam)
   const [error, setError] = useState<string | null>(null)
@@ -251,23 +294,27 @@ export default function ReportWindow() {
           throw new Error('표시할 보고서가 없습니다.')
         }
 
+        if (!alive) return
+
         setResolvedId(doc._id ?? null)
         setHeaderText(extractHeaderTitle(doc))
 
         const adapted = adaptStructuredToView(doc)
+        if (adapted) setView(adapted)
+        else setView(fallbackFromRaw(doc))
+
+        window.api?.notifyTotalReportLoaded?.({
+          stageId: safeStageId ?? undefined,
+          reportId: String(doc._id ?? reportIdParam ?? ''),
+        })
+      } catch (e: unknown) {
         if (!alive) return
-        if (adapted) {
-          setView(adapted)
-        } else {
-          setView(fallbackFromRaw(doc))
-        }
-      } catch (e: any) {
-        if (!alive) return
-        setError(e?.message ?? String(e))
+        const msg = e instanceof Error ? e.message : String(e)
+        setError(msg)
         setView(null)
         setResolvedId(null)
       } finally {
-        if (!alive) return
+        if (!alive) setLoading(false)
         setLoading(false)
       }
     }
@@ -276,7 +323,7 @@ export default function ReportWindow() {
     return () => {
       alive = false
     }
-  }, [reportIdParam])
+  }, [reportIdParam, stageIdParam, safeStageId])
 
   return (
     <div
@@ -436,7 +483,6 @@ export default function ReportWindow() {
                 <h3 style={h3}>04 Attack Details</h3>
                 {current.attackDetails.length ? (
                   current.attackDetails.map((d, idx) => {
-                    const isExcerpt = d.artifact?.toLowerCase().includes('excerpt')
                     const isDetail = d.artifact?.toLowerCase().includes('detail')
 
                     return (

@@ -1,12 +1,38 @@
 import { useUIStore, type ChatMsg } from '@/store/ui'
 import { useCallback, useMemo, useRef, useEffect, useState } from 'react'
-import { graphEvents } from '@/graph/events'
+import { graphEvents, GraphEvt } from '@/graph/events'
 import { makeNode, makeEdge, PALETTE } from '@/graph/dynamicLayout'
-import { pipelineRun, getReport, type PipelineRunReq } from '@/utils/api'
+import { pipelineRun, pipelineRunAfterAgent, getReport, type PipelineRunReq } from '@/utils/api'
+
+type UnknownRecord = Record<string, unknown>
+
+type ReportDocLike = {
+  structured?: { sections?: Record<string, unknown> }
+}
+
+function hasStructured(v: unknown): v is ReportDocLike {
+  return isRecord(v) && 'structured' in v
+}
 
 function emitGraph(detail: unknown) {
   graphEvents.dispatchEvent(new CustomEvent('graph', { detail }))
 }
+
+function isRecord(v: unknown): v is UnknownRecord {
+  return typeof v === 'object' && v !== null
+}
+
+function asArray(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : []
+}
+
+function pickString(v: unknown, key: string): string | undefined {
+  if (!isRecord(v)) return undefined
+  const val = v[key]
+  return typeof val === 'string' ? val : undefined
+}
+
+type AgentDoneDetail = { trigger_id?: string }
 
 export default function PromptPanel() {
   const {
@@ -20,8 +46,9 @@ export default function PromptPanel() {
     setCurrentTriggerId,
     conversationId,
     currentStageId,
-    setCurrentStageId,
     selectedCaseId,
+    hasAfterAgentRun,
+    setAfterAgentRun,
   } = useUIStore()
 
   const [sending, setSending] = useState(false)
@@ -50,13 +77,13 @@ export default function PromptPanel() {
     autoGrow()
   }, [promptText, promptOpen])
 
-  const H_GAP = 1105
+  const H_GAP = 1145
 
   const onSubmit = useCallback(async () => {
     const text = promptText.trim()
     if (!text || sending) return
 
-    const stageToUse = currentStageId ?? 1
+    const stageToUse = currentStageId || 1
 
     const basePrompt = makeNode('prompt')
     const promptNodeId = `prompt-${stageToUse}`
@@ -126,36 +153,8 @@ export default function PromptPanel() {
       if (!conversationId) {
         setConvIdInStore?.(res.conversation_id)
       }
+
       setCurrentTriggerId?.(res.trigger_id)
-
-      setCurrentStageId?.(stageToUse + 1)
-
-      const reportDoc = await getReport(res.report_id)
-
-      let summary = ''
-      const s = (reportDoc as any)?.structured?.sections
-      if (s) {
-        const execArr = s['executive summary'] ?? []
-        const addArr = s['additional evidence required'] ?? []
-
-        const execPart = Array.isArray(execArr)
-          ? execArr.map((x: any) => `- ${x.bullet || x}`).join('\n')
-          : '- (none)'
-        const addPart = Array.isArray(addArr)
-          ? addArr.map((x: any) => `- ${x.what || x}`).join('\n')
-          : '- (none)'
-
-        summary = `[Executive Summary]\n${execPart}\n\n[Additional Evidence Required]\n${addPart}`
-      }
-
-      if (summary.trim()) {
-        const summaryMsg: ChatMsg = {
-          id: crypto.randomUUID(),
-          role: 'bgent',
-          text: summary,
-        }
-        pushPanelMessage(summaryMsg)
-      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       const botMsg: ChatMsg = {
@@ -176,7 +175,6 @@ export default function PromptPanel() {
     setConvIdInStore,
     setCurrentTriggerId,
     currentStageId,
-    setCurrentStageId,
     conversationId,
     selectedCaseId,
   ])
@@ -191,6 +189,72 @@ export default function PromptPanel() {
     },
     [onSubmit]
   )
+
+  useEffect(() => {
+    const handler = async (ev: Event) => {
+      const detail = (ev as CustomEvent<AgentDoneDetail>).detail
+      const trigger_id = detail?.trigger_id
+      if (!trigger_id) return
+
+      if (hasAfterAgentRun?.(trigger_id)) {
+        console.log('[PromptPanel] after-agent already requested. skip:', trigger_id)
+        return
+      }
+
+      setAfterAgentRun?.(trigger_id, true)
+
+      try {
+        const full = await pipelineRunAfterAgent(trigger_id)
+        const reportDoc = await getReport(full.report_id)
+
+        let summary = ''
+
+        const sections =
+          hasStructured(reportDoc) &&
+          isRecord(reportDoc.structured) &&
+          isRecord(reportDoc.structured.sections)
+            ? reportDoc.structured.sections
+            : undefined
+
+        if (sections) {
+          const execArr = asArray(sections['executive summary'])
+          const addArr = asArray(sections['additional evidence required'])
+
+          const execPart =
+            execArr.length > 0
+              ? execArr.map(x => `- ${pickString(x, 'bullet') ?? String(x)}`).join('\n')
+              : '- (none)'
+
+          const addPart =
+            addArr.length > 0
+              ? addArr.map(x => `- ${pickString(x, 'what') ?? String(x)}`).join('\n')
+              : '- (none)'
+
+          summary = `[Executive Summary]\n${execPart}\n\n[Additional Evidence Required]\n${addPart}`
+        }
+
+        if (summary.trim()) {
+          pushPanelMessage({
+            id: crypto.randomUUID(),
+            role: 'bgent',
+            text: summary,
+          })
+        }
+      } catch (err: unknown) {
+        setAfterAgentRun?.(trigger_id, false)
+        const msg = err instanceof Error ? err.message : String(err)
+        pushPanelMessage({
+          id: crypto.randomUUID(),
+          role: 'bgent',
+          text: `보고서 생성 중 오류가 발생했습니다.\n${msg}`,
+        })
+        console.error('[AgentDone → pipelineRunAfterAgent]', err)
+      }
+    }
+
+    graphEvents.addEventListener(GraphEvt.AgentDone, handler as EventListener)
+    return () => graphEvents.removeEventListener(GraphEvt.AgentDone, handler as EventListener)
+  }, [pushPanelMessage, hasAfterAgentRun, setAfterAgentRun])
 
   const canSend = useMemo(() => !sending && promptText.trim().length > 0, [sending, promptText])
 

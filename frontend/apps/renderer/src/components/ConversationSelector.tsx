@@ -19,9 +19,9 @@ function normalizeLoadedReport(text: string): string {
   return out.trim()
 }
 
-type Props = { refreshKey: number }
+type Props = { refreshKey: number; sidebarOpen: boolean }
 
-export default function ConversationSelector({ refreshKey }: Props) {
+export default function ConversationSelector({ refreshKey, sidebarOpen }: Props) {
   const [loading, setLoading] = useState(false)
   const [items, setItems] = useState<ConversationSummary[]>([])
 
@@ -32,18 +32,37 @@ export default function ConversationSelector({ refreshKey }: Props) {
   const setCurrentStageId = useUIStore(s => s.setCurrentStageId)
   const selectedCaseId = useUIStore(s => s.selectedCaseId)
 
-  useEffect(() => {
+  const fetchList = async (silent = false) => {
     if (!selectedCaseId) {
       setItems([])
+      setLoading(false)
       return
     }
-    setLoading(true)
-    listCaseConversations(selectedCaseId)
-      .then(list => {
-        setItems(list ?? [])
-      })
-      .finally(() => setLoading(false))
+    if (!silent) setLoading(true)
+    try {
+      const list = await listCaseConversations(selectedCaseId)
+      setItems(list ?? [])
+    } finally {
+      if (!silent) setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchList(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey, selectedCaseId])
+
+  useEffect(() => {
+    if (!sidebarOpen) return
+    if (!selectedCaseId) return
+
+    const t = window.setInterval(() => {
+      fetchList(true) // ✅ 폴링은 silent
+    }, 1500)
+
+    return () => window.clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarOpen, selectedCaseId])
 
   const handleSelect = async (conv: ConversationSummary) => {
     if (!conv._id) return
@@ -54,8 +73,7 @@ export default function ConversationSelector({ refreshKey }: Props) {
     setConversationId(conv._id)
     setPromptText('')
 
-    const nextStage = (conv.last_stage_id ?? 1) + 1
-    setCurrentStageId(nextStage)
+    setCurrentStageId(conv.last_stage_id ?? 1)
 
     try {
       const msgs = await getMessages(conv._id, conv.last_stage_id ?? 1)

@@ -6,6 +6,10 @@ import CaseSelectModal from './components/CaseSelector'
 import { getCase } from '@/utils/api'
 
 export default function App() {
+  useEffect(() => {
+    useUIStore.getState().resetSession()
+  }, [])
+
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [convRefreshKey, setConvRefreshKey] = useState(0)
 
@@ -125,7 +129,7 @@ export default function App() {
               </button>
             </div>
             <div className="min-h-0 flex-1">
-              <ConversationSelector refreshKey={convRefreshKey} />
+              <ConversationSelector refreshKey={convRefreshKey} sidebarOpen={sidebarOpen} />
             </div>
           </aside>
         )}

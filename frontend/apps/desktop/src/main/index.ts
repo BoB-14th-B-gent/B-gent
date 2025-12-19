@@ -32,6 +32,8 @@ for (const p of tryEnvPaths) {
   }
 }
 
+const USE_DOCKER_BACKEND = (process.env.USE_DOCKER_BACKEND ?? 'true').toLowerCase() === 'true'
+
 const isDev = !app.isPackaged
 
 const COMPOSE_FILE = isDev
@@ -45,12 +47,12 @@ function runDockerCompose(args: string[]): Promise<void> {
       stdio: 'inherit',
     })
 
-    child.on('error', (err) => {
+    child.on('error', err => {
       console.error('[docker] 실행 오류:', err)
       reject(err)
     })
 
-    child.on('exit', (code) => {
+    child.on('exit', code => {
       if (code === 0) {
         console.log('[docker] docker compose', args.join(' '), '성공')
         resolve()
@@ -64,6 +66,11 @@ function runDockerCompose(args: string[]): Promise<void> {
 }
 
 async function startBackend() {
+  if (!USE_DOCKER_BACKEND) {
+    console.log('[backend] USE_DOCKER_BACKEND=false → docker compose up skip')
+    return
+  }
+
   try {
     await runDockerCompose(['up', '-d'])
   } catch (e) {
@@ -72,13 +79,17 @@ async function startBackend() {
 }
 
 async function stopBackend() {
+  if (!USE_DOCKER_BACKEND) {
+    console.log('[backend] USE_DOCKER_BACKEND=false → docker compose down skip')
+    return
+  }
+
   try {
     await runDockerCompose(['down'])
   } catch (e) {
     console.error('[backend] docker compose down 실패:', e)
   }
 }
-
 
 function getAssetPath(...p: string[]) {
   return app.isPackaged
@@ -93,7 +104,7 @@ function getPreloadPath() {
       'app.asar.unpacked',
       'dist-electron',
       'preload',
-      'index.mjs',
+      'index.mjs'
     )
   }
 
@@ -145,7 +156,7 @@ function createMainWindow() {
   return w
 }
 
-function createReportWindow(payload: { reportId?: string } = {}) {
+function createReportWindow(payload: { reportId?: string; stageId?: number } = {}) {
   const w = new BrowserWindow({
     show: false,
     width: 1280,
@@ -161,6 +172,7 @@ function createReportWindow(payload: { reportId?: string } = {}) {
 
   const search = new URLSearchParams()
   if (payload.reportId) search.set('reportId', payload.reportId)
+  if (typeof payload.stageId === 'number') search.set('stageId', String(payload.stageId))
 
   if (app.isPackaged) {
     const html = getAssetPath('renderer', 'index.html')
@@ -386,9 +398,15 @@ ipcMain.handle('backend:request', async (_e, init: RequestInit & { path: string 
   return { status: res.status, json: body }
 })
 
-ipcMain.handle('report:open', (_e, payload: { reportId?: string }) => {
+ipcMain.handle('report:open', (_e, payload: { reportId?: string; stageId?: number }) => {
   createReportWindow(payload)
   return { ok: true }
+})
+
+ipcMain.on('report:totalLoaded', (_e, payload: { stageId?: number; reportId?: string }) => {
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('report:totalLoaded', payload)
+  }
 })
 
 ipcMain.handle('case:open', (_e, payload: { caseId?: string; conversationId?: string }) => {
