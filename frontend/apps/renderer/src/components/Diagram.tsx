@@ -11,7 +11,6 @@ import ReactFlow, {
 import 'reactflow/dist/style.css'
 import {
   getTrigger,
-  getLatestReportId,
   getUILayout,
   putUILayout,
   type RFNodeDTO,
@@ -24,12 +23,47 @@ import {
 import { nodeTypes } from '@/components/nodes'
 import { edgeTypes } from '@/components/edges'
 import { useUIStore, type ChatMsg } from '@/store/ui'
-import { graphEvents, GraphEvt, type MCPServer } from '@/graph/events'
+import { graphEvents, type MCPServer } from '@/graph/events'
 import { makeNode, makeEdge, PALETTE } from '@/graph/dynamicLayout'
+
+const MCP_COLOR: Record<MCPServer, string> = {
+  velociraptor: PALETTE.velociraptor,
+  elastic: PALETTE.elastic,
+  sleuthkit: PALETTE.tsk,
+  ghidra: PALETTE.ghidra,
+  virustotal: PALETTE.virustotal,
+  'ez-tools': PALETTE['ez-tools'],
+  'consolehost-history': PALETTE['consolehost-history'],
+  'browser-db-parser': PALETTE['browser-db-parser'],
+  'lnk-parser': PALETTE['lnk-parser'],
+  jumplist: PALETTE.jumplist,
+  ntfs: PALETTE.ntfs,
+  'windows-notification': PALETTE['windows-notification'],
+  dissect: PALETTE.dissect,
+}
+
+const MCP_SERVERS: readonly MCPServer[] = [
+  'velociraptor',
+  'elastic',
+  'sleuthkit',
+  'ghidra',
+  'virustotal',
+  'ez-tools',
+  'consolehost-history',
+  'browser-db-parser',
+  'lnk-parser',
+  'jumplist',
+  'ntfs',
+  'windows-notification',
+  'dissect',
+]
+
+const MCP_SERVER_SET: ReadonlySet<MCPServer> = new Set(MCP_SERVERS)
 
 import PromptPanel from '@/components/panels/PromptPanel'
 import AgentPanel from '@/components/panels/AgentPanel'
 import MCPServerPanel from '@/components/panels/MCPServerPanel'
+import MCPReportModal from '@/components/modals/MCPReportModal'
 import TotalReportPanel from '@/components/panels/TotalReportPanel'
 
 export default function Diagram({ sidebarOpen }: { sidebarOpen: boolean }) {
@@ -67,7 +101,16 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
   const conversationId = useUIStore(s => s.conversationId)
   const setPanelMessages = useUIStore(s => s.setPanelMessages)
   const setPromptText = useUIStore(s => s.setPromptText)
-  const STAGE_ID = 1
+
+  const currentStageId = useUIStore(s => s.currentStageId ?? 1)
+  const STAGE_ID = useUIStore(s => s.currentStageId ?? 1)
+
+  const uiStageId = useUIStore(s => s.currentStageId ?? 1)
+  const stageIdRef = useRef(uiStageId)
+
+  useEffect(() => {
+    stageIdRef.current = uiStageId
+  }, [uiStageId])
 
   const totalReportOpen = useUIStore(s => s.totalreportOpen)
   const openTotalReport = useUIStore(s => s.openTotalReport)
@@ -76,6 +119,7 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
   const selectedCaseId = useUIStore(s => s.selectedCaseId)
 
   const rfRef = useRef<ReactFlowInstance | null>(null)
+  const hydratingRef = useRef(false)
 
   const saveLayoutTmo = useRef<number | null>(null)
 
@@ -103,8 +147,18 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
+  const nodesRef = useRef<Node[]>([])
+  const startedServersRef = useRef<Record<number, MCPServer[]>>({})
+  const plannedServersRef = useRef<Record<number, MCPServer[]>>({})
 
-  const currentStageId = useUIStore(s => s.currentStageId ?? 1)
+  const getNodePos = useCallback((id: string) => {
+    const n = nodesRef.current.find(x => x.id === id)
+    return n?.position ? { ...n.position } : null
+  }, [])
+
+  useEffect(() => {
+    nodesRef.current = nodes
+  }, [nodes])
 
   useEffect(() => {
     if (conversationId === null) {
@@ -114,7 +168,19 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
     }
   }, [conversationId, setNodes, setEdges, scheduleFit])
 
-  const H_GAP = 1105
+  const H_GAP = 1145
+
+  const getNodeHeightById = useCallback((baseId: string): number => {
+    const id = baseId.replace(/-\d+$/, '')
+
+    if (id === 'prompt') return 110
+    if (id === 'bgent') return 120
+    if (id === 'total-report') return 140
+
+    if (id.endsWith('-report')) return 90
+
+    return 96
+  }, [])
 
   const ensureStageNode = useCallback(
     (baseId: string, stage: number): string => {
@@ -158,15 +224,35 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
   useEffect(() => {
     setNodes(nds =>
       nds.map(n => {
+        const isPrompt = n.type === 'prompt'
+        const isAgent = n.type === 'agent'
+        const isMcp = n.type === 'mcp'
+        const isTotal = n.type === 'total'
+
         const isActive =
-          (n.type === 'prompt' && activePromptId === n.id) ||
-          (n.type === 'agent' && activeAgentId === n.id) ||
-          (n.type === 'mcp' && activeMCPServerId === n.id) ||
-          (n.type === 'total' && activeTotalReportId === n.id)
-        return { ...n, data: { ...(n.data ?? {}), isActive } } as any
+          (isPrompt &&
+            (activePromptId === n.id ||
+              (promptOpen && (n.id === 'prompt' || n.id.startsWith('prompt-'))))) ||
+          (isAgent &&
+            (activeAgentId === n.id ||
+              (agentOpen && (n.id === 'bgent' || n.id.startsWith('bgent-'))))) ||
+          (isMcp && activeMCPServerId === n.id) ||
+          (isTotal && (activeTotalReportId === n.id || totalReportOpen))
+
+        return { ...n, data: { ...((n.data as Record<string, unknown>) ?? {}), isActive } } as Node
       })
     )
-  }, [activePromptId, activeAgentId, activeMCPServerId, activeTotalReportId, setNodes])
+  }, [
+    activePromptId,
+    activeAgentId,
+    activeMCPServerId,
+    activeTotalReportId,
+    promptOpen,
+    agentOpen,
+    mcpserverOpen,
+    totalReportOpen,
+    setNodes,
+  ])
 
   const handleInit = useCallback(
     (inst: ReactFlowInstance) => {
@@ -204,8 +290,10 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
     let cancelled = false
 
     ;(async () => {
+      hydratingRef.current = true
       try {
-        const layout = await getUILayout(conversationId, STAGE_ID)
+        const stageForLayout = stageIdRef.current
+        const layout = await getUILayout(conversationId, stageForLayout)
         if (cancelled) return
 
         const dtoNodes: RFNodeDTO[] = layout.nodes ?? []
@@ -235,13 +323,31 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
           data: e.data ?? {},
         }))
 
-        setNodes(rfNodes)
-        setEdges(rfEdges)
+        setNodes(prev => {
+          const prevMaxStage = Math.max(
+            0,
+            ...prev.map(n => Number(n.id.match(/-(\d+)$/)?.[1] ?? 0))
+          )
+          const nextMaxStage = Math.max(
+            0,
+            ...rfNodes.map(n => Number(n.id.match(/-(\d+)$/)?.[1] ?? 0))
+          )
+          return nextMaxStage >= prevMaxStage ? rfNodes : prev
+        })
+        setEdges(prev => {
+          const prevCount = prev.length
+          const nextCount = rfEdges.length
+          return nextCount >= prevCount ? rfEdges : prev
+        })
         scheduleFit(0)
       } catch (err) {
         console.warn('[Diagram] getUILayout failed; keep current graph:', err)
         if (cancelled) return
         scheduleFit(0)
+      } finally {
+        window.setTimeout(() => {
+          hydratingRef.current = false
+        }, 0)
       }
     })()
 
@@ -261,14 +367,14 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
 
   useEffect(() => {
     if (!conversationId) return
-
+    if (hydratingRef.current) return
     if (nodes.length === 0 && edges.length === 0) return
 
-    if (saveLayoutTmo.current) {
-      clearTimeout(saveLayoutTmo.current)
-    }
+    if (saveLayoutTmo.current) clearTimeout(saveLayoutTmo.current)
 
     saveLayoutTmo.current = window.setTimeout(() => {
+      if (hydratingRef.current) return
+
       const dtoNodes: RFNodeDTO[] = nodes.map(n => ({
         id: n.id,
         type: n.type ?? 'default',
@@ -284,11 +390,12 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
         data: e.data ?? {},
       }))
 
-      putUILayout(conversationId, STAGE_ID, { nodes: dtoNodes, edges: dtoEdges }).catch(err => {
+      const stageForLayout = stageIdRef.current
+      putUILayout(conversationId, stageForLayout, { nodes: dtoNodes, edges: dtoEdges }).catch(err =>
         console.warn('[Diagram] putUILayout failed:', err)
-      })
+      )
     }, 800) as unknown as number
-  }, [nodes, edges, conversationId])
+  }, [nodes, edges, conversationId, STAGE_ID])
 
   useEffect(() => {
     scheduleFit(50)
@@ -297,11 +404,7 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
   const fitRaf1 = useRef<number | null>(null)
   const fitRaf2 = useRef<number | null>(null)
 
-  const serverEdgeActiveRef = useRef<Record<string, boolean>>({
-    velociraptor: false,
-    elastic: false,
-    sleuthkit: false,
-  })
+  const serverEdgeActiveRef = useRef<Record<string, boolean>>({})
 
   useLayoutEffect(() => {
     fitRaf1.current = requestAnimationFrame(() => {
@@ -328,15 +431,332 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
     [setEdges]
   )
 
+  type GraphDetail =
+    | { type: 'reset' }
+    | { type: 'add-node'; node: Node }
+    | { type: 'add-edge'; edge: Edge }
+    | { type: 'fit' }
+    | { type: 'edge-active'; id: string; active: boolean }
+    | { type: 'mcp-layout'; stageId?: number; servers: MCPServer[] }
+    | { type: 'add-initial' }
+    | { type: 'mcp-start'; server: MCPServer; stage_id?: number }
+    | { type: 'mcp-done'; server: MCPServer; stage_id?: number }
+    | { type: 'agent-done'; stage_id?: number }
+    | { type: 'total-report-loaded'; stage_id?: number; reportId?: string }
+
+  const handleAddInitial = useCallback(() => {
+    ensureNode('prompt')
+    ensureNode('bgent')
+    ensureEdge('e-prompt-bgent', 'prompt', 'bgent', PALETTE.prompt, PALETTE.bgent)
+
+    requestAnimationFrame(() => {
+      scheduleFit(0)
+      setEdgeActive('e-prompt-bgent', true)
+      window.setTimeout(() => setEdgeActive('e-prompt-bgent', false), 1200)
+    })
+  }, [ensureNode, ensureEdge, scheduleFit, setEdgeActive])
+
+  const layoutPlannedMCPs = useCallback(
+    (stage: number) => {
+      const servers = plannedServersRef.current[stage] ?? startedServersRef.current[stage] ?? []
+      if (servers.length === 0) return
+
+      const agentId = `bgent-${stage}`
+      const agentPos = getNodePos(agentId)
+      if (!agentPos) {
+        requestAnimationFrame(() => layoutPlannedMCPs(stage))
+        return
+      }
+
+      const agentH = getNodeHeightById('bgent')
+      const agentCenterY = agentPos.y + agentH / 2
+
+      const MCP_COL_X = agentPos.x + 245
+      const GAP_Y = 220
+      const centerIndex = (servers.length - 1) / 2
+
+      setNodes(prev => {
+        const next = [...prev]
+
+        servers.forEach((server, idx) => {
+          const serverId = `${server}-${stage}`
+          const h = getNodeHeightById(server)
+
+          const offset = (idx - centerIndex) * GAP_Y
+          const centerY = agentCenterY + offset
+          const y = centerY - h / 2
+
+          const baseNode = makeNode(server)
+          const i = next.findIndex(n => n.id === serverId)
+
+          const node: Node = {
+            ...(i >= 0 ? next[i] : baseNode),
+            id: serverId,
+            type: baseNode.type,
+            data: { ...baseNode.data, ...(i >= 0 ? (next[i].data ?? {}) : {}) },
+            position: { x: MCP_COL_X, y },
+          }
+
+          if (i >= 0) next[i] = node
+          else next.push(node)
+
+          const reportBaseId = `${server}-report`
+          const reportNodeId = `${reportBaseId}-${stage}`
+          const rIdx = next.findIndex(n => n.id === reportNodeId)
+          if (rIdx >= 0) {
+            const serverH = getNodeHeightById(server)
+            const reportH = getNodeHeightById(reportBaseId)
+
+            const serverCenterY2 = y + serverH / 2
+            const reportPos = {
+              x: MCP_COL_X + REPORT_DX,
+              y: serverCenterY2 - reportH / 2 + REPORT_DY,
+            }
+
+            const baseReportNode = makeNode(reportBaseId)
+            next[rIdx] = {
+              ...next[rIdx],
+              type: baseReportNode.type,
+              data: { ...baseReportNode.data, ...(next[rIdx].data ?? {}) },
+              position: reportPos,
+            }
+          }
+        })
+
+        return next
+      })
+
+      scheduleFit(0)
+    },
+    [getNodePos, getNodeHeightById, setNodes, scheduleFit]
+  )
+
+  const handleMCPStart = useCallback(
+    (server: MCPServer, stage_id?: number) => {
+      const stage = stage_id ?? currentStageId ?? 1
+
+      const prev = startedServersRef.current[stage] ?? []
+      if (!prev.includes(server)) {
+        startedServersRef.current[stage] = [...prev, server]
+      }
+
+      const agentId = ensureStageNode('bgent', stage)
+      const serverId = ensureStageNode(server, stage)
+
+      const edgeId = `e-bgent-${server}-${stage}`
+      const colorTo = MCP_COLOR[server] ?? PALETTE.report
+      ensureStageEdge(edgeId, agentId, serverId, PALETTE.bgent, colorTo)
+
+      layoutPlannedMCPs(stage)
+
+      const key = `${server}-${stage}`
+      serverEdgeActiveRef.current[key] = true
+      requestAnimationFrame(() => setEdgeActive(edgeId, true))
+    },
+    [currentStageId, ensureStageNode, ensureStageEdge, setEdgeActive, layoutPlannedMCPs]
+  )
+
+  const REPORT_DX = 225
+  const REPORT_DY = 0
+
+  const handleMCPDone = useCallback(
+    (server: MCPServer, stage_id?: number) => {
+      const stage = stage_id ?? currentStageId ?? 1
+      const serverKey = `${server}-${stage}`
+
+      const edgeIdToServer = `e-bgent-${server}-${stage}`
+      if (serverEdgeActiveRef.current[serverKey]) {
+        serverEdgeActiveRef.current[serverKey] = false
+        setEdgeActive(edgeIdToServer, false)
+      }
+
+      const serverNodeId = ensureStageNode(server, stage)
+      const reportBaseId = `${server}-report`
+      const reportNodeId = `${reportBaseId}-${stage}`
+
+      const serverPos = getNodePos(serverNodeId)
+      const fallback = { x: 550 + (stage - 1) * H_GAP, y: 240 }
+      const basePos = serverPos ?? fallback
+
+      const serverH = getNodeHeightById(server)
+      const reportH = getNodeHeightById(reportBaseId)
+
+      const serverCenterY = basePos.y + serverH / 2
+      const reportPos = {
+        x: basePos.x + REPORT_DX,
+        y: serverCenterY - reportH / 2 + REPORT_DY,
+      }
+
+      setNodes(prev => {
+        const next = [...prev]
+        const idx = next.findIndex(n => n.id === reportNodeId)
+        const baseReportNode = makeNode(reportBaseId)
+
+        if (idx >= 0) {
+          next[idx] = {
+            ...next[idx],
+            type: baseReportNode.type,
+            data: { ...baseReportNode.data, ...(next[idx].data ?? {}) },
+            position: reportPos,
+          }
+        } else {
+          next.push({
+            ...baseReportNode,
+            id: reportNodeId,
+            position: reportPos,
+          })
+        }
+        return next
+      })
+
+      const edgeId = `e-${server}-${stage}-report-${stage}`
+      const colorFrom = MCP_COLOR[server] ?? PALETTE.report
+      ensureStageEdge(edgeId, serverNodeId, reportNodeId, colorFrom, PALETTE.report)
+
+      requestAnimationFrame(() => {
+        setEdgeActive(edgeId, true)
+        window.setTimeout(() => setEdgeActive(edgeId, false), 1400)
+      })
+      layoutPlannedMCPs(stage)
+    },
+    [
+      currentStageId,
+      ensureStageNode,
+      ensureStageEdge,
+      setEdgeActive,
+      getNodePos,
+      H_GAP,
+      setNodes,
+      getNodeHeightById,
+      layoutPlannedMCPs,
+    ]
+  )
+
+  const handleAgentDone = useCallback(
+    (stage_id?: number) => {
+      const stage = stage_id ?? currentStageId ?? 1
+
+      const reportNodeIds = nodesRef.current
+        .filter(n => n.id.endsWith(`-report-${stage}`) && !n.id.startsWith('total-report'))
+        .map(n => n.id)
+
+      const totalBaseId = 'total-report'
+      const totalId = `${totalBaseId}-${stage}`
+
+      const centersY: number[] = []
+      const xs: number[] = []
+
+      for (const rid of reportNodeIds) {
+        const p = getNodePos(rid)
+        if (!p) continue
+
+        const h = getNodeHeightById(rid)
+        centersY.push(p.y + h / 2)
+        xs.push(p.x)
+      }
+
+      const fallbackX = 960 + (stage - 1) * H_GAP
+      const fallbackY = 330
+
+      if (centersY.length > 0 && xs.length > 0) {
+        const avgCenterY = centersY.reduce((a, b) => a + b, 0) / centersY.length
+        const rightMostX = Math.max(...xs)
+
+        const totalH = getNodeHeightById(totalBaseId)
+        const yCandidate = avgCenterY - totalH / 2
+
+        const totalPos = {
+          x: rightMostX + 225,
+          y: Number.isFinite(yCandidate) ? yCandidate : fallbackY,
+        }
+
+        setNodes(prev => {
+          const next = [...prev]
+          const idx = next.findIndex(n => n.id === totalId)
+          const baseTotalNode = makeNode(totalBaseId)
+
+          if (idx >= 0) {
+            next[idx] = {
+              ...next[idx],
+              type: baseTotalNode.type,
+              data: { ...baseTotalNode.data, ...(next[idx].data ?? {}) },
+              position: totalPos,
+            }
+          } else {
+            next.push({
+              ...baseTotalNode,
+              id: totalId,
+              position: totalPos,
+            })
+          }
+          return next
+        })
+      } else {
+        setNodes(prev => {
+          const next = [...prev]
+          if (next.some(n => n.id === totalId)) return next
+          const baseTotalNode = makeNode(totalBaseId)
+          next.push({
+            ...baseTotalNode,
+            id: totalId,
+            position: { x: fallbackX, y: fallbackY },
+          })
+          return next
+        })
+      }
+
+      setEdges(eds => {
+        const next = [...eds]
+        for (const fromId of reportNodeIds) {
+          const edgeId = `e-${fromId}-${totalId}`
+          if (!next.some(e => e.id === edgeId)) {
+            next.push(makeEdge(edgeId, fromId, totalId, PALETTE.report, PALETTE.total))
+          }
+        }
+        return next
+      })
+
+      requestAnimationFrame(() => {
+        scheduleFit(0)
+        for (const fromId of reportNodeIds) {
+          const edgeId = `e-${fromId}-${totalId}`
+          setEdgeActive(edgeId, true)
+        }
+      })
+    },
+    [
+      currentStageId,
+      scheduleFit,
+      setEdgeActive,
+      setEdges,
+      setNodes,
+      getNodePos,
+      getNodeHeightById,
+      H_GAP,
+    ]
+  )
+
+  useEffect(() => {
+    if (!window.api?.onTotalReportLoaded) return
+
+    const unsubscribe = window.api.onTotalReportLoaded(payload => {
+      const stage = payload?.stageId ?? currentStageId ?? 1
+
+      graphEvents.dispatchEvent(
+        new CustomEvent('graph', {
+          detail: { type: 'total-report-loaded', stage_id: stage, reportId: payload?.reportId },
+        })
+      )
+    })
+
+    return () => {
+      unsubscribe?.()
+    }
+  }, [currentStageId])
+
   useEffect(() => {
     function onGraph(e: Event) {
-      const d = (e as CustomEvent).detail as
-        | { type: 'reset' }
-        | { type: 'add-node'; node: Node }
-        | { type: 'add-edge'; edge: Edge }
-        | { type: 'fit' }
-        | { type: 'edge-active'; id: string; active: boolean }
-        | undefined
+      const d = (e as CustomEvent<GraphDetail>).detail
       if (!d) return
 
       switch (d.type) {
@@ -355,6 +775,10 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
               if (stage > 1) {
                 const fromId = `total-report-${stage - 1}`
                 const edgeId = `e-${fromId}-${d.node.id}`
+
+                const hasFrom = nodesRef.current.some(n => n.id === fromId)
+                if (!hasFrom) return
+
                 setEdges(prev => {
                   if (prev.some(e => e.id === edgeId)) return prev
                   return [
@@ -378,174 +802,76 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
         case 'edge-active':
           setEdgeActive(d.id, d.active)
           break
+        case 'add-initial':
+          handleAddInitial()
+          break
+        case 'mcp-start':
+          if (!MCP_SERVER_SET.has(d.server)) return
+          handleMCPStart(d.server, d.stage_id)
+          break
+        case 'mcp-layout': {
+          const stage = d.stageId ?? currentStageId ?? 1
+
+          const uniq: MCPServer[] = Array.from(new Set(d.servers)).filter(
+            s => MCP_COLOR[s] !== undefined
+          )
+
+          plannedServersRef.current[stage] = uniq
+
+          const agentId = ensureStageNode('bgent', stage)
+          uniq.forEach(server => {
+            const serverId = ensureStageNode(server, stage)
+            const edgeId = `e-bgent-${server}-${stage}`
+            const colorTo = MCP_COLOR[server] ?? PALETTE.report
+            ensureStageEdge(edgeId, agentId, serverId, PALETTE.bgent, colorTo)
+          })
+
+          layoutPlannedMCPs(stage)
+
+          break
+        }
+        case 'mcp-done':
+          handleMCPDone(d.server, d.stage_id)
+          break
+        case 'agent-done':
+          handleAgentDone(d.stage_id)
+          break
+        case 'total-report-loaded': {
+          const stage = d.stage_id ?? currentStageId ?? 1
+          const totalId = `total-report-${stage}`
+
+          setEdges(eds =>
+            eds.map(e => {
+              const isToThisTotal = e.target === totalId
+              return isToThisTotal
+                ? ({ ...e, data: { ...(e.data ?? {}), active: false } } as Edge)
+                : e
+            })
+          )
+          useUIStore.getState().setCurrentStageId(stage + 1)
+          break
+        }
       }
     }
 
     graphEvents.addEventListener('graph', onGraph)
     return () => graphEvents.removeEventListener('graph', onGraph)
-  }, [setNodes, setEdges, setEdgeActive, scheduleFit])
-
-  useEffect(() => {
-    const START_HILITE_MS = 1200
-    const BETWEEN_GAP_MS = 300
-
-    let timeline = performance.now()
-    const now = () => performance.now()
-
-    const schedule = (delay: number, fn: () => void) => {
-      const baseline = Math.max(timeline, now())
-      const when = baseline + delay
-      const t = window.setTimeout(fn, Math.max(0, when - now()))
-      timeline = when
-      return t
-    }
-
-    const raf2 = (fn: () => void) => requestAnimationFrame(() => requestAnimationFrame(fn))
-
-    const onAddInitial = () => {
-      ensureNode('prompt')
-      ensureNode('bgent')
-      ensureEdge('e-prompt-bgent', 'prompt', 'bgent', PALETTE.prompt, PALETTE.bgent)
-
-      schedule(0, () => {
-        raf2(() => {
-          scheduleFit(0)
-          setEdgeActive('e-prompt-bgent', true)
-        })
-      })
-      schedule(START_HILITE_MS, () => setEdgeActive('e-prompt-bgent', false))
-      schedule(BETWEEN_GAP_MS, () => {})
-    }
-
-    const onMCPStart = (e: Event) => {
-      const server = (e as CustomEvent).detail?.server as MCPServer
-      const stage = currentStageId ?? 1
-
-      const agentId = ensureStageNode('bgent', stage)
-      const serverId = ensureStageNode(server, stage)
-
-      const edgeId = `e-bgent-${server}-${stage}`
-      ensureStageEdge(
-        edgeId,
-        agentId,
-        serverId,
-        PALETTE.bgent,
-        server === 'velociraptor'
-          ? PALETTE.velociraptor
-          : server === 'elastic'
-            ? PALETTE.elastic
-            : server === 'ghidra'
-              ? PALETTE.ghidra
-              : PALETTE.tsk
-      )
-
-      serverEdgeActiveRef.current[`${server}-${stage}`] = true
-      requestAnimationFrame(() => {
-        setEdgeActive(edgeId, true)
-      })
-    }
-
-    const onMCPDone = (e: Event) => {
-      const server = (e as CustomEvent).detail?.server as MCPServer
-      const stage = currentStageId ?? 1
-      const serverKey = `${server}-${stage}`
-
-      const edgeIdToServer = `e-bgent-${server}-${stage}`
-      if (serverEdgeActiveRef.current[serverKey]) {
-        serverEdgeActiveRef.current[serverKey] = false
-        setEdgeActive(edgeIdToServer, false)
-      }
-
-      const serverNodeId = ensureStageNode(server, stage)
-
-      const reportBaseId =
-        server === 'velociraptor'
-          ? 'velo-report'
-          : server === 'elastic'
-            ? 'elastic-report'
-            : server === 'ghidra'
-              ? 'ghidra-report'
-              : 'tsk-report'
-      const reportNodeId = ensureStageNode(reportBaseId, stage)
-
-      const edgeId = `e-${server}-${stage}-report-${stage}`
-      ensureStageEdge(
-        edgeId,
-        serverNodeId,
-        reportNodeId,
-        server === 'velociraptor'
-          ? PALETTE.velociraptor
-          : server === 'elastic'
-            ? PALETTE.elastic
-            : server === 'ghidra'
-              ? PALETTE.ghidra
-              : PALETTE.tsk,
-        PALETTE.report
-      )
-
-      requestAnimationFrame(() => {
-        setEdgeActive(edgeId, true)
-        window.setTimeout(() => setEdgeActive(edgeId, false), 1400)
-      })
-    }
-
-    const onAgentDone = () => {
-      const stage = currentStageId ?? 1
-      const totalId = ensureStageNode('total-report', stage)
-
-      let reportNodeBaseIds: string[] = []
-
-      if (stage === 2) {
-        reportNodeBaseIds = ['tsk-report', 'ghidra-report']
-      } else {
-        reportNodeBaseIds = ['velo-report', 'elastic-report']
-      }
-
-      const pairs: Array<[string, string]> = reportNodeBaseIds.map(baseId => {
-        const fromId = ensureStageNode(baseId, stage)
-        return [fromId, totalId]
-      })
-
-      setEdges(eds => {
-        const next = [...eds]
-        for (const [from, to] of pairs) {
-          const edgeId = `e-${from}-${to}`
-          if (!next.some(e => e.id === edgeId)) {
-            next.push(makeEdge(edgeId, from, to, PALETTE.report, PALETTE.total))
-          }
-        }
-        return next
-      })
-
-      requestAnimationFrame(() => {
-        scheduleFit(0)
-        for (const [from, to] of pairs) {
-          const edgeId = `e-${from}-${to}`
-          setEdgeActive(edgeId, true)
-          window.setTimeout(() => setEdgeActive(edgeId, false), 4000)
-        }
-      })
-    }
-
-    graphEvents.addEventListener(GraphEvt.AddInitial, onAddInitial)
-    graphEvents.addEventListener(GraphEvt.MCPStart, onMCPStart)
-    graphEvents.addEventListener(GraphEvt.MCPDone, onMCPDone)
-    graphEvents.addEventListener(GraphEvt.AgentDone, onAgentDone)
-    return () => {
-      graphEvents.removeEventListener(GraphEvt.AddInitial, onAddInitial)
-      graphEvents.removeEventListener(GraphEvt.MCPStart, onMCPStart)
-      graphEvents.removeEventListener(GraphEvt.MCPDone, onMCPDone)
-      graphEvents.removeEventListener(GraphEvt.AgentDone, onAgentDone)
-    }
   }, [
-    ensureNode,
-    ensureEdge,
+    setNodes,
     setEdges,
     setEdgeActive,
     scheduleFit,
     currentStageId,
-    ensureStageNode,
+    H_GAP,
+    handleAddInitial,
+    handleMCPStart,
+    handleMCPDone,
+    handleAgentDone,
+    getNodePos,
+    getNodeHeightById,
     ensureStageEdge,
+    ensureStageNode,
+    layoutPlannedMCPs,
   ])
 
   const handlePaneClick = useCallback(() => {
@@ -640,12 +966,7 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
         return
       }
 
-      if (
-        id.startsWith('velociraptor-') ||
-        id.startsWith('elastic-') ||
-        id.startsWith('sleuthkit-') ||
-        id.startsWith('ghidra-')
-      ) {
+      if (node.type === 'mcp') {
         if (mcpserverOpen && activeMCPServerId === id) {
           closeMCPServer()
           setActiveMCPServer(null)
@@ -656,12 +977,20 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
         return
       }
 
-      if (
-        id.includes('velo-report') ||
-        id.includes('elastic-report') ||
-        id.includes('tsk-report') ||
-        id.startsWith('total-report')
-      ) {
+      if (id.includes('-report-') && !id.startsWith('total-report')) {
+        const stageForNode = stageFromId > 0 ? stageFromId : 1
+        const mcpName = id.replace(/-report-\d+$/, '').replace(/-\d+$/, '')
+
+        useUIStore.getState().openMCPReport({
+          triggerId: currentTriggerId ?? null,
+          stageId: stageForNode,
+          mcpName,
+        })
+
+        return
+      }
+
+      if (id.startsWith('total-report')) {
         try {
           let repId: string | null = null
 
@@ -675,6 +1004,10 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
               if (stageReports.length > 0) {
                 const last = stageReports[stageReports.length - 1]
                 repId = last._id
+              }
+
+              if (!repId && reports.length > 0) {
+                repId = reports[reports.length - 1]._id
               }
             } catch (err) {
               console.error('[graph] getConversationReports failed (stage)', stageForNode, err)
@@ -691,12 +1024,9 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
             }
           }
 
-          if (!repId) {
-            repId = await getLatestReportId()
-          }
-
           if (repId) {
             closeAllPanels()
+            useUIStore.getState().setActiveTotalReportStageId(stageForNode)
             openTotalReport(repId)
           } else {
             console.warn('[graph] no report_id found for node', id)
@@ -864,6 +1194,8 @@ function DiagramInner({ sidebarOpen }: { sidebarOpen: boolean }) {
 
         {totalReportOpen && <TotalReportPanel />}
       </div>
+
+      <MCPReportModal />
     </div>
   )
 }
