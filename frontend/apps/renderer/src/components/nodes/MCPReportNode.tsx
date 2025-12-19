@@ -6,19 +6,26 @@ export type MCPReportData = {
   icon?: string
   bg?: string
   onClick?: () => void
+  isActive?: boolean
 }
 
 export default function MCPReportNode({ data }: NodeProps<MCPReportData>) {
-  const bg = data.bg ?? '#C8E5FF'
+  const isActive = !!data.isActive
+  const bg = isActive ? '#FFFFFF' : (data.bg ?? '#C8E5FF')
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-center select-none">
       <button
+        type="button"
+        aria-pressed={isActive}
         onClick={data.onClick}
-        className="relative flex h-24 w-24 items-center justify-center rounded-full shadow-lg ring-1 ring-black/5"
+        onMouseDown={e => e.stopPropagation()}
+        className="relative flex h-24 w-24 items-center justify-center rounded-full transition-all duration-200 hover:cursor-pointer"
         style={{
           background: bg,
-          boxShadow: '0 6px 14px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(255,255,255,0.06)',
+          boxShadow: isActive
+            ? `0 0 0 5px ${data.bg}, 0 8px 24px rgba(0,0,0,.20)`
+            : '0 6px 14px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(255,255,255,0.06)',
         }}
       >
         {data.icon ? (
