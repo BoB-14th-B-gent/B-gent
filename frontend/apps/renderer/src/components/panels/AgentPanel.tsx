@@ -1,13 +1,20 @@
-import { useRef, useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useUIStore } from '@/store/ui'
-import {
-  startDummyAgentStream1,
-  type TaskStatus as PlanTaskStatus,
-  type PlanTask,
-} from '@/data/dummyAgentStream'
+import { startDummyAgentStream1 } from '@/data/dummyAgentStream'
 import { startDummyAgentStream2 } from '@/data/dummyAgentStream2'
+import { connectAgentWebSocket } from '@/utils/agentWs'
+
+import type { AgentState, PlanTask, TaskStatus, AgentStatus } from '@/data/agentTypes'
+import { handleAgentStateTransition } from '@/data/agentGraph'
+import { graphEvents, GraphEvt, type MCPServer } from '@/graph/events'
+
+const USE_DUMMY = (import.meta.env.VITE_USE_DUMMY_AGENT ?? 'false') === 'true'
+console.log('[AgentPanel] USE_DUMMY =', import.meta.env.VITE_USE_DUMMY_AGENT, '→', USE_DUMMY)
+
+const BACKEND_URL = import.meta.env.VITE_AGENT_URL as string
 
 export type StepStatus = 'pending' | 'running' | 'done' | 'failed'
+
 interface AgentStep {
   id: string
   title: string
@@ -18,135 +25,418 @@ interface AgentStep {
   finishedAt?: string
 }
 
-function mapPlanStatusToStepStatus(s: PlanTaskStatus): StepStatus {
+type UnknownRecord = Record<string, unknown>
+
+function isRecord(v: unknown): v is UnknownRecord {
+  return typeof v === 'object' && v !== null
+}
+
+type MongoDate = { $date: string }
+function isMongoDate(v: unknown): v is MongoDate {
+  return isRecord(v) && typeof v.$date === 'string'
+}
+
+function normalizeIsoForJS(iso?: string | null): string | null {
+  if (!iso) return null
+  let s = iso.trim()
+
+  s = s.replace(/(\.\d{3})\d+/, '$1')
+
+  const hasTZ = /([zZ]|[+-]\d{2}:\d{2})$/.test(s)
+  if (!hasTZ) s += 'Z'
+
+  return s
+}
+
+function formatKST(iso?: string | null): string | null {
+  const norm = normalizeIsoForJS(iso)
+  if (!norm) return null
+
+  const d = new Date(norm)
+  if (Number.isNaN(d.getTime())) return null
+
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(d)
+}
+
+function toIsoString(v: unknown): string | undefined {
+  if (!v) return undefined
+  if (typeof v === 'string') return normalizeIsoForJS(v) ?? undefined
+  if (isMongoDate(v)) return normalizeIsoForJS(v.$date) ?? undefined
+  return undefined
+}
+
+function normalizeTaskStatus(v: unknown): TaskStatus {
+  return v === 'pending' || v === 'in_progress' || v === 'done' || v === 'failed' ? v : 'pending'
+}
+
+function normalizeAgentStatus(v: unknown): AgentStatus {
+  if (v === 'running' || v === 'completed' || v === 'done' || v === 'failed') return v
+  if (v === 'pending' || v === 'in_progress') return 'running'
+  return 'running'
+}
+
+const MCP_SERVERS = [
+  'velociraptor',
+  'elastic',
+  'sleuthkit',
+  'ghidra',
+  'virustotal',
+  'ez-tools',
+  'consolehost-history',
+  'browser-db-parser',
+  'lnk-parser',
+  'jumplist',
+  'ntfs',
+  'windows-notification',
+  'dissect',
+] as const satisfies readonly MCPServer[]
+
+const MCP_SERVER_SET: ReadonlySet<string> = new Set(MCP_SERVERS)
+
+function isMCPServer(v: unknown): v is MCPServer {
+  return typeof v === 'string' && MCP_SERVER_SET.has(v)
+}
+
+function toStringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return []
+  return v.map(x => String(x))
+}
+
+function normalizePlan(rawPlan: unknown): PlanTask[] {
+  const arr = Array.isArray(rawPlan) ? rawPlan : []
+  return arr.map((p: unknown) => {
+    const o = isRecord(p) ? p : {}
+
+    const serverRaw = o.mcp_server
+    const serverTrimmed = typeof serverRaw === 'string' ? serverRaw.trim() : ''
+
+    return {
+      task_id: String(o.task_id ?? ''),
+      description: String(o.description ?? ''),
+      mcp_server: isMCPServer(serverTrimmed) ? serverTrimmed : undefined,
+      mcp_tools: toStringArray(o.mcp_tools),
+      status: normalizeTaskStatus(o.status),
+    }
+  })
+}
+
+function normalizeAgentState(raw: unknown, fallbackStageId: number): AgentState {
+  const o = isRecord(raw) ? raw : {}
+
+  const stage =
+    typeof o.stage_id === 'number'
+      ? o.stage_id
+      : typeof o.stage_id === 'string'
+        ? Number(o.stage_id)
+        : NaN
+
+  return {
+    agent_id: String(o.agent_id ?? 'unknown'),
+    conversation_id: (o.conversation_id as string | null) ?? null,
+    created_at: toIsoString(o.created_at),
+    plan: normalizePlan(o.plan),
+    stage_id: Number.isFinite(stage) ? stage : fallbackStageId,
+    status: normalizeAgentStatus(o.status),
+    trigger_id: (o.trigger_id as string | null) ?? null,
+    updated_at: toIsoString(o.updated_at) ?? new Date().toISOString(),
+  }
+}
+
+function maybeDispatchMcpLayout(
+  nextState: AgentState,
+  firedMcpLayoutRef: React.MutableRefObject<Record<number, boolean>>
+) {
+  const stage = nextState.stage_id
+  if (!Number.isFinite(stage)) return
+  if (firedMcpLayoutRef.current[stage]) return
+
+  const servers: MCPServer[] = Array.from(
+    new Set(nextState.plan.map(p => p.mcp_server).filter((s): s is MCPServer => !!s))
+  )
+
+  if (servers.length === 0) return
+
+  graphEvents.dispatchEvent(
+    new CustomEvent('graph', {
+      detail: { type: 'mcp-layout', stageId: stage, servers },
+    })
+  )
+
+  firedMcpLayoutRef.current[stage] = true
+}
+
+type DummyEvent = { type: 'state_update'; data: unknown } | { type: 'log'; text: string }
+
+function isDummyEvent(v: unknown): v is DummyEvent {
+  if (!isRecord(v) || typeof v.type !== 'string') return false
+  if (v.type === 'state_update') return 'data' in v
+  if (v.type === 'log') return typeof v.text === 'string'
+  return false
+}
+
+function mapPlanStatusToStepStatus(s: TaskStatus): StepStatus {
   if (s === 'in_progress') return 'running'
   return s as StepStatus
 }
 
+function toToolSteps(plan: PlanTask[], updatedAtIso?: string): AgentStep[] {
+  const out: AgentStep[] = []
+  const ts = formatKST(updatedAtIso) ?? undefined
+
+  for (const p of plan) {
+    const tools = p.mcp_tools ?? []
+    const serverLabel = p.mcp_server ?? 'MCP'
+
+    if (tools.length === 0) {
+      if (p.status === 'in_progress') {
+        out.push({
+          id: `${p.task_id}__waiting`,
+          title: `${serverLabel}: 준비 중`,
+          status: 'running',
+          startedAt: ts,
+        })
+      }
+      continue
+    }
+
+    tools.forEach((tool, idx) => {
+      const isLast = idx === tools.length - 1
+      const status: StepStatus = p.status === 'done' ? 'done' : isLast ? 'running' : 'done'
+      out.push({
+        id: `${p.task_id}__${tool}`,
+        title: `${serverLabel}: ${tool}`,
+        status,
+        startedAt: status === 'running' ? ts : undefined,
+        finishedAt: status === 'done' ? ts : undefined,
+      })
+    })
+  }
+  return out
+}
+
+function applyAgentState(
+  nextState: AgentState,
+  refs: {
+    startedAtRef: React.MutableRefObject<Record<string, string>>
+    finishedAtRef: React.MutableRefObject<Record<string, string>>
+    updatedAtRef: React.MutableRefObject<Record<string, string>>
+    prevTaskStatusRef: React.MutableRefObject<Record<string, TaskStatus>>
+    prevAgentStateRef: React.MutableRefObject<AgentState | null>
+  },
+  setters: {
+    setSteps: React.Dispatch<React.SetStateAction<AgentStep[]>>
+    setToolSteps: React.Dispatch<React.SetStateAction<AgentStep[]>>
+    setUpdatedAt: React.Dispatch<React.SetStateAction<string | null>>
+    setAgentStatus: React.Dispatch<React.SetStateAction<'running' | 'done' | 'failed'>>
+  }
+) {
+  const { startedAtRef, finishedAtRef, updatedAtRef, prevTaskStatusRef, prevAgentStateRef } = refs
+  const { setSteps, setToolSteps, setUpdatedAt, setAgentStatus } = setters
+
+  handleAgentStateTransition(prevAgentStateRef.current, nextState)
+  prevAgentStateRef.current = nextState
+
+  const updatedIso = nextState.updated_at
+  const ts = formatKST(updatedIso) ?? ''
+
+  for (const p of nextState.plan) {
+    const prev = prevTaskStatusRef.current[p.task_id]
+
+    if (prev !== 'in_progress' && p.status === 'in_progress' && !startedAtRef.current[p.task_id]) {
+      startedAtRef.current[p.task_id] = ts
+    }
+    if (p.status === 'in_progress') {
+      updatedAtRef.current[p.task_id] = ts
+    }
+    if (prev !== 'done' && p.status === 'done' && !finishedAtRef.current[p.task_id]) {
+      finishedAtRef.current[p.task_id] = ts
+    }
+
+    prevTaskStatusRef.current[p.task_id] = p.status
+  }
+
+  const nextSteps: AgentStep[] = nextState.plan.map(p => {
+    const tools = p.mcp_tools ?? []
+    const lastTool = tools.length ? tools[tools.length - 1] : '준비 중'
+
+    return {
+      id: p.task_id,
+      title: p.description,
+      detail: `${p.mcp_server ?? 'MCP'} · ${lastTool}`,
+      status: mapPlanStatusToStepStatus(p.status),
+      startedAt: startedAtRef.current[p.task_id],
+      finishedAt: finishedAtRef.current[p.task_id],
+      updatedAt: updatedAtRef.current[p.task_id],
+    }
+  })
+
+  setSteps(nextSteps)
+  setToolSteps(toToolSteps(nextState.plan ?? [], updatedIso))
+  setUpdatedAt(updatedIso ?? null)
+
+  const s = nextState.status
+  setAgentStatus(s === 'failed' ? 'failed' : s === 'done' || s === 'completed' ? 'done' : 'running')
+}
+
 export default function AgentPanel() {
-  const agentOpen = useUIStore(s => s.agentOpen);
-  const closeAgent = useUIStore(s => s.closeAgent);
-  const currentStageId = useUIStore(s => s.currentStageId);
+  const agentOpen = useUIStore(s => s.agentOpen)
+  const closeAgent = useUIStore(s => s.closeAgent)
+  const currentStageId = useUIStore(s => s.currentStageId ?? 1)
+  const currentTriggerId = useUIStore(s => s.currentTriggerId)
 
   const [steps, setSteps] = useState<AgentStep[]>([])
   const [logs, setLogs] = useState<string[]>([])
   const [updatedAt, setUpdatedAt] = useState<string | null>(null)
   const [agentStatus, setAgentStatus] = useState<'running' | 'done' | 'failed'>('running')
 
-  const [toolSteps, setToolSteps] = useState<AgentStep[]>([])
+  const [, setToolSteps] = useState<AgentStep[]>([])
 
   const startedAtRef = useRef<Record<string, string>>({})
   const finishedAtRef = useRef<Record<string, string>>({})
   const updatedAtRef = useRef<Record<string, string>>({})
-  const prevStatusRef = useRef<Record<string, PlanTaskStatus>>({})
+  const prevTaskStatusRef = useRef<Record<string, TaskStatus>>({})
+  const prevAgentStateRef = useRef<AgentState | null>(null)
+  const firedDoneRef = useRef<string | null>(null)
+  const triggerStageRef = useRef<number | null>(null)
+  const firedMcpLayoutRef = useRef<Record<number, boolean>>({})
+
+  useEffect(() => {
+    if (currentTriggerId && triggerStageRef.current === null) {
+      triggerStageRef.current = currentStageId
+    }
+  }, [currentTriggerId, currentStageId])
 
   useEffect(() => {
     if (!agentOpen) return
     startedAtRef.current = {}
     finishedAtRef.current = {}
     updatedAtRef.current = {}
-    prevStatusRef.current = {}
+    prevTaskStatusRef.current = {}
+    prevAgentStateRef.current = null
   }, [agentOpen])
 
-  function toToolSteps(plan: PlanTask[], updatedAt?: string): AgentStep[] {
-    const out: AgentStep[] = []
-    for (const p of plan) {
-      const tools = p.mcp_tools ?? []
-      if (tools.length === 0) {
-        if (p.status === 'in_progress') {
-          out.push({
-            id: `${p.task_id}__waiting`,
-            title: `${p.mcp_server ?? 'MCP'}: 준비 중`,
-            status: 'running',
-            startedAt: updatedAt?.slice(11, 19),
-          })
-        }
-        continue
-      }
-      tools.forEach((tool, idx) => {
-        const isLast = idx === tools.length - 1
-        const status: StepStatus = p.status === 'done' ? 'done' : isLast ? 'running' : 'done'
-        out.push({
-          id: `${p.task_id}__${tool}`,
-          title: `${p.mcp_server ?? 'MCP'}: ${tool}`,
-          status,
-          startedAt: status === 'running' ? updatedAt?.slice(11, 19) : undefined,
-          finishedAt: status === 'done' ? updatedAt?.slice(11, 19) : undefined,
-        })
-      })
-    }
-    return out
-  }
+  useEffect(() => {
+    firedDoneRef.current = null
+    firedMcpLayoutRef.current = {}
+  }, [currentTriggerId])
 
   useEffect(() => {
     if (!agentOpen) return
+    if (!USE_DUMMY && !currentTriggerId) return
+
+    console.log('[AgentPanel] effect start. USE_DUMMY=', USE_DUMMY, 'triggerId=', currentTriggerId)
 
     setSteps([])
     setLogs([])
     setUpdatedAt(null)
     setAgentStatus('running')
 
-    const streamFunc = currentStageId === 2 
-      ? startDummyAgentStream2
-      : startDummyAgentStream1
+    startedAtRef.current = {}
+    finishedAtRef.current = {}
+    updatedAtRef.current = {}
+    prevTaskStatusRef.current = {}
+    prevAgentStateRef.current = null
 
-    const stop = streamFunc({
-      stepMs: 500,
-      onEvent: ev => {
-        if (ev.type === 'state_update' && ev.data) {
-          const ts = ev.data.updated_at?.slice(11, 19) ?? ''
+    if (USE_DUMMY || !currentTriggerId) {
+      const baseStage = triggerStageRef.current ?? currentStageId
+      const streamFunc = baseStage === 2 ? startDummyAgentStream2 : startDummyAgentStream1
 
-          for (const p of ev.data.plan) {
-            const prev = prevStatusRef.current[p.task_id]
+      const stop = streamFunc({
+        stepMs: 500,
+        onEvent: (ev: unknown) => {
+          if (!isDummyEvent(ev)) return
 
-            if (
-              prev !== 'in_progress' &&
-              p.status === 'in_progress' &&
-              !startedAtRef.current[p.task_id]
-            ) {
-              startedAtRef.current[p.task_id] = ts
-            }
-            if (p.status === 'in_progress') {
-              updatedAtRef.current[p.task_id] = ts
-            }
-            if (prev !== 'done' && p.status === 'done' && !finishedAtRef.current[p.task_id]) {
-              finishedAtRef.current[p.task_id] = ts
-            }
+          if (ev.type === 'state_update' && ev.data) {
+            const nextState = normalizeAgentState(ev.data, currentStageId)
 
-            prevStatusRef.current[p.task_id] = p.status
+            maybeDispatchMcpLayout(nextState, firedMcpLayoutRef)
+
+            applyAgentState(
+              nextState,
+              {
+                startedAtRef,
+                finishedAtRef,
+                updatedAtRef,
+                prevTaskStatusRef,
+                prevAgentStateRef,
+              },
+              {
+                setSteps,
+                setToolSteps,
+                setUpdatedAt,
+                setAgentStatus,
+              }
+            )
+          } else if (ev.type === 'log') {
+            setLogs(prev => [...prev, ev.text])
           }
+        },
+      })
 
-          const nextSteps: AgentStep[] = ev.data.plan.map(p => {
-            const tools = p.mcp_tools ?? []
-            const lastTool = tools.length ? tools[tools.length - 1] : '준비 중'
+      return () => {
+        stop?.()
+      }
+    }
 
-            return {
-              id: p.task_id,
-              title: p.description,
-              detail: `${p.mcp_server} · ${lastTool}`,
-              status: mapPlanStatusToStepStatus(p.status),
-              startedAt: startedAtRef.current[p.task_id],
-              finishedAt: finishedAtRef.current[p.task_id],
-              updatedAt: updatedAtRef.current[p.task_id],
-            }
-          })
-
-          setSteps(nextSteps)
-          setToolSteps(toToolSteps(ev.data.plan ?? [], ev.data.updated_at))
-          setUpdatedAt(ev.data.updated_at)
-          setAgentStatus(
-            ev.data.status === 'done' || ev.data.status === 'completed' ? 'done' : 'running'
-          )
-        } else if (ev.type === 'log' && ev.text) {
-          setLogs(prev => [...prev, ev.text])
-        }
+    const ws = connectAgentWebSocket({
+      triggerId: currentTriggerId,
+      onLog: (msg: string) => {
+        setLogs(prev => {
+          const next = [...prev, msg]
+          return next.length > 500 ? next.slice(next.length - 500) : next
+        })
       },
     })
 
-    return () => {
-      stop?.()
+    const fetchState = async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/agent/state/${currentTriggerId}`, { method: 'GET' })
+        if (!res.ok) return
+
+        const raw: unknown = await res.json()
+        const fallbackStage = triggerStageRef.current ?? currentStageId
+        const nextState = normalizeAgentState(raw, fallbackStage)
+
+        maybeDispatchMcpLayout(nextState, firedMcpLayoutRef)
+
+        applyAgentState(
+          nextState,
+          {
+            startedAtRef,
+            finishedAtRef,
+            updatedAtRef,
+            prevTaskStatusRef,
+            prevAgentStateRef,
+          },
+          {
+            setSteps,
+            setToolSteps,
+            setUpdatedAt,
+            setAgentStatus,
+          }
+        )
+      } catch (e) {
+        console.error('[AgentPanel] state fetch error', e)
+      }
     }
-  }, [agentOpen, currentStageId])
+
+    fetchState()
+    const intervalId = window.setInterval(fetchState, 1500)
+
+    return () => {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.close()
+      if (intervalId) window.clearInterval(intervalId)
+    }
+  }, [currentStageId, currentTriggerId, agentOpen])
 
   const doneCount = useMemo(() => steps.filter(s => s.status === 'done').length, [steps])
   const runningCount = useMemo(() => steps.filter(s => s.status === 'running').length, [steps])
@@ -157,6 +447,20 @@ export default function AgentPanel() {
     () => (steps.length > 0 && steps.every(s => s.status === 'done')) || agentStatus === 'done',
     [steps, agentStatus]
   )
+
+  useEffect(() => {
+    if (!currentTriggerId) return
+    if (!allDone) return
+
+    if (firedDoneRef.current === currentTriggerId) return
+    firedDoneRef.current = currentTriggerId
+
+    console.log('[AgentPanel] dispatch AgentDone', currentTriggerId)
+    graphEvents.dispatchEvent(
+      new CustomEvent(GraphEvt.AgentDone, { detail: { trigger_id: currentTriggerId } })
+    )
+  }, [allDone, currentTriggerId])
+
   const currentRunning = useMemo(() => steps.find(s => s.status === 'running'), [steps])
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -199,13 +503,13 @@ export default function AgentPanel() {
       >
         <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>AGENT</span>
         <span style={{ fontSize: 12, color: '#475569', marginLeft: 8 }}>
-          {allDone ? 'DONE' : 'RUNNING'}
+          {allDone ? 'DONE' : agentStatus === 'failed' ? 'FAILED' : 'RUNNING'}
         </span>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
           {updatedAt && (
             <span style={{ fontSize: 11, color: '#64748b' }}>
-              갱신: {updatedAt.replace('T', ' ').slice(0, 19)}
+              갱신: {formatKST(updatedAt) ?? updatedAt.replace('T', ' ').slice(0, 19)}
             </span>
           )}
           <span
@@ -286,7 +590,13 @@ export default function AgentPanel() {
                 width: 8,
                 height: 8,
                 borderRadius: '50%',
-                background: currentRunning ? '#22c55e' : allDone ? '#034078' : '#cbd5e1',
+                background: currentRunning
+                  ? '#22c55e'
+                  : allDone
+                    ? '#034078'
+                    : agentStatus === 'failed'
+                      ? '#ef4444'
+                      : '#cbd5e1',
               }}
             />
             <strong style={{ fontSize: 14, color: '#0f172a' }}>현재 단계</strong>
@@ -294,6 +604,7 @@ export default function AgentPanel() {
               실시간 업데이트
             </span>
           </div>
+
           <div style={{ marginTop: 8, fontSize: 13, color: '#0f172a' }}>
             {currentRunning ? (
               <>
@@ -307,9 +618,14 @@ export default function AgentPanel() {
                 <b>모든 단계 완료</b>
                 <div style={{ marginTop: 4, color: '#475569' }}>
                   {updatedAt
-                    ? `완료 시각: ${updatedAt.replace('T', ' ').slice(0, 19)}`
+                    ? `완료 시각: ${formatKST(updatedAt) ?? updatedAt.replace('T', ' ').slice(0, 19)}`
                     : '완료되었습니다.'}
                 </div>
+              </div>
+            ) : agentStatus === 'failed' ? (
+              <div style={{ fontSize: 13, color: '#ef4444' }}>
+                <b>실패</b>
+                <div style={{ marginTop: 4, color: '#475569' }}>상세 로그를 확인하세요.</div>
               </div>
             ) : (
               <div style={{ fontSize: 13, color: '#475569' }}>MCP Server 로딩 중…</div>

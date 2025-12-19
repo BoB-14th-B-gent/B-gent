@@ -7,4 +7,17 @@ export const GraphEvt = {
   AgentDone: 'graph:agent-done',
 } as const
 
-export type MCPServer = 'velociraptor' | 'elastic' | 'sleuthkit' | 'ghidra'
+export type MCPServer =
+  | 'velociraptor'
+  | 'elastic'
+  | 'sleuthkit'
+  | 'ghidra'
+  | 'virustotal'
+  | 'ez-tools'
+  | 'consolehost-history'
+  | 'browser-db-parser'
+  | 'lnk-parser'
+  | 'jumplist'
+  | 'ntfs'
+  | 'windows-notification'
+  | 'dissect'

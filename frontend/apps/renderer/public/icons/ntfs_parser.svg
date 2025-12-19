@@ -1,0 +1,18 @@
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <linearGradient id="diskGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#3b82f6"/>
+            <stop offset="100%" style="stop-color:#1d4ed8"/>
+        </linearGradient>
+    </defs>
+    <!-- Disk platters -->
+    <ellipse cx="50" cy="60" rx="35" ry="20" fill="#60a5fa"/>
+    <ellipse cx="50" cy="55" rx="35" ry="20" fill="#3b82f6"/>
+    <ellipse cx="50" cy="50" rx="35" ry="20" fill="url(#diskGrad)"/>
+    <ellipse cx="50" cy="50" rx="20" ry="11" fill="#93c5fd"/>
+    <ellipse cx="50" cy="50" rx="8" ry="4" fill="#1e3a8a"/>
+    <!-- Magnifying glass -->
+    <circle cx="85" cy="75" r="20" fill="none" stroke="#1e3a8a" stroke-width="5"/>
+    <line x1="99" y1="89" x2="112" y2="102" stroke="#1e3a8a" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="85" cy="75" r="12" fill="rgba(59,130,246,0.15)"/>
+</svg>
