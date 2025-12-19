@@ -1,0 +1,19 @@
+<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <!-- LNK File Parser MCP Icon - Classic Windows Style -->
+    <defs>
+        <linearGradient id="docGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#0EA5E9;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#0284C7;stop-opacity:1" />
+        </linearGradient>
+    </defs>
+    <!-- Document base -->
+    <path d="M20 12H60L80 32V88H20V12Z" fill="url(#docGrad)"/>
+    <path d="M60 12V32H80" fill="#38BDF8"/>
+    <path d="M60 12L80 32H60V12Z" fill="#7DD3FC"/>
+    <!-- Classic shortcut arrow overlay -->
+    <g transform="translate(12, 58)">
+        <path d="M0 30L0 8C0 3.58 3.58 0 8 0L22 0L30 8L30 30L0 30Z" fill="#1E293B"/>
+        <path d="M6 22L6 12L16 12" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M6 12L16 22" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+    </g>
+</svg>
