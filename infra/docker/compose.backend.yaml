@@ -8,11 +8,15 @@ services:
     env_file:
       - ../../backend/.env.docker
     environment:
-      - SLLM_BASE_URL=http://host.docker.internal:8000
+      - SLLM_BASE_URL=http://host.docker.internal:9000
+      - BGENT_BASE_DIR=/app
+      - BGENT_EVIDENCE_DIR=/app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
       - "8080:8080"
+    volumes:
+      - ../../data:/app/data
 
 volumes:
   bgent-mongo-data:
