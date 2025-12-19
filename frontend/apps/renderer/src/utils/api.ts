@@ -32,7 +32,7 @@ export type CreateInputEvidencesRes = {
 
 export type PatchTriggerPromptReq = { prompt_id: string }
 export type PatchTriggerEvidencesReq = {
-  evidences: Array<{ collection: 'INPUT_EVIDENCES'; id: string }>
+  evidences: Array<{ collection: 'INPUT_EVIDENCES' | 'MCP_EVIDENCES'; id: string }>
 }
 
 export type ConversationSummary = {
@@ -188,6 +188,10 @@ export async function getReport(reportId: string): Promise<{
   stage_id: number
   trigger_id: string
   created_at: string
+  structured?: {
+    header?: string
+    sections?: Record<string, unknown>
+  }
 }> {
   return req(`/reports/${encodeURIComponent(reportId)}`, { method: 'GET' })
 }
@@ -220,7 +224,13 @@ export type PipelineRunReq = {
   case_id?: string
 }
 
-export type PipelineRunRes = {
+export type PipelineRunPrepareRes = {
+  conversation_id: string
+  trigger_id: string
+  prompt_id?: string | null
+}
+
+export type PipelineRunFullRes = {
   conversation_id: string
   trigger_id: string
   prompt_id?: string | null
@@ -228,9 +238,12 @@ export type PipelineRunRes = {
   report: string
 }
 
-export async function pipelineRun(body: PipelineRunReq): Promise<PipelineRunRes> {
+export async function pipelineRun(body: PipelineRunReq): Promise<PipelineRunPrepareRes> {
+  if (body.stage_id == null) {
+    throw new Error('stage_id is required')
+  }
+
   const payload: PipelineRunReq = {
-    stage_id: 0,
     inline_threshold: 10 * 1024 * 1024,
     mode: 'auto',
     ...body,
@@ -244,40 +257,185 @@ export async function pipelineRun(body: PipelineRunReq): Promise<PipelineRunRes>
     const t = await res.text().catch(() => '')
     throw new Error(`HTTP ${res.status} ${res.statusText} — ${t}`)
   }
-  return (await res.json()) as PipelineRunRes
+  return (await res.json()) as PipelineRunPrepareRes
+}
+
+export async function pipelineRunAfterAgent(triggerId: string): Promise<PipelineRunFullRes> {
+  const payload = { trigger_id: triggerId }
+
+  const res = await fetch(`${BASE}/pipeline/run/after-agent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  if (!res.ok) {
+    const t = await res.text().catch(() => '')
+    throw new Error(`HTTP ${res.status} ${res.statusText} — ${t}`)
+  }
+
+  return (await res.json()) as PipelineRunFullRes
+}
+
+export async function pipelineRunFull(body: PipelineRunReq): Promise<PipelineRunFullRes> {
+  const payload: PipelineRunReq = {
+    stage_id: 0,
+    inline_threshold: 10 * 1024 * 1024,
+    mode: 'auto',
+    ...body,
+  }
+  const res = await fetch(`${BASE}/pipeline/run/full`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const t = await res.text().catch(() => '')
+    throw new Error(`HTTP ${res.status} ${res.statusText} — ${t}`)
+  }
+  return (await res.json()) as PipelineRunFullRes
 }
 
 export type OID = string | { $oid: string }
 
-export type EvidenceRef = {
-  collection: string
-  id: OID
-}
+export type EvidenceRef = { collection: 'INPUT_EVIDENCES' | 'MCP_EVIDENCES'; id: string }
 
 export type TriggerDoc = {
-  _id: OID
-  conversation_id: OID
+  _id: string
+  conversation_id: string
   stage_id: number
-
-  evidences?: EvidenceRef[]
-
-  prompt_id?: OID
-
+  evidences: Array<{ collection: 'INPUT_EVIDENCES' | 'MCP_EVIDENCES'; id: string }>
+  prompt_id?: string | null
   status?: 'initial' | 'collecting' | 'ready' | 'processing' | 'done'
+  report_id?: string | null
+  created_at?: string
+  updated_at?: string
+}
 
-  report_id?: OID
+export type TriggerListRes = {
+  conversation_id: string
+  items: Array<{
+    id: string
+    conversation_id: string
+    stage_id: number
+    status: 'initial' | 'collecting' | 'ready' | 'processing' | 'done'
+    prompt_id?: string | null
+    report_id?: string | null
+    evidences: Array<{ collection: string; id: string }>
+    created_at?: string
+    updated_at?: string
+  }>
+}
 
-  created_at?: string | { $date: string }
-  updated_at?: string | { $date: string }
+export async function getConversationTriggers(
+  conversationId: string,
+  opts?: {
+    stage_id?: number
+    status?: 'initial' | 'collecting' | 'ready' | 'processing' | 'done'
+    include_evidences?: boolean
+    limit?: number
+  }
+): Promise<TriggerListRes> {
+  const qs = new URLSearchParams()
+  if (opts?.stage_id != null) qs.set('stage_id', String(opts.stage_id))
+  if (opts?.status) qs.set('status', opts.status)
+  if (opts?.include_evidences != null) qs.set('include_evidences', String(opts.include_evidences))
+  if (opts?.limit != null) qs.set('limit', String(opts.limit))
+
+  const path = `/conversations/${encodeURIComponent(conversationId)}/triggers${
+    qs.toString() ? `?${qs.toString()}` : ''
+  }`
+
+  return http<TriggerListRes>(path, { method: 'GET' })
+}
+
+export type MCPSummaryItem = {
+  mcp_name: string
+  total: number
+  success: number
+  failed: number
+  last_at?: string | null
+}
+export type MCPSummaryRes = {
+  trigger_id: string
+  stage_id: number
+  items: MCPSummaryItem[]
+}
+
+export async function getMcpSummary(triggerId: string, stageId: number): Promise<MCPSummaryRes> {
+  const qs = new URLSearchParams({ stage_id: String(stageId) })
+  return http(`/triggers/${encodeURIComponent(triggerId)}/mcp-summary?${qs.toString()}`, {
+    method: 'GET',
+  })
+}
+
+export type MCPEvidenceListItem = {
+  _id: string
+  trigger_id: string
+  conversation_id: string
+  agent_id?: string | null
+  stage_id: number
+  mcp_name: string
+  tool_name?: string | null
+  success?: boolean
+  created_at?: string | null
+  request?: Record<string, unknown>
+  response?: Record<string, unknown>
+}
+export type MCPEvidenceListRes = {
+  trigger_id: string
+  stage_id: number
+  mcp_name: string
+  items: MCPEvidenceListItem[]
+}
+
+export async function getMcpEvidences(
+  triggerId: string,
+  params: { mcp_name: string; stage_id: number; limit?: number; include_payload?: boolean }
+): Promise<MCPEvidenceListRes> {
+  const qs = new URLSearchParams({
+    mcp_name: params.mcp_name,
+    stage_id: String(params.stage_id),
+    limit: String(params.limit ?? 200),
+    include_payload: String(params.include_payload ?? true),
+  })
+  return http(`/triggers/${encodeURIComponent(triggerId)}/mcp-evidences?${qs.toString()}`, {
+    method: 'GET',
+  })
+}
+
+export type McpEvidenceDetailRes = {
+  _id: string
+  trigger_id?: string | null
+  conversation_id?: string | null
+  stage_id?: number | null
+  mcp_name?: string | null
+  tool_name?: string | null
+  agent_id?: string | null
+  success?: boolean | null
+  created_at?: string | null
+  request?: Record<string, unknown> | null
+  response?: Record<string, unknown> | null
+}
+
+export async function getMcpEvidenceDetail(evidenceId: string): Promise<McpEvidenceDetailRes> {
+  return http<McpEvidenceDetailRes>(`/evidences/mcp/${encodeURIComponent(evidenceId)}`, {
+    method: 'GET',
+  })
 }
 
 export async function getTrigger(triggerId: string): Promise<TriggerDoc> {
   return http<TriggerDoc>(`/triggers/${encodeURIComponent(triggerId)}`, { method: 'GET' })
 }
 
-export async function getLatestReportId(): Promise<string | null> {
-  const res = await http<{ _id: string }>(`/reports/latest`)
-  return res._id ?? null
+export async function getLatestReportIdByConversation(
+  conversationId: string,
+  stageId?: number
+): Promise<string | null> {
+  const items = await getConversationReports(conversationId)
+  const filtered = stageId != null ? items.filter(r => r.stage_id === stageId) : items
+  if (filtered.length === 0) return null
+  return filtered[filtered.length - 1]._id
 }
 
 export async function listConversations(): Promise<ConversationSummary[]> {
