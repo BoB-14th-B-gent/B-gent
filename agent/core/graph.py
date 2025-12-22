@@ -93,9 +93,7 @@ Analyze the MCP execution results below and determine which **suspicious IoCs** 
 - Only include IoCs with confidence high/medium in suspicious_iocs.
 - Include items that are definitely normal in benign_iocs_excluded.
 - If no IoC is found, set should_query_virustotal: false.
-- The suspicious_iocs array should contain a maximum of 10 entries (in order of priority).
-
-Translated with DeepL.com (free version)"""
+- The suspicious_iocs array should contain a maximum of 10 entries (in order of priority)."""
 
     try:
         response = llm.chat(
@@ -592,7 +590,7 @@ Think step by step, observe results, and adapt your actions accordingly."""
 
     react_context = {
         "iteration": 0,
-        "max_iterations": 30,
+        "max_iterations": 50,
         "task_prompt": task_prompt,
         "file_paths": task.target_files if task.target_files else [],
         "available_tools": available_tools,
